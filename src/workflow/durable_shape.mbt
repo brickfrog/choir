@@ -2387,6 +2387,9 @@ let durable_shapes_work_order_stop_reason : Array[WorkOrderStopReason] = [
   WorkOrderStopReason::WorkOrderNoFurtherFindingsRemain,
   WorkOrderStopReason::WorkOrderSafetyCeilingReached,
   WorkOrderStopReason::WorkOrderFatalIntegrityStop(durable_shape_digest),
+  WorkOrderStopReason::WorkOrderPlannerExhausted(
+    WorkOrderPlanningFailure::WorkOrderPlannerRepeatedEmptyProposal,
+  ),
 ]
 
 ///|
@@ -2401,7 +2404,8 @@ fn durable_guard_work_order_stop_reason(
     | WorkOrderNoEligibleWorkRemains
     | WorkOrderNoFurtherFindingsRemain
     | WorkOrderSafetyCeilingReached
-    | WorkOrderFatalIntegrityStop(_) => value
+    | WorkOrderFatalIntegrityStop(_)
+    | WorkOrderPlannerExhausted(_) => value
   }
 }
 
@@ -2707,7 +2711,6 @@ let durable_shape_work_order_planning_round : WorkOrderPlanningRound = {
 let durable_shapes_work_order_lifecycle : Array[WorkOrderLifecycle] = [
   WorkOrderActive,
   WorkOrderStopped(durable_shapes_work_order_stop_reason[0]),
-  WorkOrderCompleted,
 ]
 
 ///|
@@ -2715,7 +2718,7 @@ fn durable_guard_work_order_lifecycle(
   value : WorkOrderLifecycle,
 ) -> WorkOrderLifecycle {
   match value {
-    WorkOrderActive | WorkOrderStopped(_) | WorkOrderCompleted => value
+    WorkOrderActive | WorkOrderStopped(_) => value
   }
 }
 
@@ -4104,6 +4107,77 @@ let durable_shape_goal_executor_schedule_record : GoalExecutorScheduleRecord = {
 }
 
 ///|
+let durable_shape_work_order_execution_job_id : WorkOrderExecutionJobId = work_order_execution_job_id(
+  durable_shape_work_order_id,
+)
+
+///|
+let durable_shape_work_order_executor_lease_id : WorkOrderExecutorLeaseId = WorkOrderExecutorLeaseId(
+  "",
+)
+
+///|
+let durable_shape_work_order_executor_lease : WorkOrderExecutorLease = {
+  id: WorkOrderExecutorLeaseId("lease"),
+  job_id: durable_shape_work_order_execution_job_id,
+  work_order_id: durable_shape_work_order_id,
+  slot: 0,
+  dispatch_sequence: 1L,
+  fencing_epoch: durable_shape_fencing_epoch,
+  acquired_at: 0L,
+}
+
+///|
+let durable_shape_work_order_execution_job : WorkOrderExecutionJob = {
+  id: durable_shape_work_order_execution_job_id,
+  work_order_id: durable_shape_work_order_id,
+  due_at: 0L,
+  consecutive_failures: 0,
+  last_failure_digest: Some(durable_shape_digest),
+  last_dispatch_sequence: 1L,
+  last_completed_lease_id: Some(durable_shape_work_order_executor_lease_id),
+  last_work_order_durable_version: Some(1),
+  ticks_without_progress: 0,
+  provider_reports: [durable_shape_provider_surface_tick_report],
+  lease: Some(durable_shape_work_order_executor_lease),
+}
+
+///|
+let durable_shape_work_order_executor_schedule_record : WorkOrderExecutorScheduleRecord = {
+  jobs: [durable_shape_work_order_execution_job],
+  next_dispatch_sequence: 2L,
+  durable_version: 1,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
+let durable_shape_work_order_planner_attempt_id : WorkOrderPlannerAttemptId = work_order_planner_attempt_id(
+  durable_shape_work_order_planning_round,
+)
+
+///|
+let durable_shape_work_order_planner_attempt_record : WorkOrderPlannerAttemptRecord = {
+  id: durable_shape_work_order_planner_attempt_id,
+  work_order_id: durable_shape_work_order_id,
+  round_id: durable_shape_work_order_planning_round_id,
+  effect_id: work_order_planning_effect_id(
+    durable_shape_work_order_planning_round_id,
+  ),
+  attempt_number: 1,
+  session_id: work_order_planner_session_id(
+    durable_shape_work_order_planner_attempt_id,
+  ),
+  surface: durable_shapes_provider_surface_id[0],
+  instruction_digest: durable_shape_digest,
+  schema_digest: durable_shape_digest,
+  lifecycle: WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptCompleted(
+    durable_shape_artifact_reference, 1L,
+  ),
+  durable_version: 1,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
 /// Every type that reaches a durable record, paired with the serialized form
 /// of each shape it can take. Sorted by name at use so that moving a
 /// declaration in this file does not move the generation.
@@ -4640,6 +4714,37 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
     ]),
     durable_shape_entry("GoalExecutorScheduleRecord", [
       durable_shape_goal_executor_schedule_record,
+    ]),
+    durable_shape_entry("WorkOrderExecutionJob", [
+      durable_shape_work_order_execution_job,
+    ]),
+    durable_shape_entry("WorkOrderExecutionJobId", [
+      durable_shape_work_order_execution_job_id,
+    ]),
+    durable_shape_entry("WorkOrderExecutorLease", [
+      durable_shape_work_order_executor_lease,
+    ]),
+    durable_shape_entry("WorkOrderExecutorLeaseId", [
+      durable_shape_work_order_executor_lease_id,
+    ]),
+    durable_shape_entry("WorkOrderExecutorScheduleRecord", [
+      durable_shape_work_order_executor_schedule_record,
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptId", [
+      durable_shape_work_order_planner_attempt_id,
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptLifecycle", [
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptPlanned,
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptIssued(1L),
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptCompleted(
+        durable_shape_artifact_reference, 1L,
+      ),
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptUncertain(
+        durable_shape_digest,
+      ),
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptRecord", [
+      durable_shape_work_order_planner_attempt_record,
     ]),
     durable_shape_entry("ProviderSurfaceTickReport", [
       durable_shape_provider_surface_tick_report,

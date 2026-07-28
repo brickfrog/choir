@@ -45,6 +45,12 @@ pub(all) enum ArtifactProvenance {
   ArtifactProviderSurfaceLease
   /// The portfolio's per-Goal jobs and bounded executor held set.
   ArtifactGoalExecutorSchedule
+  /// The portfolio's per-WorkOrder coordinator jobs and bounded held set.
+  ArtifactWorkOrderExecutorSchedule
+  /// One crash-safe provider attempt for a WorkOrder planning round.
+  ArtifactWorkOrderPlannerAttempt
+  /// The terminal advisory JSON emitted by a WorkOrder planner Take.
+  ArtifactWorkOrderPlannerResult
   /// Durable campaign authority above one or more immutable Goals.
   ArtifactWorkOrderRecord
 } derive(Debug, Eq, ToJson, FromJson)

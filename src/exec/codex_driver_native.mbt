@@ -144,6 +144,9 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
       common +
       "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
       native_migration_audit_output_instruction()
+    @harness.CodexTakeRole::CodexWorkOrderPlanningTake =>
+      common +
+      "Act only as the read-only planner for the supplied accepted WorkOrder. Inspect repository evidence, but do not edit files or invoke mutating tools. Return exactly one proposal matching the supplied JSON schema. The proposal is advisory: Choir alone may deliver Beads or admit a Goal."
   }
 }
 
@@ -152,6 +155,7 @@ fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
   let outcome = match role {
     @harness.CodexTakeRole::CodexImplementationTake => ["completed"]
     @harness.CodexTakeRole::CodexAuditTake => ["passed", "findings"]
+    @harness.CodexTakeRole::CodexWorkOrderPlanningTake => []
   }
   let properties : Map[String, Json] = {
     "outcome": { "type": "string".to_json(), "enum": outcome.to_json() }.to_json(),
@@ -174,6 +178,8 @@ fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
       required.push("repair_findings")
       required.push("migration_findings")
     }
+    @harness.CodexTakeRole::CodexWorkOrderPlanningTake =>
+      return native_work_order_planning_output_schema()
     _ => ()
   }
   let schema : Map[String, Json] = {

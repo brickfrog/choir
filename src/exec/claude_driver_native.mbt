@@ -120,6 +120,9 @@ fn native_claude_system_prompt(role : @harness.ClaudeTakeRole) -> String {
       common +
       "Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
       native_migration_audit_output_instruction()
+    @harness.ClaudeTakeRole::ClaudeWorkOrderPlanningTake =>
+      common +
+      "Act only as the read-only planner for the supplied accepted WorkOrder. Inspect repository evidence, but do not edit files or invoke mutating tools. Return exactly one proposal matching the supplied JSON schema. The proposal is advisory: Choir alone may deliver Beads or admit a Goal."
   }
 }
 
@@ -130,6 +133,8 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
       { "const": "completed".to_json() }.to_json()
     @harness.ClaudeTakeRole::ClaudeAuditTake =>
       { "enum": ["passed", "findings"].to_json() }.to_json()
+    @harness.ClaudeTakeRole::ClaudeWorkOrderPlanningTake =>
+      { "type": "object".to_json() }.to_json()
   }
   let properties : Map[String, Json] = { "outcome": outcome }
   let required : Array[String] = ["outcome"]
@@ -150,6 +155,8 @@ fn native_claude_output_schema(role : @harness.ClaudeTakeRole) -> String {
       required.push("repair_findings")
       required.push("migration_findings")
     }
+    @harness.ClaudeTakeRole::ClaudeWorkOrderPlanningTake =>
+      return native_work_order_planning_output_schema()
     _ => ()
   }
   let schema : Map[String, Json] = {

@@ -2,6 +2,7 @@
 pub(all) enum CodexTakeRole {
   CodexImplementationTake
   CodexAuditTake
+  CodexWorkOrderPlanningTake
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -9,6 +10,7 @@ pub(all) enum CodexTakeOutcome {
   CodexImplementationCompleted
   CodexAuditPassed
   CodexAuditFindings(Int, Int)
+  CodexWorkOrderPlanningCompleted
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -401,7 +403,20 @@ fn validate_codex_response(
         _ => Err(codex_driver_error("audit outcome is invalid"))
       }
     }
+    CodexWorkOrderPlanningTake =>
+      Ok((CodexWorkOrderPlanningCompleted, json.stringify(indent=0)))
   }
+}
+
+///|
+test "Codex WorkOrder planner retains the complete proposal object" {
+  let response = "{\"findings\":[],\"eligible_work_observed\":false,\"bead_mutations\":{\"mutations\":[]},\"primary_target_ids\":[],\"prerequisite_closure_ids\":[],\"finite_goal\":null}"
+  let (outcome, retained) = validate_codex_response(
+    CodexTakeRole::CodexWorkOrderPlanningTake,
+    response,
+  ).unwrap()
+  assert_eq(outcome, CodexTakeOutcome::CodexWorkOrderPlanningCompleted)
+  assert_eq(@json.parse(retained), @json.parse(response))
 }
 
 ///|

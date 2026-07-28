@@ -59,7 +59,6 @@ pub(all) struct WorkOrderChildGoalBinding {
 pub(all) enum WorkOrderLifecycle {
   WorkOrderActive
   WorkOrderStopped(WorkOrderStopReason)
-  WorkOrderCompleted
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -109,6 +108,7 @@ pub(all) enum WorkOrderStopReason {
   WorkOrderNoFurtherFindingsRemain
   WorkOrderSafetyCeilingReached
   WorkOrderFatalIntegrityStop(@control.Digest)
+  WorkOrderPlannerExhausted(WorkOrderPlanningFailure)
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -296,6 +296,17 @@ pub fn validate_work_order_record(
     }
   }
   Ok(())
+}
+
+///|
+pub fn adopt_work_order_fencing_epoch(
+  record : WorkOrderRecord,
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[WorkOrderRecord, @types.ChoirError] {
+  if fencing_epoch.0 <= record.fencing_epoch.0 {
+    return Err(work_order_error("fencing adoption must raise the epoch"))
+  }
+  Ok({ ..record, durable_version: record.durable_version + 1, fencing_epoch })
 }
 
 ///|
@@ -530,6 +541,17 @@ pub fn record_work_order_integrity_stop(
     Some(_) => Ok(budget)
     None =>
       Ok({ ..budget, stopped: Some(WorkOrderFatalIntegrityStop(evidence)) })
+  }
+}
+
+///|
+pub fn record_work_order_planner_stop(
+  budget : WorkOrderBudget,
+  failure : WorkOrderPlanningFailure,
+) -> WorkOrderBudget {
+  match budget.stopped {
+    Some(_) => budget
+    None => { ..budget, stopped: Some(WorkOrderPlannerExhausted(failure)) }
   }
 }
 

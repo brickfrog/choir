@@ -612,3 +612,58 @@ pub fn complete_work_order_bead_delivery(
     phase: WorkOrderPlanningPhase::WorkOrderPlanningBeadsDelivered,
   })
 }
+
+///|
+/// Decide what a terminal planning round means for the campaign.
+///
+/// Stable no-work policies require more than one exact observation, so a
+/// non-stopping no-work round authorizes another round against a fresh caller
+/// snapshot. Provider and validation exhaustion instead latches a typed
+/// terminal reason; an active WorkOrder must never remain parked forever on a
+/// terminal round.
+pub fn continue_work_order_after_terminal_round(
+  record : WorkOrderRecord,
+  repository_snapshot_digest : @control.Digest,
+  bead_snapshot_digest : @control.Digest,
+) -> Result[WorkOrderRecord, @types.ChoirError] {
+  guard record.lifecycle == WorkOrderLifecycle::WorkOrderActive &&
+    !record.child_goals.any(fn(binding) {
+      binding.outcome == WorkOrderChildOutcome::WorkOrderChildActive
+    }) &&
+    record.planning_rounds.last() is Some(round) &&
+    round.phase == WorkOrderPlanningPhase::WorkOrderPlanningRoundTerminal else {
+    return Err(work_order_planning_error("terminal round is not continuable"))
+  }
+  match round.outcome {
+    WorkOrderPlanningOutcome::WorkOrderPlanningNoEligibleWork
+    | WorkOrderPlanningOutcome::WorkOrderPlanningNoFurtherFindings =>
+      match record.budget.stopped {
+        Some(reason) =>
+          Ok({
+            ..record,
+            lifecycle: WorkOrderLifecycle::WorkOrderStopped(reason),
+            durable_version: record.durable_version + 1,
+          })
+        None =>
+          plan_work_order_round(
+            record, repository_snapshot_digest, bead_snapshot_digest,
+          )
+      }
+    WorkOrderPlanningOutcome::WorkOrderPlanningFailed(failure)
+    | WorkOrderPlanningOutcome::WorkOrderPlanningQuarantined(failure) => {
+      let budget = record_work_order_planner_stop(record.budget, failure)
+      guard budget.stopped is Some(reason) else {
+        return Err(work_order_planning_error("planner stop did not latch"))
+      }
+      Ok({
+        ..record,
+        budget,
+        lifecycle: WorkOrderLifecycle::WorkOrderStopped(reason),
+        durable_version: record.durable_version + 1,
+      })
+    }
+    WorkOrderPlanningOutcome::WorkOrderPlanningPending
+    | WorkOrderPlanningOutcome::WorkOrderPlanningProposalAccepted =>
+      Err(work_order_planning_error("terminal round outcome is invalid"))
+  }
+}

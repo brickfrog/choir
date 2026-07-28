@@ -130,6 +130,10 @@ async test "delivered round admits one durable successor and replays it" {
   @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
   let beads = @command.bead_records_from_json(@json.parse(bead_json)).unwrap()
   let snapshot : NativeWorkOrderPlanningSnapshot = {
+    repository_root: root,
+    object_directory: root + "/.git/objects",
+    commit_oid: @control.GitOid(base_commit),
+    tree_oid: @control.GitOid(base_tree),
     repository_digest: @storage.artifact_digest(
       @utf8.encode(
         "choir.work-order-repository-snapshot.v1\u{00}" +
@@ -253,7 +257,15 @@ async test "native planning reconciles provider and Bead effects by durable phas
   let deliveries : Array[@workflow.WorkOrderPlanningRoundId] = []
   let adapters : NativeWorkOrderPlanningAdapters = {
     capture_snapshot: () => {
-      Ok({ repository_digest: digest, bead_digest: digest, beads: [] })
+      Ok({
+        repository_root: "/tmp/repository",
+        object_directory: "/tmp/repository/.git/objects",
+        commit_oid: @control.GitOid("1111111111111111111111111111111111111111"),
+        tree_oid: @control.GitOid("2222222222222222222222222222222222222222"),
+        repository_digest: digest,
+        bead_digest: digest,
+        beads: [],
+      })
     },
     execute_planner: (_, _) => {
       executions.val = executions.val + 1
@@ -337,7 +349,15 @@ async test "a crashed Bead delivery reuses the exact round and batch" {
   let attempts : Array[@workflow.WorkOrderPlanningRoundId] = []
   let adapters : NativeWorkOrderPlanningAdapters = {
     capture_snapshot: () => {
-      Ok({ repository_digest: digest, bead_digest: digest, beads: [] })
+      Ok({
+        repository_root: "/tmp/repository",
+        object_directory: "/tmp/repository/.git/objects",
+        commit_oid: @control.GitOid("1111111111111111111111111111111111111111"),
+        tree_oid: @control.GitOid("2222222222222222222222222222222222222222"),
+        repository_digest: digest,
+        bead_digest: digest,
+        beads: [],
+      })
     },
     execute_planner: (_, _) => Ok(content),
     recover_planner: (_, _) => Ok(NativeWorkOrderPlannerExactRetryAuthorized),
@@ -386,5 +406,267 @@ async test "a crashed Bead delivery reuses the exact round and batch" {
   )
   assert_eq(attempts.length(), 2)
   assert_eq(attempts[0], attempts[1])
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+test "WorkOrder executor leases persist, release fairly, and fence on restart" {
+  let root = "/tmp/choir-work-order-executor-store-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create WorkOrder executor store")
+  }
+  let repository = native_planning_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let first = {
+    ..native_planning_work_order(),
+    id: @workflow.WorkOrderId("work-order-executor-first"),
+    child_goals: [],
+  }
+  let second = {
+    ..native_planning_work_order(),
+    id: @workflow.WorkOrderId("work-order-executor-second"),
+    child_goals: [],
+  }
+  for record in [first, second] {
+    ignore(
+      @workflow.persist_work_order_record(repository, adapters, {
+        record,
+        expected_store_version: None,
+        fault_point: None,
+      }).unwrap(),
+    )
+  }
+  let epoch = @control.FencingEpoch(20L)
+  let planned = @workflow.acquire_work_order_executor_dispatches(
+    repository, adapters, 1, 1_000L, epoch,
+  ).unwrap()
+  assert_eq(planned.leases.length(), 1)
+  let held = planned.leases[0]
+  assert_true(
+    @workflow.work_order_executor_lease_is_authorized(
+      repository, adapters, held,
+    ).unwrap(),
+  )
+  let replay = @workflow.acquire_work_order_executor_dispatches(
+    repository, adapters, 1, 1_000L, epoch,
+  ).unwrap()
+  assert_eq(replay.leases, [])
+  let completed = @workflow.persist_work_order_executor_completion(
+    repository,
+    adapters,
+    held,
+    @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickSucceeded(
+      Some(first.durable_version),
+      [],
+    ),
+    1_000L,
+  ).unwrap()
+  assert_eq(completed.lease, None)
+  let next = @workflow.acquire_work_order_executor_dispatches(
+    repository, adapters, 1, 1_000L, epoch,
+  ).unwrap()
+  assert_eq(next.leases.length(), 1)
+  assert_true(next.leases[0].work_order_id != held.work_order_id)
+  let replacement = @workflow.acquire_work_order_executor_dispatches(
+    repository,
+    adapters,
+    1,
+    1_001L,
+    @control.FencingEpoch(21L),
+  ).unwrap()
+  assert_eq(replacement.leases.length(), 1)
+  assert_false(
+    @workflow.work_order_executor_lease_is_authorized(
+      repository,
+      adapters,
+      next.leases[0],
+    ).unwrap(),
+  )
+  assert_true(
+    @workflow.work_order_executor_lease_is_authorized(
+      repository,
+      adapters,
+      replacement.leases[0],
+    ).unwrap(),
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+test "planner attempt recovery distinguishes planned, issued, and completed" {
+  let root = "/tmp/choir-work-order-attempt-store-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create planner attempt store")
+  }
+  let repository = native_planning_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let digest = @storage.artifact_digest(@utf8.encode("attempt"))
+  let owner = @workflow.dispatch_work_order_planning_round(
+    @workflow.plan_work_order_round(
+      native_planning_work_order(),
+      digest,
+      digest,
+    ).unwrap(),
+    101L,
+  ).unwrap()
+  let round = owner.planning_rounds.last().unwrap()
+  let planned = @workflow.ensure_work_order_planner_attempt(
+    repository, adapters, owner, round, digest, digest,
+  ).unwrap()
+  assert_true(
+    planned.record.lifecycle
+    is @workflow.WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptPlanned,
+  )
+  let adopted = @workflow.ensure_work_order_planner_attempt(
+    repository,
+    adapters,
+    {
+      ..owner,
+      durable_version: owner.durable_version + 1,
+      fencing_epoch: @control.FencingEpoch(2L),
+    },
+    round,
+    digest,
+    digest,
+  ).unwrap()
+  assert_eq(adopted.record.fencing_epoch, @control.FencingEpoch(2L))
+  let issued = @workflow.persist_work_order_planner_attempt_transition(
+    repository,
+    adapters,
+    adopted,
+    @workflow.issue_work_order_planner_attempt(adopted.record, 102L).unwrap(),
+  ).unwrap()
+  assert_true(
+    issued.record.lifecycle
+    is @workflow.WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptIssued(
+      102L
+    ),
+  )
+  let content = @workflow.work_order_planning_proposal_bytes(
+    native_planning_proposal(),
+  )
+  let result_digest = @storage.artifact_digest(content)
+  let receipt = (adapters.artifacts.adopt)(repository.artifact_store, {
+    content,
+    expected_digest: result_digest,
+    provenance: @storage.ArtifactProvenance::ArtifactWorkOrderPlannerResult,
+    retention: @storage.ArtifactRetention::ArtifactPermanent,
+  }).unwrap()
+  let completed = @workflow.persist_work_order_planner_attempt_transition(
+    repository,
+    adapters,
+    issued,
+    @workflow.complete_work_order_planner_attempt(
+      issued.record,
+      { artifact_id: receipt.artifact_id.0, digest: receipt.digest },
+      103L,
+    ).unwrap(),
+  ).unwrap()
+  assert_true(
+    completed.record.lifecycle
+    is @workflow.WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptCompleted(
+      _,
+      103L
+    ),
+  )
+  assert_eq(
+    @workflow.load_work_order_planner_attempt(repository, adapters, round)
+    .unwrap()
+    .unwrap().record,
+    completed.record,
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "a delivered child leaves GoalReady and starts the next round" {
+  let root = "/tmp/choir-work-order-next-round-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create next-round store")
+  }
+  let repository = native_planning_repository(root)
+  let adapters = local_part_workflow_repository_adapters()
+  @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
+  let digest = @storage.artifact_digest(@utf8.encode("next-round"))
+  let proposal = native_planning_proposal()
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let dispatched = @workflow.dispatch_work_order_planning_round(
+    @workflow.plan_work_order_round(
+      native_planning_work_order(),
+      digest,
+      digest,
+    ).unwrap(),
+    101L,
+  ).unwrap()
+  let received = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    {
+      artifact_id: "next-round-proposal",
+      digest: @storage.artifact_digest(content),
+    },
+    content,
+    digest,
+    digest,
+    [],
+    101L,
+  ).unwrap()
+  let delivered = @workflow.complete_work_order_bead_delivery(
+    @workflow.begin_work_order_bead_delivery(received).unwrap(),
+    @command.bead_batch_digest(proposal.bead_mutations),
+    digest,
+  ).unwrap()
+  let rounds = delivered.planning_rounds.copy()
+  rounds[0] = {
+    ..rounds[0],
+    phase: @workflow.WorkOrderPlanningPhase::WorkOrderPlanningGoalReady,
+  }
+  let ready = { ..delivered, planning_rounds: rounds, durable_version: 1 }
+  ignore(
+    @workflow.persist_work_order_record(repository, adapters, {
+      record: ready,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let snapshot : NativeWorkOrderPlanningSnapshot = {
+    repository_root: "/tmp/repository",
+    object_directory: "/tmp/repository/.git/objects",
+    commit_oid: @control.GitOid("1111111111111111111111111111111111111111"),
+    tree_oid: @control.GitOid("2222222222222222222222222222222222222222"),
+    repository_digest: digest,
+    bead_digest: digest,
+    beads: [],
+  }
+  let planning : NativeWorkOrderPlanningAdapters = {
+    capture_snapshot: fn() { Ok(snapshot) },
+    execute_planner: (_, _) => Ok(content),
+    recover_planner: (_, _) => Ok(NativeWorkOrderPlannerRecovered(content)),
+    authorize_planner: (_, _) => Ok(NativeWorkOrderPlannerAdmitted),
+    release_planner: (_, _) => Ok(()),
+    deliver_beads: (_, _) => {
+      Ok({ batch_digest: digest, bead_snapshot_digest: digest })
+    },
+    now: fn() { 102L },
+  }
+  let advanced = run_native_work_order_planning_tick(
+    repository,
+    adapters,
+    ready.id,
+    planning,
+  ).unwrap()
+  guard advanced is NativeWorkOrderPlanningAdvanced(record) else {
+    fail("GoalReady did not advance")
+  }
+  assert_eq(record.planning_rounds.length(), 2)
+  assert_eq(
+    record.planning_rounds[1].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningIntentRecorded,
+  )
   ignore(@sys.rm_rf(root))
 }

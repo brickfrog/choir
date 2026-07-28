@@ -1243,6 +1243,130 @@ async fn conductor_run_leased_goal_job(
 }
 
 ///|
+async fn conductor_run_leased_work_order_job(
+  config : @types.Config,
+  lease : @workflow.WorkOrderExecutorLease,
+) -> Unit {
+  let observed = @exec.run_native_work_order_execution_job(
+    config.project_dir,
+    lease,
+    config.provider_capacity,
+  )
+  let outcome = match observed.0 {
+    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) =>
+      @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickSucceeded(
+        None,
+        observed.1,
+      )
+    Ok(
+      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+        record
+      )
+    ) =>
+      @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickSucceeded(
+        Some(record.durable_version),
+        observed.1,
+      )
+    Err(error) =>
+      @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickFailed(
+        @workflow.work_order_execution_job_failure_digest(error),
+        observed.1,
+      )
+  }
+  let completed = match
+    @exec.complete_native_work_order_executor_dispatch(
+      config.project_dir,
+      lease,
+      outcome,
+    ) {
+    Ok(value) => value
+    Err(error) => {
+      @moontrace.error("WorkOrder executor lease release failed", fields=[
+        @moontrace.field("work_order_id", lease.work_order_id.0),
+        @moontrace.field("error", error.message()),
+      ])
+      // Exactly as for Goal leases, continuing with an unreturned slot would
+      // silently shrink capacity. A fresh worker fence reclaims the orphan.
+      @sys.exit(1)
+      return
+    }
+  }
+  match observed.0 {
+    Ok(
+      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+        record
+      )
+    ) =>
+      @moontrace.info("WorkOrder execution advanced", fields=[
+        @moontrace.field("work_order_id", record.id.0),
+        @moontrace.field("durable_version", record.durable_version.to_string()),
+      ])
+    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) => ()
+    Err(error) =>
+      @moontrace.error("WorkOrder execution job failed", fields=[
+        @moontrace.field("work_order_id", lease.work_order_id.0),
+        @moontrace.field("error", error.message()),
+        @moontrace.field(
+          "consecutive_failures",
+          completed.consecutive_failures.to_string(),
+        ),
+        @moontrace.field("due_at", completed.due_at.to_string()),
+      ])
+  }
+}
+
+///|
+fn conductor_launch_work_order_executor_batch(
+  group : @async.TaskGroup[Unit],
+  config : @types.Config,
+  leases : Array[@workflow.WorkOrderExecutorLease],
+  run : async (@types.Config, @workflow.WorkOrderExecutorLease) -> Unit,
+) -> Unit {
+  for lease in leases {
+    @moontrace.info("WorkOrder executor leased", fields=[
+      @moontrace.field("work_order_id", lease.work_order_id.0),
+      @moontrace.field("slot", lease.slot.to_string()),
+    ])
+    group.spawn_bg(async fn() { run(config, lease) })
+  }
+}
+
+///|
+async fn conductor_work_order_scheduler_loop(config : @types.Config) -> Unit {
+  @async.with_task_group(async fn(group) {
+    let mut consecutive_failures = 0
+    for ;; {
+      match
+        @exec.plan_native_work_order_executor_dispatches(
+          config.project_dir,
+          config.work_order_executor_capacity,
+        ) {
+        Ok(batch) => {
+          consecutive_failures = 0
+          conductor_launch_work_order_executor_batch(
+            group,
+            config,
+            batch.leases,
+            conductor_run_leased_work_order_job,
+          )
+        }
+        Err(error) => {
+          consecutive_failures = consecutive_failures + 1
+          @moontrace.error("WorkOrder portfolio scheduling failed", fields=[
+            @moontrace.field("error", error.message()),
+            @moontrace.field(
+              "consecutive_failures",
+              consecutive_failures.to_string(),
+            ),
+          ])
+        }
+      }
+      @async.sleep(@workflow.goal_execution_tick_delay_ms(consecutive_failures))
+    }
+  })
+}
+
+///|
 fn conductor_launch_goal_executor_batch(
   group : @async.TaskGroup[Unit],
   config : @types.Config,
@@ -1504,6 +1628,7 @@ fn goal_worker_run() -> Unit {
   @async.run_async_main(async fn() {
     @async.with_task_group(async fn(group) {
       group.spawn_bg(async fn() { conductor_goal_observer(config) })
+      group.spawn_bg(async fn() { conductor_work_order_scheduler_loop(config) })
       conductor_goal_scheduler_loop(config)
     })
   })

@@ -110,6 +110,8 @@ test "the manifest covers every durably stored record" {
     (DurableProcessExecution, "process-execution:"),
     (DurableProviderSurfaceLease, "provider-lease:"),
     (DurableGoalExecutorSchedule, "goal-executor:"),
+    (DurableWorkOrderExecutorSchedule, "work-order-executor:"),
+    (DurableWorkOrderPlannerAttempt, "work-order-planner-attempt:"),
     (DurableWorkOrderRecord, "work-order:"),
   ]
   assert_eq(expected.length(), @workflow.durable_record_kinds().length())
