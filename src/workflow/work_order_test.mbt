@@ -789,3 +789,152 @@ test "review-ready and exact-merge delivery count once from latched closure" {
     @workflow.RemotePullRequestState::RemotePullRequestMerged,
   )
 }
+
+///|
+test "one unattended WorkOrder survives a failed child and two delivery boundaries" {
+  let digest = fn(label : String) {
+    @storage.artifact_digest(@utf8.encode(label))
+  }
+  let restart = fn(record : @workflow.WorkOrderRecord) {
+    @workflow.decode_work_order_record(
+      @workflow.work_order_record_bytes(record),
+    ).unwrap()
+  }
+  let base = planning_work_order()
+  let budget = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(
+      @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+      2,
+    ),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    100L,
+  ).unwrap()
+  let failed_goal = @control.GoalId("goal-unattended-failed")
+  let mut current = restart({
+    ..base,
+    initial_primary_target_ids: [
+      @control.PartId("choir-failed"),
+      @control.PartId("choir-review"),
+      @control.PartId("choir-merge"),
+    ],
+    budget,
+    child_goals: [
+      {
+        goal_id: failed_goal,
+        selection_decision_digest: digest("failed-selection"),
+        primary_target_ids: [@control.PartId("choir-failed")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+  })
+  current = restart(
+    @workflow.record_work_order_child_disposition(
+      current,
+      failed_goal,
+      @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+        digest("failed-child"),
+      ),
+      101L,
+    ).unwrap(),
+  )
+  assert_true(
+    current.lifecycle == @workflow.WorkOrderLifecycle::WorkOrderActive,
+  )
+  let review_goal = @control.GoalId("goal-unattended-review")
+  current = restart({
+    ..current,
+    child_goals: current.child_goals +
+    [
+      {
+        goal_id: review_goal,
+        selection_decision_digest: digest("review-selection"),
+        primary_target_ids: [@control.PartId("choir-review")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+    durable_version: current.durable_version + 1,
+  })
+  let review : @workflow.WorkOrderDeliveryEvidence = {
+    boundary: @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+    remote_pull_request_id: @workflow.RemotePullRequestId("PR-review"),
+    observed_head_oid: @control.GitOid(
+      "1111111111111111111111111111111111111111",
+    ),
+    observed_remote_state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    receipt_digest: digest("review-receipt"),
+  }
+  current = restart(
+    @workflow.record_work_order_child_delivery(
+      current, review_goal, review, 102L,
+    ).unwrap(),
+  )
+  assert_eq(current.budget.counters.delivered_primary_targets, 1)
+  assert_eq(
+    @workflow.record_work_order_child_delivery(
+      current, review_goal, review, 102L,
+    ).unwrap(),
+    current,
+  )
+  let merge_goal = @control.GoalId("goal-unattended-merge")
+  current = restart({
+    ..current,
+    child_goals: current.child_goals +
+    [
+      {
+        goal_id: merge_goal,
+        selection_decision_digest: digest("merge-selection"),
+        primary_target_ids: [@control.PartId("choir-merge")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+    durable_version: current.durable_version + 1,
+  })
+  let merged : @workflow.WorkOrderDeliveryEvidence = {
+    boundary: @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
+    remote_pull_request_id: @workflow.RemotePullRequestId("PR-merge"),
+    observed_head_oid: @control.GitOid(
+      "2222222222222222222222222222222222222222",
+    ),
+    observed_remote_state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+    receipt_digest: digest("merge-receipt"),
+  }
+  current = restart(
+    @workflow.record_work_order_child_delivery(
+      current, merge_goal, merged, 103L,
+    ).unwrap(),
+  )
+  assert_eq(current.budget.counters.delivered_primary_targets, 2)
+  assert_true(
+    current.lifecycle
+    is @workflow.WorkOrderLifecycle::WorkOrderStopped(
+      @workflow.WorkOrderStopReason::WorkOrderQuotaSatisfied(
+        @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+        2
+      )
+    ),
+  )
+  assert_eq(current.child_goals.map(fn(child) { child.outcome }), [
+    @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+      digest("failed-child"),
+    ),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildDelivered,
+    @workflow.WorkOrderChildOutcome::WorkOrderChildDelivered,
+  ])
+  assert_eq(
+    current.child_goals[1].delivery_evidence.unwrap().boundary,
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+  )
+  assert_eq(
+    current.child_goals[2].delivery_evidence.unwrap().boundary,
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
+  )
+}

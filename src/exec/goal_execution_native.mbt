@@ -1687,7 +1687,7 @@ fn native_goal_boxlite_home_at(
 }
 
 ///|
-fn native_goal_boxlite_home(
+pub fn native_goal_boxlite_home(
   repository_id : @workflow.RepositoryId,
 ) -> Result[String, @types.ChoirError] {
   match native_boxlite_data_home() {
@@ -2628,7 +2628,7 @@ async fn advance_native_goal_source_releases(
 }
 
 ///|
-fn native_goal_mcp_script() -> String? {
+pub fn native_goal_mcp_script() -> String? {
   resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp)
 }
 

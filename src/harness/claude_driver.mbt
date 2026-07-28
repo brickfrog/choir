@@ -2,6 +2,7 @@
 pub(all) enum ClaudeTakeRole {
   ClaudeImplementationTake
   ClaudeAuditTake
+  ClaudeWorkOrderPlanningTake
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -38,6 +39,7 @@ pub(all) enum ClaudeTakeOutcome {
   ClaudeImplementationCompleted
   ClaudeAuditPassed
   ClaudeAuditFindings(Int, Int)
+  ClaudeWorkOrderPlanningCompleted
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -468,7 +470,20 @@ fn validate_claude_take_response(
         _ => Err(claude_driver_error("audit outcome is invalid"))
       }
     }
+    ClaudeWorkOrderPlanningTake =>
+      Ok((ClaudeWorkOrderPlanningCompleted, json.stringify(indent=0)))
   }
+}
+
+///|
+test "Claude WorkOrder planner retains the complete proposal object" {
+  let response = "{\"findings\":[],\"eligible_work_observed\":false,\"bead_mutations\":{\"mutations\":[]},\"primary_target_ids\":[],\"prerequisite_closure_ids\":[],\"finite_goal\":null}"
+  let (outcome, retained) = validate_claude_take_response(
+    ClaudeTakeRole::ClaudeWorkOrderPlanningTake,
+    response,
+  ).unwrap()
+  assert_eq(outcome, ClaudeTakeOutcome::ClaudeWorkOrderPlanningCompleted)
+  assert_eq(@json.parse(retained), @json.parse(response))
 }
 
 ///|

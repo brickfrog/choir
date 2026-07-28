@@ -652,6 +652,12 @@ async fn run_native_part_provider_take(
         @harness.ClaudeTakeOutcome::ClaudeAuditPassed => NativeAuditPassed
         @harness.ClaudeTakeOutcome::ClaudeAuditFindings(total, blocking) =>
           NativeAuditFindings(total, blocking)
+        @harness.ClaudeTakeOutcome::ClaudeWorkOrderPlanningCompleted =>
+          return Err(
+            native_part_effect_error(
+              "WorkOrder planner outcome reached a Part Take",
+            ),
+          )
       }
       Ok({
         session: result.session,
@@ -690,6 +696,12 @@ async fn run_native_part_provider_take(
         @harness.CodexTakeOutcome::CodexAuditPassed => NativeAuditPassed
         @harness.CodexTakeOutcome::CodexAuditFindings(total, blocking) =>
           NativeAuditFindings(total, blocking)
+        @harness.CodexTakeOutcome::CodexWorkOrderPlanningCompleted =>
+          return Err(
+            native_part_effect_error(
+              "WorkOrder planner outcome reached a Part Take",
+            ),
+          )
       }
       Ok({
         session: result.session,

@@ -142,6 +142,16 @@ pub fn parse_config(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let maximum_parallel_work_order_jobs = match
+    parse_capacity_bound(
+      primary,
+      machine,
+      "capacity.work_orders",
+      defaults.work_order_executor_capacity.maximum_parallel_jobs,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let provider_capacity : @types.ProviderCapacityPolicy = {
     claude_subscription_cli: claude,
     codex_subscription_cli: codex,
@@ -155,6 +165,16 @@ pub fn parse_config(
     maximum_parallel_jobs: maximum_parallel_goal_jobs,
   }
   match @types.validate_goal_executor_capacity_policy(goal_executor_capacity) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let work_order_executor_capacity : @types.WorkOrderExecutorCapacityPolicy = {
+    maximum_parallel_jobs: maximum_parallel_work_order_jobs,
+  }
+  match
+    @types.validate_work_order_executor_capacity_policy(
+      work_order_executor_capacity,
+    ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -174,5 +194,6 @@ pub fn parse_config(
     pull_request_delivery: { mode: delivery_mode, merge_method },
     provider_capacity,
     goal_executor_capacity,
+    work_order_executor_capacity,
   })
 }

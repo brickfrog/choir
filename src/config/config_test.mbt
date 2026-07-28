@@ -44,6 +44,17 @@ test "Goal executor capacity is a typed positive host bound" {
 }
 
 ///|
+test "WorkOrder executor capacity is a separate typed host bound" {
+  let defaults = parse_config("").unwrap()
+  assert_eq(defaults.work_order_executor_capacity, { maximum_parallel_jobs: 4 })
+  let configured = parse_config("[capacity]\nwork_orders = \"7\"\n").unwrap()
+  assert_eq(configured.work_order_executor_capacity.maximum_parallel_jobs, 7)
+  assert_true(parse_config("[capacity]\nwork_orders = \"0\"\n") is Err(_))
+  assert_true(parse_config("[capacity]\nwork_orders = \"1025\"\n") is Err(_))
+  assert_true(parse_config("[capacity]\nwork_orders = \"many\"\n") is Err(_))
+}
+
+///|
 /// A bound nobody meant is worse than no configuration at all: zero stops the
 /// daemon dispatching anything and a negative one would admit everything.
 test "provider capacity is read as typed positive bounds" {
@@ -69,12 +80,15 @@ test "provider capacity is read as typed positive bounds" {
 ///|
 test "machine-local capacity overrides the checked-in capacity" {
   let config = parse_config(
-    "[capacity]\nclaude = \"2\"\ncodex = \"2\"\ngoals = \"3\"\n",
-    local_content=Some("[capacity]\nclaude = \"5\"\ngoals = \"6\"\n"),
+    "[capacity]\nclaude = \"2\"\ncodex = \"2\"\ngoals = \"3\"\nwork_orders = \"2\"\n",
+    local_content=Some(
+      "[capacity]\nclaude = \"5\"\ngoals = \"6\"\nwork_orders = \"5\"\n",
+    ),
   ).unwrap()
   assert_eq(config.provider_capacity.claude_subscription_cli, 5)
   assert_eq(config.provider_capacity.codex_subscription_cli, 2)
   assert_eq(config.goal_executor_capacity.maximum_parallel_jobs, 6)
+  assert_eq(config.work_order_executor_capacity.maximum_parallel_jobs, 5)
 }
 
 ///|

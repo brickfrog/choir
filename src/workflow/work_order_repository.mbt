@@ -123,6 +123,40 @@ pub fn load_work_order_record(
 }
 
 ///|
+pub fn persist_work_order_fencing_epoch_adoption(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  previous : StoredWorkOrderRecord,
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[StoredWorkOrderRecord, @types.ChoirError] {
+  let next = match
+    adopt_work_order_fencing_epoch(previous.record, fencing_epoch) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let receipt = match
+    persist_work_order_record(repository, adapters, {
+      record: next,
+      expected_store_version: Some(previous.state_record.version),
+      fault_point: None,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.transaction_outcome {
+    @storage.StateTransactionOutcome::StateTransactionCommitted
+    | @storage.StateTransactionOutcome::StateTransactionReplayed
+    | @storage.StateTransactionOutcome::StateTransactionCommittedAckLost =>
+      match load_work_order_record(repository, adapters, next.id) {
+        Ok(Some(stored)) if stored.record == next => Ok(stored)
+        Ok(_) => Err(work_order_error("fencing adoption did not reload"))
+        Err(error) => Err(error)
+      }
+    _ => Err(work_order_error("fencing adoption conflicted"))
+  }
+}
+
+///|
 pub fn list_work_order_records(
   repository : PartWorkflowRepository,
   adapters : PartWorkflowRepositoryAdapters,

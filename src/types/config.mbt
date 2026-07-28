@@ -52,6 +52,11 @@ pub(all) struct GoalExecutorCapacityPolicy {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct WorkOrderExecutorCapacityPolicy {
+  maximum_parallel_jobs : Int
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub fn maximum_goal_executor_jobs() -> Int {
   1024
 }
@@ -69,6 +74,22 @@ pub fn validate_goal_executor_capacity_policy(
     policy.maximum_parallel_jobs > maximum_goal_executor_jobs() {
     Err(
       ChoirError::validation_error("capacity.goals must be between 1 and 1024"),
+    )
+  } else {
+    Ok(())
+  }
+}
+
+///|
+pub fn validate_work_order_executor_capacity_policy(
+  policy : WorkOrderExecutorCapacityPolicy,
+) -> Result[Unit, ChoirError] {
+  if policy.maximum_parallel_jobs <= 0 ||
+    policy.maximum_parallel_jobs > maximum_goal_executor_jobs() {
+    Err(
+      ChoirError::validation_error(
+        "capacity.work_orders must be between 1 and 1024",
+      ),
     )
   } else {
     Ok(())
@@ -107,6 +128,7 @@ pub(all) struct Config {
   pull_request_delivery : PullRequestDeliveryPolicy
   provider_capacity : ProviderCapacityPolicy
   goal_executor_capacity : GoalExecutorCapacityPolicy
+  work_order_executor_capacity : WorkOrderExecutorCapacityPolicy
 } derive(Debug, Eq)
 
 ///|
@@ -133,5 +155,6 @@ pub fn Config::default() -> Config {
     // accepted portfolio into an unbounded number of BoxLite servers. Provider
     // leases remain the tighter bound whenever these jobs reach a subscription.
     goal_executor_capacity: { maximum_parallel_jobs: 4 },
+    work_order_executor_capacity: { maximum_parallel_jobs: 4 },
   }
 }

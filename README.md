@@ -67,8 +67,10 @@ durable lease on each provider surface, sized by the `[capacity]` section of
 `.choir/config.toml`
 (`claude`, `codex`, and an optional `global` ceiling across all surfaces).
 `capacity.goals` separately bounds concurrent durable Goal jobs and their
-BoxLite servers (default `4`). A Part refused a provider slot is told when to
-come back rather than retried in a loop.
+BoxLite servers (default `4`). `capacity.work_orders` bounds the independent
+durable WorkOrder coordinators and their read-only planner sandboxes (also
+default `4`). A Part or planner refused a provider slot is told when to come
+back rather than retried in a loop.
 
 Choir does not install a slash command or skill named `goal`: `/goal` remains
 Claude Code's built-in session goal. While a durable Choir Goal is running, a

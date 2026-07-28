@@ -2527,6 +2527,29 @@ pub async fn destroy_native_boxlite_take(
 }
 
 ///|
+/// Remove the one prepared base owned by this runtime. Unlike `rm --all`, this
+/// cannot touch boxes belonging to concurrently executing Goals or
+/// WorkOrders that share the repository-scoped BoxLite home.
+pub async fn destroy_native_boxlite_prepared_environment(
+  prepared : NativeBoxLitePreparedEnvironment,
+) -> Result[Unit, @types.ChoirError] {
+  let removed = match
+    capture_native_boxlite_cli(
+      prepared.server,
+      ["rm", "-f", prepared.base_box_id],
+      60000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if removed.exit_code == 0 {
+    Ok(())
+  } else {
+    Err(native_boxlite_take_error("prepared base cleanup failed"))
+  }
+}
+
+///|
 test "native BoxLite Take body fixes isolation and resources" {
   let body = native_boxlite_create_body("take-box")
   assert_true(body.contains("\"mode\":\"disabled\""))
