@@ -227,6 +227,32 @@ async test "an execution tick forgets the previous tick's dispositions" {
 }
 
 ///|
+/// A tick that never reaches a gate still forgets what the last one said.
+///
+/// The control store initialization above the runner returns early on failure,
+/// so the reset has to precede it. Behind it, a tick that ended before any
+/// surface was judged would leave the previous tick's refusal standing, and
+/// `goal_execution_tick_delay_ms_with_deferral` would pace this tick's sleep by
+/// an instant named during a tick that has already finished — indefinitely,
+/// because whatever skipped the reset skips it again next time.
+///
+/// `/dev/null` is a character device, so no directory under it can be created
+/// and the SQLite store cannot be opened. Nothing on disk is touched.
+async test "a tick that cannot open its control store still resets its surfaces" {
+  observe_native_goal_provider_surface({
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+      1L,
+    ),
+  })
+  assert_true(
+    run_native_goal_execution_tick("/dev/null/choir-unopenable-control-store")
+    is Err(_),
+  )
+  assert_eq(native_goal_provider_surface_reports(), [])
+}
+
+///|
 pub fn current_native_goal_fencing_epoch() -> @control.FencingEpoch {
   @control.FencingEpoch(native_goal_fencing_epoch_state.val)
 }
@@ -6124,6 +6150,12 @@ pub async fn run_native_goal_execution_tick_with_forge(
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let repository_adapters = local_part_workflow_repository_adapters()
+  // What each surface's capacity bound answered. Reset per tick, so what the
+  // daemon reads afterwards describes the tick that just ran. Ahead of the
+  // store initialization below, whose failure returns early: a tick that ends
+  // before any gate ran must leave nothing behind either, or the daemon paces
+  // its next sleep by an instant a previous tick named.
+  reset_native_goal_provider_surfaces()
   match
     @workflow.initialize_part_workflow_repository(
       repository, repository_adapters,
@@ -6131,9 +6163,6 @@ pub async fn run_native_goal_execution_tick_with_forge(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  // What each surface's capacity bound answered. Reset per tick, so what the
-  // daemon reads afterwards describes the tick that just ran.
-  reset_native_goal_provider_surfaces()
   let result = @workflow.run_next_goal_execution_tick(
     repository,
     repository_adapters,
