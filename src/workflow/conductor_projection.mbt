@@ -498,14 +498,27 @@ fn goal_delivery_has_landed(report : GoalStatusReport) -> Bool {
 }
 
 ///|
+/// Whether this Part is waiting on the surface it runs on rather than working.
+///
+/// The report is read against the same schedule the recovery decision uses, so
+/// a Part counted as deferred here is one `plan_part_recovery_retry` would
+/// also defer, and it stops being counted at the instant it becomes eligible
+/// again. A schedule that could not be built is not itself a reason to report
+/// a Part as waiting.
 fn part_is_provider_deferred(part : GoalPartStatus, now : Int64) -> Bool {
-  match part.dispatch_diagnostic {
-    Some(diagnostic) =>
+  match (part.dispatch_diagnostic, part_provider_recheck_policy()) {
+    (Some(diagnostic), Ok(policy)) =>
       !@control.provider_availability_admits_dispatch(
         diagnostic.availability,
-        now,
+        observed_at=diagnostic.observed_at,
+        prior_deferrals=part_surface_prior_deferrals(
+          part.provider_failovers,
+          part.provider_surface,
+        ),
+        policy~,
+        now~,
       )
-    None => false
+    _ => false
   }
 }
 

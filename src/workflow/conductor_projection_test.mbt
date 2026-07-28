@@ -257,6 +257,7 @@ test "an attention summary names the durable cause, not the counters" {
       recovery: None,
       detail: "Codex driver: provider lifecycle is incomplete (codex exit 1, 0 output bytes)",
       availability: @control.ProviderAvailability::ProviderAvailable,
+      observed_at: 12L,
     }),
   }
   let summary = match
@@ -351,9 +352,11 @@ fn portfolio_part(
   stage : @workflow.PartWorkflowStage,
   part_id : String,
   availability? : @control.ProviderAvailability? = None,
+  observed_at? : Int64 = 1_000L,
+  provider_failovers? : Array[@workflow.PartProviderFailover] = [],
 ) -> @workflow.GoalPartStatus {
   {
-    ..projection_part(stage),
+    ..projection_part(stage, provider_failovers~),
     part_id: @control.PartId(part_id),
     dispatch_diagnostic: availability.map(fn(value) {
       {
@@ -363,6 +366,7 @@ fn portfolio_part(
         detail: "provider reported its state",
         recovery: None,
         availability: value,
+        observed_at,
       }
     }),
   }
@@ -460,6 +464,42 @@ test "a Part deferred on its provider is counted apart from a failed one" {
   let after = @workflow.work_order_portfolio(projection_report(parts~), 2_000L)
   assert_eq(after.provider_deferred, 0)
   assert_eq(after.quarantined, 1)
+  // A surface that reported no reset instant is deferred too, and stops being
+  // deferred when the observation ages out. The report reads the same schedule
+  // the recovery decision does, so a Part shown as waiting is one that would
+  // actually be made to wait.
+  let deferred_at = fn(now, provider_failovers) {
+    @workflow.work_order_portfolio(
+      projection_report(parts=[
+        portfolio_part(
+          @workflow.PartWorkflowStage::PartRecoveryUncertain,
+          "spent",
+          availability=Some(
+            @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+          ),
+          observed_at=1_000L,
+          provider_failovers~,
+        ),
+      ]),
+      now,
+    ).provider_deferred
+  }
+  assert_eq(deferred_at(1_059L, []), 1)
+  assert_eq(deferred_at(1_060L, []), 0)
+  // A Part that already left this surface once and came back waits longer the
+  // second time, because each deferral of the same surface backs off.
+  let returned : Array[@workflow.PartProviderFailover] = [
+    {
+      from_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      to_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+      retry_ordinal: 1,
+      decided_at: 500L,
+    },
+  ]
+  assert_eq(deferred_at(1_060L, returned), 1)
+  assert_eq(deferred_at(1_119L, returned), 1)
+  assert_eq(deferred_at(1_120L, returned), 0)
 }
 
 ///|

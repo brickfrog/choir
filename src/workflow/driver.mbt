@@ -274,7 +274,12 @@ fn persist_provider_protocol_violation(
   detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   let violated = match
-    record_part_provider_protocol_violation(snapshot, intent, detail) {
+    record_part_provider_protocol_violation(
+      snapshot,
+      intent,
+      detail,
+      observed_at=(dependencies.now)(),
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -300,7 +305,12 @@ fn persist_event_ingestion_overflow(
   detail : String,
 ) -> Result[PartWorkflowRunResult, @types.ChoirError] {
   let uncertain = match
-    record_part_event_ingestion_overflow(snapshot, intent, detail) {
+    record_part_event_ingestion_overflow(
+      snapshot,
+      intent,
+      detail,
+      observed_at=(dependencies.now)(),
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -330,7 +340,13 @@ fn record_dispatch_failure(
   dependencies : PartWorkflowDriverDependencies,
   detail : String,
 ) -> Unit {
-  match record_part_dispatch_failure(snapshot, intent, detail) {
+  match
+    record_part_dispatch_failure(
+      snapshot,
+      intent,
+      detail,
+      observed_at=(dependencies.now)(),
+    ) {
     Ok(recorded) if recorded.durable_version != snapshot.durable_version =>
       ignore(
         persist_driver_snapshot(
@@ -368,6 +384,7 @@ fn persist_provider_process_loss(
       snapshot,
       intent,
       detail,
+      observed_at=(dependencies.now)(),
       availability=@control.classify_provider_availability(
         1,
         detail,

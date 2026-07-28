@@ -959,7 +959,10 @@ test "provider protocol violation terminally fences its Take and Part" {
     None => fail("implementation dispatch was not authorized")
   }
   let violated = @workflow.record_part_provider_protocol_violation(
-    authorized, intent, "codex driver: provider lifecycle is incomplete",
+    authorized,
+    intent,
+    "codex driver: provider lifecycle is incomplete",
+    observed_at=12L,
   ).unwrap()
   assert_eq(violated.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
   assert_eq(
@@ -998,6 +1001,7 @@ test "provider protocol violation terminally fences its Take and Part" {
       recovery: None,
       detail: "codex driver: provider lifecycle is incomplete",
       availability: @control.ProviderAvailability::ProviderUnavailable,
+      observed_at: 12L,
     }),
   )
 }
@@ -1031,7 +1035,10 @@ test "a recovery verdict never overwrites the failure that was observed" {
   }
   // The tick that actually ran the Take is the only one that sees why it died.
   let observed = @workflow.record_part_dispatch_failure(
-    authorized, intent, "transport error: BoxLite Take runtime: result archive failed",
+    authorized,
+    intent,
+    "transport error: BoxLite Take runtime: result archive failed",
+    observed_at=12L,
   ).unwrap()
   assert_eq(
     observed.dispatch_diagnostic,
@@ -1042,13 +1049,17 @@ test "a recovery verdict never overwrites the failure that was observed" {
       recovery: None,
       detail: "transport error: BoxLite Take runtime: result archive failed",
       availability: @control.ProviderAvailability::ProviderUnavailable,
+      observed_at: 12L,
     }),
   )
   assert_eq(observed.stage, authorized.stage)
   // A later tick can only report that recovery is impossible. That verdict is
   // recorded beside the cause, never in place of it.
   let lost = @workflow.record_part_provider_process_loss(
-    observed, intent, "nonresumable Claude Take lost its owning Goal worker",
+    observed,
+    intent,
+    "nonresumable Claude Take lost its owning Goal worker",
+    observed_at=40L,
   ).unwrap()
   assert_eq(
     lost.dispatch_diagnostic,
@@ -1059,6 +1070,10 @@ test "a recovery verdict never overwrites the failure that was observed" {
       recovery: Some("nonresumable Claude Take lost its owning Goal worker"),
       detail: "transport error: BoxLite Take runtime: result archive failed",
       availability: @control.ProviderAvailability::ProviderUnavailable,
+      // The cause survives the later verdict, but its date does not: the
+      // availability recorded here is the one that will be aged out, so it is
+      // dated when it was read rather than when the Take first failed.
+      observed_at: 40L,
     }),
   )
   assert_eq(lost.stage, @workflow.PartWorkflowStage::PartRecoveryUncertain)
@@ -4188,7 +4203,10 @@ fn uncertain_implementation_dispatch() -> @workflow.PartWorkflowSnapshot raise {
     None => fail("implementation dispatch was not authorized")
   }
   @workflow.record_part_event_ingestion_overflow(
-    authorized, intent, "harness event ingestion overflowed",
+    authorized,
+    intent,
+    "harness event ingestion overflowed",
+    observed_at=12L,
   ).unwrap()
 }
 
@@ -4353,8 +4371,10 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
   guard uncertain.dispatch_diagnostic is Some(diagnostic) else {
     fail("uncertain dispatch recorded no diagnostic")
   }
-  // With no trusted reset evidence the surface is not retried at all: an
-  // invented reset would burn the recovery budget against a spent allowance.
+  // With no trusted reset evidence the surface is not retried straight away:
+  // an invented reset would burn the recovery budget against a spent
+  // allowance. It is asked again once the observation ages out, which is the
+  // only thing keeping the Part from waiting on evidence nobody will produce.
   let exhausted = {
     ..uncertain,
     dispatch_diagnostic: Some({
@@ -4362,15 +4382,18 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
       availability: @control.ProviderAvailability::ProviderAllowanceExhausted(
         None,
       ),
+      observed_at: 500L,
     }),
   }
-  match
+  let retry_at = fn(now) {
     @workflow.plan_part_recovery_retry(
       exhausted,
       fn(_) { identities },
       fn(_) { true },
-      now=500L,
-    ) {
+      now~,
+    )
+  }
+  match retry_at(559L) {
     Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(observed)) =>
       assert_eq(
         observed,
@@ -4378,6 +4401,10 @@ test "a spent provider allowance defers recovery instead of burning a Take" {
       )
     _ => fail("a spent allowance did not defer recovery")
   }
+  assert_true(
+    retry_at(560L)
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(_)),
+  )
   // Reported reset evidence is a wait, then an ordinary recovery.
   let resets_at = {
     ..uncertain,
@@ -4445,7 +4472,10 @@ fn spent_surface_part(
   {
     ..uncertain,
     admitted_provider_surfaces: admitted,
-    dispatch_diagnostic: Some({ ..diagnostic, availability, }),
+    // Dated at the clock reading these cases decide against, so what they
+    // observe is the surface refusing now rather than an observation that has
+    // already aged out of the re-check schedule.
+    dispatch_diagnostic: Some({ ..diagnostic, availability, observed_at: 500L }),
   }
 }
 
@@ -4564,7 +4594,7 @@ test "failover never returns a Part to a surface it already found spent" {
     to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
     cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
     retry_ordinal: 1,
-    decided_at: 100L,
+    decided_at: 500L,
   }
   let on_codex = {
     ..spent,
@@ -4620,6 +4650,109 @@ test "failover never returns a Part to a surface it already found spent" {
       )
     }
     _ => fail("a recovered surface did not take the work back")
+  }
+  // Nor is an allowance that named no instant a ban: the surface the Part left
+  // is asked again once that observation ages out, even while the surface it
+  // moved to is still waiting on a reset it did report.
+  let codex_resets_late = {
+    ..on_codex,
+    dispatch_diagnostic: on_codex.dispatch_diagnostic.map(fn(diagnostic) {
+      {
+        ..diagnostic,
+        availability: @control.ProviderAvailability::ProviderAllowanceExhausted(
+          Some(100_000L),
+        ),
+      }
+    }),
+  }
+  let retry_at = fn(now) {
+    @workflow.plan_part_recovery_retry(
+      codex_resets_late,
+      fn(surface) { workflow_identities_on_surface(codex_resets_late, surface) },
+      fn(_) { true },
+      now~,
+    )
+  }
+  assert_true(
+    retry_at(559L)
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)),
+  )
+  match retry_at(560L) {
+    Ok(
+      @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(_, moved)
+    ) =>
+      assert_eq(
+        moved.to_surface,
+        @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      )
+    _ => fail("an aged-out observation still excluded its surface")
+  }
+}
+
+///|
+/// The liveness this Bead exists for: an effect is never left parked forever.
+///
+/// Both surfaces the contract admits reported a spent allowance and neither
+/// named a reset instant, which is the state a subscription actually reports.
+/// Under the earlier rule that state admitted dispatch at no clock reading at
+/// all, so the Part deferred at every tick with nothing scheduled to wake it.
+/// It now becomes eligible again once the observations age out, and the
+/// bounded recovery budget — not an unbounded wait — is what ends the retrying.
+test "a Part on two spent surfaces becomes eligible again, not parked" {
+  let spent = spent_surface_part(
+    [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+    @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+  )
+  let on_codex = {
+    ..spent,
+    identities: workflow_identities_on_surface(
+      spent,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+    provider_failovers: [
+      {
+        from_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+        retry_ordinal: 1,
+        decided_at: 500L,
+      },
+    ],
+  }
+  let retry_at = fn(now) {
+    @workflow.plan_part_recovery_retry(
+      on_codex,
+      fn(surface) { workflow_identities_on_surface(on_codex, surface) },
+      fn(_) { true },
+      now~,
+    )
+  }
+  // Nowhere to go while both observations still hold.
+  assert_true(
+    retry_at(500L)
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)),
+  )
+  assert_true(
+    retry_at(559L)
+    is Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryDeferred(_)),
+  )
+  // A minute after they were observed both have aged out, and the Part is
+  // re-armed on the surface it is already on rather than waiting for evidence
+  // no one is scheduled to produce.
+  match retry_at(560L) {
+    Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(planned)) => {
+      assert_eq(
+        planned.identities.implementation_session.surface,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      )
+      // Ageing an observation out is not evidence that anything reset, so the
+      // moves the Part already made are still on the record.
+      assert_eq(planned.provider_failovers, on_codex.provider_failovers)
+    }
+    _ => fail("a Part on two spent surfaces stayed parked")
   }
 }
 
@@ -4768,12 +4901,24 @@ test "a surface that reported its reset is deferred to that instant, not text" {
     ),
   )
   // Which makes the wait finite: the surface is admitted again at its reset.
-  assert_false(
-    @control.provider_availability_admits_dispatch(observed, 1_785_614_464L),
-  )
-  assert_true(
-    @control.provider_availability_admits_dispatch(observed, 1_785_614_465L),
-  )
+  // The observation is dated more than an hour earlier than the instant the
+  // surface reported, so Choir's own re-check schedule would have expired long
+  // before — evidence the surface stated outranks it either way.
+  let admits = fn(now) {
+    @control.provider_availability_admits_dispatch(
+      observed,
+      observed_at=1_785_610_000L,
+      prior_deferrals=0,
+      policy=@control.provider_recheck_policy(
+        base_seconds=60L,
+        growth=2L,
+        ceiling_seconds=1_800L,
+      ).unwrap(),
+      now~,
+    )
+  }
+  assert_false(admits(1_785_614_464L))
+  assert_true(admits(1_785_614_465L))
   // A failure the surface said nothing about still waits on nothing invented.
   assert_eq(
     @control.classify_provider_availability(

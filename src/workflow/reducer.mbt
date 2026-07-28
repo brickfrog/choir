@@ -798,6 +798,7 @@ pub fn apply_part_effect_observation(
                 violation.to_json().stringify(indent=0),
                 recovery: None,
                 availability: @control.ProviderAvailability::ProviderAvailable,
+                observed_at,
               }),
             },
             observation,

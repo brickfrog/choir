@@ -53,7 +53,9 @@ fn provider_token_is_sensitive(token : String) -> Bool {
 ///|
 /// Classify what a provider surface reported. Only an explicit statement
 /// counts: an unrecognized failure stays `ProviderUnavailable` rather than
-/// being guessed into an allowance state that would defer work indefinitely.
+/// being guessed into an allowance state, which would make the Part wait on a
+/// condition the surface never claimed instead of retrying under the ordinary
+/// bounded recovery path.
 pub fn classify_provider_availability(
   exit_code : Int,
   output : String,
@@ -85,14 +87,145 @@ pub fn classify_provider_availability(
 }
 
 ///|
-/// One provider surface and the last thing it told Choir about itself.
+/// How long a surface that reported a spent allowance and named no reset
+/// instant stays deferred, and how that interval grows when the same surface
+/// keeps reporting one.
+///
+/// The type exists so that the schedule cannot express "wait forever": every
+/// bound is positive and the interval is capped, so a deferral always names an
+/// instant at which the surface is re-checked. Fields are private; the only
+/// way to obtain one is `provider_recheck_policy`, which rejects bounds that
+/// would bound nothing.
+pub struct ProviderRecheckPolicy {
+  base_seconds : Int64
+  growth : Int64
+  ceiling_seconds : Int64
+}
+
+///|
+fn provider_recheck_error(detail : String) -> @types.ChoirError {
+  @types.ChoirError::validation_error("provider re-check policy: " + detail)
+}
+
+///|
+/// Build a re-check schedule from validated bounds.
+///
+/// A non-positive first interval re-checks a spent surface immediately and
+/// burns the recovery budget against it; a growth below one shrinks the
+/// interval instead of backing off; a ceiling under the first interval is not
+/// a ceiling. Each is rejected rather than silently corrected, because a
+/// schedule nobody can read is how "bounded" quietly becomes "never".
+pub fn provider_recheck_policy(
+  base_seconds~ : Int64,
+  growth~ : Int64,
+  ceiling_seconds~ : Int64,
+) -> Result[ProviderRecheckPolicy, @types.ChoirError] {
+  if base_seconds <= 0L {
+    return Err(provider_recheck_error("first interval is not positive"))
+  }
+  if growth < 1L {
+    return Err(provider_recheck_error("growth would shrink the interval"))
+  }
+  if ceiling_seconds < base_seconds {
+    return Err(provider_recheck_error("ceiling is below the first interval"))
+  }
+  Ok({ base_seconds, growth, ceiling_seconds })
+}
+
+///|
+/// How long the `prior_deferrals + 1`-th consecutive deferral of one surface
+/// waits. The growth is applied per prior deferral and clamped to the ceiling
+/// before it can overflow, so the answer is always a finite number of seconds.
+fn provider_recheck_interval_seconds(
+  policy : ProviderRecheckPolicy,
+  prior_deferrals : Int,
+) -> Int64 {
+  let mut seconds = policy.base_seconds
+  let mut remaining = prior_deferrals
+  while remaining > 0 {
+    if seconds > policy.ceiling_seconds / policy.growth {
+      return policy.ceiling_seconds
+    }
+    seconds = seconds * policy.growth
+    remaining = remaining - 1
+  }
+  if seconds > policy.ceiling_seconds {
+    policy.ceiling_seconds
+  } else {
+    seconds
+  }
+}
+
+///|
+/// The instant a surface that reported `availability` at `observed_at` may be
+/// dispatched to again, or `None` when nothing is being waited for.
+fn provider_availability_deferred_until(
+  availability : ProviderAvailability,
+  observed_at : Int64,
+  prior_deferrals : Int,
+  policy : ProviderRecheckPolicy,
+) -> Int64? {
+  match availability {
+    ProviderAvailable | ProviderUnavailable => None
+    ProviderAllowanceExhausted(Some(reset)) => Some(reset)
+    // No reset evidence: still nothing is invented about when the allowance
+    // returns, but the observation ages out on Choir's own schedule so the
+    // surface is asked again rather than written off.
+    ProviderAllowanceExhausted(None) =>
+      Some(
+        observed_at + provider_recheck_interval_seconds(policy, prior_deferrals),
+      )
+    ProviderRetryAfter(instant) => Some(instant)
+  }
+}
+
+///|
+/// Whether a surface may serve a new dispatch at this clock reading.
+///
+/// REVISION of the earlier rule, which admitted no dispatch at any clock
+/// reading once a surface reported a spent allowance without naming a reset
+/// instant. Refusing to invent an instant was right: Choir does not know when
+/// the allowance returns, and pretending to would burn the next Take against a
+/// spent surface. Concluding that the only alternative was waiting forever was
+/// not — a Part that left a surface that way could never return to it, and a
+/// Part whose every admitted surface answered that way was parked with nothing
+/// scheduled to wake it.
+///
+/// So an allowance with no reset evidence is now deferred until `observed_at`
+/// plus a capped interval that grows per consecutive deferral of that surface.
+/// That interval still claims no knowledge of when the allowance resets; it
+/// only declines to treat one observation as permanent. Trusted evidence is
+/// unchanged and always wins: a reported reset instant and a retry-after defer
+/// until exactly that instant.
+pub fn provider_availability_admits_dispatch(
+  availability : ProviderAvailability,
+  observed_at~ : Int64,
+  prior_deferrals~ : Int,
+  policy~ : ProviderRecheckPolicy,
+  now~ : Int64,
+) -> Bool {
+  match
+    provider_availability_deferred_until(
+      availability, observed_at, prior_deferrals, policy,
+    ) {
+    None => true
+    Some(instant) => now >= instant
+  }
+}
+
+///|
+/// One provider surface, the last thing it told Choir about itself, and when
+/// it said so.
 ///
 /// Selecting where the next Take runs needs more than the surface that just
 /// failed: a Part that already left a spent surface must not be sent back to
-/// it while it is still spent.
+/// it while it is still spent. It also needs the date, because an observation
+/// with no reset instant expires on the re-check schedule rather than standing
+/// for the Part's lifetime.
 pub(all) struct ProviderSurfaceObservation {
   surface : ProviderSurfaceId
   availability : ProviderAvailability
+  observed_at : Int64
 }
 
 ///|
@@ -104,12 +237,15 @@ pub(all) struct ProviderSurfaceObservation {
 /// named them, so recovery never changes which provider a Take was authorized
 /// to spend. A candidate is skipped when any observation of it still defers
 /// dispatch at `now`, which is what keeps two spent surfaces from handing the
-/// same Part back and forth. `None` means every admitted surface is either the
-/// one that just failed or is itself deferred, so the caller must wait.
+/// same Part back and forth; an observation that has aged past its re-check
+/// interval no longer suppresses its surface, so a Part can return to a
+/// surface it previously left. `None` means every admitted surface is either
+/// the one that just failed or is still deferred, so the caller must wait.
 pub fn select_admitted_provider_surface(
   current : ProviderSurfaceId,
   admitted : Array[ProviderSurfaceId],
   observed : Array[ProviderSurfaceObservation],
+  policy : ProviderRecheckPolicy,
   now : Int64,
 ) -> ProviderSurfaceId? {
   for candidate in admitted {
@@ -117,10 +253,21 @@ pub fn select_admitted_provider_surface(
       continue
     }
     let mut admits = true
+    // Observations arrive oldest first, so the ones already counted for this
+    // candidate are exactly the deferrals that preceded the one being read.
+    let mut prior_deferrals = 0
     for observation in observed {
-      if observation.surface == candidate &&
-        !provider_availability_admits_dispatch(observation.availability, now) {
-        admits = false
+      if observation.surface == candidate {
+        if !provider_availability_admits_dispatch(
+            observation.availability,
+            observed_at=observation.observed_at,
+            prior_deferrals~,
+            policy~,
+            now~,
+          ) {
+          admits = false
+        }
+        prior_deferrals = prior_deferrals + 1
       }
     }
     if admits {
@@ -184,29 +331,6 @@ test "provider classification names an exhausted allowance, never guesses one" {
     ),
     ProviderAvailability::ProviderAllowanceExhausted(None),
   )
-}
-
-///|
-test "deferral waits only on trusted reset evidence" {
-  let admits = fn(availability, now) {
-    provider_availability_admits_dispatch(availability, now)
-  }
-  assert_true(admits(ProviderAvailability::ProviderAvailable, 10L))
-  // An unavailable surface retries under the ordinary bounded recovery path.
-  assert_true(admits(ProviderAvailability::ProviderUnavailable, 10L))
-  // An exhausted allowance with no reset evidence is never given an invented
-  // one: it waits rather than burning the next Take against a spent surface.
-  assert_false(
-    admits(ProviderAvailability::ProviderAllowanceExhausted(None), 10L),
-  )
-  assert_false(
-    admits(ProviderAvailability::ProviderAllowanceExhausted(Some(100L)), 99L),
-  )
-  assert_true(
-    admits(ProviderAvailability::ProviderAllowanceExhausted(Some(100L)), 100L),
-  )
-  assert_false(admits(ProviderAvailability::ProviderRetryAfter(100L), 99L))
-  assert_true(admits(ProviderAvailability::ProviderRetryAfter(100L), 100L))
 }
 
 ///|

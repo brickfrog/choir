@@ -1608,6 +1608,7 @@ fn record_part_provider_dispatch_uncertainty(
   session_lifecycle : @control.HarnessSessionLifecycle,
   error_context : String,
   detail : String,
+  observed_at~ : Int64,
   availability? : @control.ProviderAvailability = @control.ProviderAvailability::ProviderUnavailable,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect != Some(intent) ||
@@ -1705,6 +1706,9 @@ fn record_part_provider_dispatch_uncertainty(
     // A cause recorded when the dispatch actually failed outranks anything a
     // later reconciliation can say. Reconciliation observes that recovery is
     // impossible, which is a verdict, not evidence of what went wrong.
+    // What the surface reported is re-read here, so its date moves with it:
+    // an availability carrying a stale instant would be aged out against a
+    // clock reading that has nothing to do with when it was observed.
     dispatch_diagnostic: Some(
       match snapshot.dispatch_diagnostic {
         Some(observed) if observed.take_id == take.id =>
@@ -1713,6 +1717,7 @@ fn record_part_provider_dispatch_uncertainty(
             reason: Some(reason),
             recovery: Some(detail),
             availability,
+            observed_at,
           }
         _ =>
           {
@@ -1722,6 +1727,7 @@ fn record_part_provider_dispatch_uncertainty(
             detail,
             recovery: None,
             availability,
+            observed_at,
           }
       },
     ),
@@ -1782,6 +1788,7 @@ pub fn record_part_dispatch_failure(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
   detail : String,
+  observed_at~ : Int64,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if snapshot.pending_effect != Some(intent) ||
     intent.lifecycle != PartEffectMayHaveOccurred {
@@ -1806,6 +1813,7 @@ pub fn record_part_dispatch_failure(
           detail,
           recovery: None,
           availability: @control.ProviderAvailability::ProviderUnavailable,
+          observed_at,
         }),
       })
   }
@@ -1816,6 +1824,7 @@ pub fn record_part_provider_protocol_violation(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
   detail : String,
+  observed_at~ : Int64,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1824,6 +1833,7 @@ pub fn record_part_provider_protocol_violation(
     @control.HarnessSessionLifecycle::HarnessSessionProtocolViolated,
     "protocol violation",
     detail,
+    observed_at~,
   )
 }
 
@@ -1832,6 +1842,7 @@ pub fn record_part_event_ingestion_overflow(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
   detail : String,
+  observed_at~ : Int64,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
     snapshot,
@@ -1840,6 +1851,7 @@ pub fn record_part_event_ingestion_overflow(
     @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
     "event ingestion overflow",
     detail,
+    observed_at~,
   )
 }
 
@@ -1961,9 +1973,55 @@ fn part_surface_observations(
     observations.push({
       surface: failover.from_surface,
       availability: failover.cause,
+      // The move was decided on the observation that caused it, so the
+      // decision instant dates the observation. It is never earlier than the
+      // dispatch that failed, so an undated allowance is re-checked no sooner
+      // than the schedule says.
+      observed_at: failover.decided_at,
     })
   }
   observations
+}
+
+///|
+/// How many times this Part has already been deferred by one surface.
+///
+/// Each recorded failover is one such deferral: the Part left that surface
+/// because it said it could not serve. The count is what makes a re-check
+/// interval back off, so a surface that keeps refusing is asked less often
+/// rather than the same Part hammering it every interval.
+fn part_surface_prior_deferrals(
+  failovers : Array[PartProviderFailover],
+  surface : @control.ProviderSurfaceId,
+) -> Int {
+  let mut count = 0
+  for failover in failovers {
+    if failover.from_surface == surface {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+/// When a surface that reported a spent allowance without naming a reset
+/// instant is asked again.
+///
+/// Choir does not know when the allowance returns, so the schedule claims
+/// nothing about that. What it does say is that one observation is not
+/// permanent: the first re-check is a minute later, each further deferral of
+/// the same surface waits twice as long, and no wait exceeds half an hour. A
+/// Part therefore always has an instant at which it becomes eligible again,
+/// and the bounded recovery budget still decides how many attempts it gets.
+fn part_provider_recheck_policy() -> Result[
+  @control.ProviderRecheckPolicy,
+  @types.ChoirError,
+] {
+  @control.provider_recheck_policy(
+    base_seconds=60L,
+    growth=2L,
+    ceiling_seconds=1_800L,
+  )
 }
 
 ///|
@@ -1987,15 +2045,27 @@ pub fn plan_part_recovery_retry(
   now? : Int64 = 0L,
 ) -> Result[PartRecoveryRetryDecision, @types.ChoirError] {
   let current = snapshot.identities.implementation_session.surface
+  let policy = match part_provider_recheck_policy() {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   // A surface that reported a spent allowance or a retry-after must not be hit
-  // again until its own evidence says it is ready. Re-arming there would burn
-  // the recovery budget against a surface that cannot serve, so the work
-  // either moves to another admitted surface or waits.
+  // again until its own evidence says it is ready, or — where it named no
+  // instant — until the re-check schedule says the observation has aged out.
+  // Re-arming sooner would burn the recovery budget against a surface that
+  // cannot serve, so the work either moves to another admitted surface or
+  // waits for a stated instant.
   let failover : PartProviderFailover? = match snapshot.dispatch_diagnostic {
     Some(diagnostic) =>
       if @control.provider_availability_admits_dispatch(
           diagnostic.availability,
-          now,
+          observed_at=diagnostic.observed_at,
+          prior_deferrals=part_surface_prior_deferrals(
+            snapshot.provider_failovers,
+            current,
+          ),
+          policy~,
+          now~,
         ) {
         None
       } else {
@@ -2004,6 +2074,7 @@ pub fn plan_part_recovery_retry(
             current,
             snapshot.admitted_provider_surfaces,
             part_surface_observations(snapshot),
+            policy,
             now,
           ) {
           Some(target) =>
@@ -2067,6 +2138,7 @@ pub fn record_part_provider_process_loss(
   snapshot : PartWorkflowSnapshot,
   intent : PartEffectIntent,
   detail : String,
+  observed_at~ : Int64,
   availability? : @control.ProviderAvailability = @control.ProviderAvailability::ProviderUnavailable,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   record_part_provider_dispatch_uncertainty(
@@ -2076,6 +2148,7 @@ pub fn record_part_provider_process_loss(
     @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain,
     "provider process loss",
     detail,
+    observed_at~,
     availability~,
   )
 }
