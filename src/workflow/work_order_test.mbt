@@ -473,3 +473,187 @@ test "the safety ceiling counts Takes that actually started" {
     counted,
   )
 }
+
+///|
+fn planning_work_order() -> @workflow.WorkOrderRecord {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  {
+    id: @workflow.WorkOrderId("work-order-planning-test"),
+    repository_id: @workflow.RepositoryId("repository-planning-test"),
+    objective: "Select the next bounded Goal.",
+    selection_policy: @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,
+    planner: {
+      primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      failover_surfaces: [@control.ProviderSurfaceId::ClaudeSubscriptionCli],
+    },
+    initial_primary_target_ids: [@control.PartId("choir-initial")],
+    initial_prerequisite_closure_ids: [],
+    max_active_child_goals: 1,
+    budget: @workflow.accept_work_order_budget(
+      @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(20),
+      @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+      100L,
+    ).unwrap(),
+    child_goals: [
+      {
+        goal_id: @control.GoalId("goal-initial"),
+        selection_decision_digest: digest,
+        primary_target_ids: [@control.PartId("choir-initial")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildSucceeded,
+      },
+    ],
+    planning_rounds: [],
+    lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
+    durable_version: 1,
+    fencing_epoch: @control.FencingEpoch(1L),
+  }
+}
+
+///|
+fn planning_goal_draft() -> @workflow.ConductorGoalDraft {
+  @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-planning-next","goal_id":"goal-planning-next",
+      #|"pull_request":{"title":"feat: deliver planned work","body":"Delivers the bounded planned change."},
+      #|"maximum_parallel_parts":1,
+      #|"parts":[{"part_id":"choir-next","commit_title":"feat: deliver planned work",
+      #|"instruction":"Implement the bounded next change.","provider":"codex",
+      #|"exact_paths":["src/next.mbt"],"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+}
+
+///|
+test "planning rounds bind snapshots and bound provider or empty failures" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let planned = @workflow.plan_work_order_round(
+    planning_work_order(),
+    digest,
+    digest,
+  ).unwrap()
+  assert_eq(planned.planning_rounds[0].sequence, 1)
+  assert_eq(
+    planned.planning_rounds[0].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningIntentRecorded,
+  )
+  let dispatched = @workflow.dispatch_work_order_planning_round(planned, 101L).unwrap()
+  assert_eq(dispatched.budget.counters.agentic_takes_started, 1)
+  let failed = @workflow.record_work_order_planner_failure(
+    dispatched,
+    @storage.artifact_digest(@utf8.encode("provider failed")),
+  ).unwrap()
+  assert_eq(
+    failed.planning_rounds[0].planner_surface,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  let mut current = failed
+  for index = 0; index < 3; index = index + 1 {
+    current = @workflow.dispatch_work_order_planning_round(current, 101L).unwrap()
+    current = @workflow.record_empty_work_order_planner_response(current).unwrap()
+  }
+  assert_true(
+    current.planning_rounds[0].outcome
+    is @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningQuarantined(
+      @workflow.WorkOrderPlanningFailure::WorkOrderPlannerRepeatedEmptyProposal
+    ),
+  )
+}
+
+///|
+test "a planning proposal is validated before replayable Bead delivery" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let planned = @workflow.plan_work_order_round(
+    planning_work_order(),
+    digest,
+    digest,
+  ).unwrap()
+  let dispatched = @workflow.dispatch_work_order_planning_round(planned, 101L).unwrap()
+  let proposal : @workflow.WorkOrderPlanningProposal = {
+    findings: [
+      {
+        summary: "A bounded next Bead is eligible.",
+        evidence: "The captured graph has no open blocker.",
+        related_bead_ids: [@control.PartId("choir-next")],
+      },
+    ],
+    eligible_work_observed: true,
+    bead_mutations: { mutations: [] },
+    primary_target_ids: [@control.PartId("choir-next")],
+    prerequisite_closure_ids: [],
+    finite_goal: Some(planning_goal_draft()),
+  }
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let artifact : @control.ArtifactReference = {
+    artifact_id: "planning-proposal-1",
+    digest: @storage.artifact_digest(content),
+  }
+  let received = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    artifact,
+    content,
+    digest,
+    digest,
+    [],
+    101L,
+  ).unwrap()
+  assert_eq(
+    received.planning_rounds[0].outcome,
+    @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningProposalAccepted,
+  )
+  let delivering = @workflow.begin_work_order_bead_delivery(received).unwrap()
+  assert_true(
+    @workflow.complete_work_order_bead_delivery(
+      delivering,
+      @storage.artifact_digest(@utf8.encode("wrong")),
+      digest,
+    )
+    is Err(_),
+  )
+  let delivered = @workflow.complete_work_order_bead_delivery(
+    delivering,
+    @command.bead_batch_digest(proposal.bead_mutations),
+    digest,
+  ).unwrap()
+  assert_eq(
+    delivered.planning_rounds[0].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningBeadsDelivered,
+  )
+}
+
+///|
+test "planning proposal snapshot drift is a typed terminal outcome" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let drift = @storage.artifact_digest(@utf8.encode("planning-drift"))
+  let dispatched = @workflow.dispatch_work_order_planning_round(
+    @workflow.plan_work_order_round(planning_work_order(), digest, digest).unwrap(),
+    101L,
+  ).unwrap()
+  let proposal : @workflow.WorkOrderPlanningProposal = {
+    findings: [],
+    eligible_work_observed: false,
+    bead_mutations: { mutations: [] },
+    primary_target_ids: [],
+    prerequisite_closure_ids: [],
+    finite_goal: None,
+  }
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let stopped = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    {
+      artifact_id: "planning-proposal-drift",
+      digest: @storage.artifact_digest(content),
+    },
+    content,
+    drift,
+    digest,
+    [],
+    101L,
+  ).unwrap()
+  assert_true(
+    stopped.planning_rounds[0].outcome
+    is @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningFailed(
+      @workflow.WorkOrderPlanningFailure::WorkOrderPlannerRepositorySnapshotDrift
+    ),
+  )
+}

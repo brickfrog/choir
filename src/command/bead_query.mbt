@@ -143,6 +143,31 @@ pub(all) struct BeadRecord {
 } derive(Debug, Eq)
 
 ///|
+pub fn bead_graph_digest(records : Array[BeadRecord]) -> @control.Digest {
+  let rows = records.map(bead_record_to_json)
+  rows.sort_by(fn(left, right) {
+    let left_id = match left {
+      Object(fields) => fields.get("id").unwrap_or(Json::null()).stringify()
+      _ => ""
+    }
+    let right_id = match right {
+      Object(fields) => fields.get("id").unwrap_or(Json::null()).stringify()
+      _ => ""
+    }
+    left_id.compare(right_id)
+  })
+  @control.Digest(
+    @crypto.bytes_to_hex_string(
+      @crypto.sha256(
+        @utf8.encode(
+          "choir.bead-graph.v1\u{00}" + rows.to_json().stringify(indent=0),
+        ),
+      ),
+    ),
+  )
+}
+
+///|
 /// How a page is ordered. The chosen key is never the whole order: id is
 /// always the final tie-breaker, so two Beads that agree on the key still
 /// have one stable position and a cursor cannot skip or repeat them.
