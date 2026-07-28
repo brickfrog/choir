@@ -1259,6 +1259,7 @@ fn native_retry_identity_fixture(
       part_context_manifest: None,
     },
     fn(_) { true },
+    @control.FencingEpoch(1L),
   )
 }
 

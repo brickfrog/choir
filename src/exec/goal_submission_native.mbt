@@ -862,6 +862,7 @@ fn native_goal_submission_part_snapshot(
   goal : @control.Goal,
   accepted : @workflow.AcceptedGoalPart,
   is_nfc : (String) -> Bool,
+  fencing_epoch : @control.FencingEpoch,
 ) -> Result[@workflow.PartWorkflowSnapshot, @types.ChoirError] {
   let part = accepted.part
   let contract = accepted.task_contract
@@ -934,7 +935,7 @@ fn native_goal_submission_part_snapshot(
         accepted.provider_surface,
       ),
     },
-    current_native_goal_fencing_epoch(),
+    fencing_epoch,
     is_nfc,
     admitted_provider_surfaces=@workflow.accepted_part_admitted_surfaces(
       accepted,
@@ -983,6 +984,7 @@ fn initialize_native_goal_parts(
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   decision : @workflow.GoalSelectionDecision,
   is_nfc : (String) -> Bool,
+  fencing_epoch : @control.FencingEpoch,
 ) -> Result[Int, @types.ChoirError] {
   if decision.outcome != @workflow.GoalSelectionOutcome::GoalSelectionAccepted {
     return Ok(0)
@@ -994,7 +996,9 @@ fn initialize_native_goal_parts(
   let mut initialized = 0
   for accepted in decision.accepted_parts {
     let snapshot = match
-      native_goal_submission_part_snapshot(goal, accepted, is_nfc) {
+      native_goal_submission_part_snapshot(
+        goal, accepted, is_nfc, fencing_epoch,
+      ) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -1040,6 +1044,7 @@ fn ensure_native_work_order(
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   decision : @workflow.GoalSelectionDecision,
   decision_digest : @control.Digest,
+  fencing_epoch : @control.FencingEpoch,
 ) -> Result[@workflow.WorkOrderId?, @types.ChoirError] {
   guard decision.proposal.work_order_id is Some(id) else { return Ok(None) }
   if decision.outcome != @workflow.GoalSelectionOutcome::GoalSelectionAccepted {
@@ -1078,7 +1083,7 @@ fn ensure_native_work_order(
     planning_rounds: [],
     lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
     durable_version: 1,
-    fencing_epoch: current_native_goal_fencing_epoch(),
+    fencing_epoch,
   }
   let matches = fn(stored : @workflow.WorkOrderRecord) {
     stored.id == expected.id &&
@@ -1209,6 +1214,7 @@ fn ensure_native_goal_execution(
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   decision : @workflow.GoalSelectionDecision,
   decision_digest : @control.Digest,
+  fencing_epoch : @control.FencingEpoch,
 ) -> Result[Bool, @types.ChoirError] {
   if decision.outcome != @workflow.GoalSelectionOutcome::GoalSelectionAccepted {
     return Ok(false)
@@ -1221,7 +1227,7 @@ fn ensure_native_goal_execution(
       decision,
       decision_digest,
       workflow_ids,
-      fencing_epoch=current_native_goal_fencing_epoch(),
+      fencing_epoch~,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1291,6 +1297,7 @@ pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
   capture : async (Command) -> (Int, String),
+  fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
   migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
   work_order_authority? : @workflow.WorkOrderRecord? = None,
   work_order_round_id? : @workflow.WorkOrderPlanningRoundId? = None,
@@ -1373,6 +1380,7 @@ pub async fn submit_native_conductor_goal_draft(
           adapters,
           stored.decision,
           stored.state_record.value_digest,
+          fencing_epoch,
         ) {
         Ok(_) => ()
         Err(error) => return Err(error)
@@ -1383,6 +1391,7 @@ pub async fn submit_native_conductor_goal_draft(
           adapters,
           stored.decision,
           is_nfc,
+          fencing_epoch,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -1393,6 +1402,7 @@ pub async fn submit_native_conductor_goal_draft(
           adapters,
           stored.decision,
           stored.state_record.value_digest,
+          fencing_epoch,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -1613,12 +1623,15 @@ pub async fn submit_native_conductor_goal_draft(
       adapters,
       decision,
       persistence.decision_digest,
+      fencing_epoch,
     ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   let initialized_part_count = match
-    initialize_native_goal_parts(repository, adapters, decision, is_nfc) {
+    initialize_native_goal_parts(
+      repository, adapters, decision, is_nfc, fencing_epoch,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1628,6 +1641,7 @@ pub async fn submit_native_conductor_goal_draft(
       adapters,
       decision,
       persistence.decision_digest,
+      fencing_epoch,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)

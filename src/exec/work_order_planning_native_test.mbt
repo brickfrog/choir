@@ -128,6 +128,7 @@ async test "delivered round admits one durable successor and replays it" {
   }
   let repository_adapters = local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
+  let successor_epoch = @control.FencingEpoch(37L)
   let beads = @command.bead_records_from_json(@json.parse(bead_json)).unwrap()
   let snapshot : NativeWorkOrderPlanningSnapshot = {
     repository_root: root,
@@ -197,6 +198,7 @@ async test "delivered round admits one durable successor and replays it" {
     owner.id,
     snapshot,
     capture,
+    successor_epoch,
   ).unwrap()
   assert_true(first.accepted)
   assert_false(first.replayed)
@@ -206,6 +208,7 @@ async test "delivered round admits one durable successor and replays it" {
     owner.id,
     snapshot,
     capture,
+    successor_epoch,
   ).unwrap()
   assert_true(replay.replayed)
   assert_eq(replay.selection_decision_digest, first.selection_decision_digest)
@@ -229,6 +232,26 @@ async test "delivered round admits one durable successor and replays it" {
     stored.record.planning_rounds[0].phase,
     @workflow.WorkOrderPlanningPhase::WorkOrderPlanningGoalReady,
   )
+  assert_eq(stored.record.fencing_epoch, successor_epoch)
+  let part = @workflow.load_part_snapshot(
+      repository,
+      repository_adapters,
+      native_goal_part_workflow_id(
+        @control.GoalId("goal-native-planning"),
+        @control.PartId("choir-native-next"),
+      ),
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(part.snapshot.fencing_epoch, successor_epoch)
+  let execution = @workflow.load_goal_execution_record(
+      repository,
+      repository_adapters,
+      @control.GoalId("goal-native-planning"),
+    )
+    .unwrap()
+    .unwrap()
+  assert_eq(execution.record.fencing_epoch, successor_epoch)
   ignore(@sys.rm_rf(root))
 }
 
