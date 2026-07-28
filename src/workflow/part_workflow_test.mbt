@@ -4963,6 +4963,7 @@ test "a surface that reported its reset is deferred to that instant, not text" {
         base_seconds=60L,
         growth=2L,
         ceiling_seconds=1_800L,
+        reset_horizon_seconds=691_200L,
       ).unwrap(),
       now~,
     )

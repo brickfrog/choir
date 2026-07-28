@@ -2021,6 +2021,7 @@ fn part_provider_recheck_policy() -> Result[
     base_seconds=60L,
     growth=2L,
     ceiling_seconds=1_800L,
+    reset_horizon_seconds=691_200L,
   )
 }
 
