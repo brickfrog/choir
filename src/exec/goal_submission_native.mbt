@@ -1073,6 +1073,7 @@ fn ensure_native_work_order(
         outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
       },
     ],
+    planning_rounds: [],
     lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
     durable_version: 1,
     fencing_epoch: current_native_goal_fencing_epoch(),

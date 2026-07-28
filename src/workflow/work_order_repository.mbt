@@ -209,6 +209,24 @@ pub fn persist_work_order_budget(
     lifecycle,
     durable_version: stored.record.durable_version + 1,
   }
+  persist_work_order_transition(repository, adapters, stored, next)
+}
+
+///|
+pub fn persist_work_order_transition(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+  stored : StoredWorkOrderRecord,
+  next : WorkOrderRecord,
+) -> Result[StoredWorkOrderRecord, @types.ChoirError] {
+  if next == stored.record {
+    return Ok(stored)
+  }
+  if next.id != stored.record.id ||
+    next.fencing_epoch != stored.record.fencing_epoch ||
+    next.durable_version != stored.record.durable_version + 1 {
+    return Err(work_order_error("transition identity is invalid"))
+  }
   let receipt = match
     persist_work_order_record(repository, adapters, {
       record: next,
@@ -227,6 +245,6 @@ pub fn persist_work_order_budget(
         Ok(_) => Err(work_order_error("budget transition did not reload"))
         Err(error) => Err(error)
       }
-    _ => Err(work_order_error("budget transition conflicted"))
+    _ => Err(work_order_error("transition conflicted"))
   }
 }

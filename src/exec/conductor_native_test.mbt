@@ -425,6 +425,50 @@ async test "a rejected batch item writes nothing at all" {
 }
 
 ///|
+async test "WorkOrder batch delivery rereads exact applied Bead revisions" {
+  let graph = @ref.new("[]")
+  let commands : Array[Command] = []
+  let proposal : @command.BeadBatchProposal = {
+    mutations: [
+      {
+        id: "planned-next",
+        intent: @command.BeadMutationIntent::BeadCreateIntent,
+        title: Some("Planned next"),
+        description: Some("Deliver the next bounded change."),
+        acceptance_criteria: Some("The focused test passes."),
+        notes: None,
+        priority: Some(@command.BeadPriority::BeadP1),
+        issue_type: Some(@command.BeadIssueType::BeadTask),
+        labels: Some(["planning"]),
+        blocked_by: [],
+        parent: None,
+        expected_updated_at: None,
+      },
+    ],
+  }
+  let applied = apply_native_bead_batch("/repo", proposal, command => {
+    commands.push(command)
+    match command.args {
+      ["list", ..] => (0, graph.val)
+      ["create", "Planned next", ..] => {
+        graph.val = (
+          #|[{"id":"planned-next","title":"Planned next","description":"Deliver the next bounded change.","acceptance_criteria":"The focused test passes.","status":"open","priority":1,"issue_type":"task","labels":["planning"],"updated_at":"2026-07-28T00:00:00Z"}]
+        )
+        (0, "{}")
+      }
+      _ => (0, "{}")
+    }
+  }).unwrap()
+  assert_eq(applied.digest, @command.bead_batch_digest(proposal))
+  assert_eq(applied.records.length(), 1)
+  assert_eq(applied.records[0].updated_at, "2026-07-28T00:00:00Z")
+  assert_eq(
+    commands.filter(fn(command) { command.args[0] == "list" }).length(),
+    2,
+  )
+}
+
+///|
 /// Help in the shape the CLI prints it: one option per line, the flag first,
 /// then a wrapped paragraph that names other flags in prose. The last line is
 /// lifted from `--bare`'s real description, where `--append-system-prompt[-file]`

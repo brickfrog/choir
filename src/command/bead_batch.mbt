@@ -34,12 +34,12 @@ pub(all) struct BeadMutation {
   /// stamp no longer matches is reported as drift rather than applied over
   /// whatever changed underneath it.
   expected_updated_at : String?
-} derive(Debug, Eq)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 pub(all) struct BeadBatchProposal {
   mutations : Array[BeadMutation]
-} derive(Debug, Eq)
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
 /// Why one item of a batch cannot be applied as written.

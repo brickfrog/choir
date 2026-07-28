@@ -2781,6 +2781,7 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
         outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
       },
     ],
+    planning_rounds: [],
     lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
     durable_version: 1,
     fencing_epoch: fixture.fencing_epoch,

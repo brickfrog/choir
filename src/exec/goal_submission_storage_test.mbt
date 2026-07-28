@@ -143,6 +143,7 @@ fn work_order_store_record(label : String) -> @workflow.WorkOrderRecord raise {
         outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
       },
     ],
+    planning_rounds: [],
     lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
     durable_version: 1,
     fencing_epoch: @control.FencingEpoch(1L),

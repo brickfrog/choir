@@ -136,6 +136,7 @@ pub(all) struct WorkOrderRecord {
   max_active_child_goals : Int
   budget : WorkOrderBudget
   child_goals : Array[WorkOrderChildGoalBinding]
+  planning_rounds : Array[WorkOrderPlanningRound]
   lifecycle : WorkOrderLifecycle
   durable_version : Int
   fencing_epoch : @control.FencingEpoch
@@ -243,6 +244,16 @@ pub fn validate_work_order_record(
     if !work_order_unique_part_ids(binding.primary_target_ids) ||
       !work_order_unique_part_ids(binding.prerequisite_closure_ids) {
       return Err(work_order_error("child Bead selection is invalid"))
+    }
+  }
+  for index = 0; index < record.planning_rounds.length(); index = index + 1 {
+    let round = record.planning_rounds[index]
+    if round.work_order_id != record.id || round.sequence != index + 1 {
+      return Err(work_order_error("planning round identity is inconsistent"))
+    }
+    match validate_work_order_planning_round(round) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
     }
   }
   Ok(())
