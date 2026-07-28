@@ -637,7 +637,12 @@ pub async fn stop_native_boxlite_server(
 }
 
 ///|
-async fn remove_native_boxlite_runtime_root(
+/// Remove one server's Goal-scoped runtime root without touching the
+/// repository-scoped BoxLite home or any boxes registered in it.
+///
+/// Goal terminal cleanup must use this operation: multiple live Goals share
+/// one home, so `boxlite rm --all` is repository-wide rather than Goal-wide.
+pub async fn cleanup_native_boxlite_runtime_root(
   config : NativeBoxLiteServerConfig,
 ) -> Result[Unit, @types.ChoirError] {
   match validate_native_boxlite_server_config(config) {
@@ -693,7 +698,7 @@ pub async fn cleanup_native_boxlite_runtime(
     Err(error) => return Err(error)
   }
   if removed.exit_code == 0 {
-    remove_native_boxlite_runtime_root(config)
+    cleanup_native_boxlite_runtime_root(config)
   } else {
     Err(
       native_boxlite_take_error(
@@ -724,7 +729,7 @@ async test "native BoxLite cleanup removes sealed result trees" {
   if modes.0 != 0 {
     fail("failed to seal cleanup fixture")
   }
-  remove_native_boxlite_runtime_root({
+  cleanup_native_boxlite_runtime_root({
     binary: "/opt/boxlite",
     runtime_dir: "/opt/runtime",
     root,
