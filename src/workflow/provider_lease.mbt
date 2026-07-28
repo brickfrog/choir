@@ -3,8 +3,17 @@
 /// `maximum_parallel_parts` bounds one Goal's own concurrency. It says nothing
 /// about the portfolio, so two Goals that each respect it can still ask Claude
 /// or Codex for more sessions than the subscription serves. This file is the
-/// portfolio-wide bound: before a Goal may admit new provider work it has to
-/// hold a lease on the surface that work will run on.
+/// portfolio-wide bound: before a Goal may admit new Part-level provider work
+/// it has to hold a lease on the surface that work will run on.
+///
+/// Scope, precisely, because the gap matters: the lease is taken at
+/// `goal_authorizes_new_effects`, which admits Part implementation, verification,
+/// and repair work. Goal-level assurance dispatches its own provider session
+/// through `advance_native_goal_assurance` without passing that seam, so a Goal
+/// audit is not counted against surface capacity. That is bounded today — one
+/// worker advances one Goal per tick — but it is a live oversubscription path
+/// the moment Goals run concurrently, and it is tracked rather than assumed
+/// away.
 ///
 /// One durable record per provider surface holds every lease currently held on
 /// it. That shape is the whole point rather than an implementation detail: with
@@ -88,7 +97,7 @@ pub(all) enum ProviderLeaseLimit {
   ProviderSurfaceLimit
   /// Every surface together is at the configured global ceiling.
   ProviderGlobalLimit
-} derive(Debug, Eq, ToJson, FromJson)
+} derive(Debug, Eq)
 
 ///|
 /// The answer, which is never a bare "no".
@@ -208,11 +217,18 @@ pub fn provider_lease_deferral_seconds() -> Int64 {
 /// Drop every lease minted by a generation that no longer exists.
 ///
 /// This is the only reclamation there is: no TTL, no heartbeat. A worker that
-/// died still holds its slot in the record, and the daemon that replaces it
-/// mints a strictly greater fencing epoch under `BEGIN IMMEDIATE` before it
-/// runs anything, so every lease from the dead worker is recognizable by its
-/// epoch alone. Because it runs on read, restart reconciliation is not separate
-/// code — the first acquisition after a restart reclaims what the crash left.
+/// died still holds its slot in the record, and every lease from it is
+/// recognizable by its epoch alone. Because it runs on read, restart
+/// reconciliation is not separate code — the first acquisition after a restart
+/// reclaims what the crash left.
+///
+/// That rests on one fact outside this package: every worker process runs under
+/// its own generation. `conductor_start_goal_worker` mints a strictly greater
+/// epoch under `BEGIN IMMEDIATE` before each spawn — including the supervisor's
+/// restart of a crashed worker — and the worker only ever observes. Move the
+/// mint back to daemon startup and a restarted worker inherits its predecessor's
+/// epoch, which makes the two indistinguishable here and strands the dead
+/// worker's slots until the daemon itself restarts.
 ///
 /// A lease minted by a *newer* generation is kept. It belongs to a worker that
 /// superseded this one, and this process has no authority to release it; the

@@ -287,11 +287,14 @@ fn persist_bound_part_repair(
   }
   let persisted = match authorization {
     // A deferral and a standing refusal both mean the repair is not persisted
-    // on this pass. The instant reaches the scheduler from the run outcome the
-    // driver returns, not from here.
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized
-    | @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
+    // on this pass. Unlike `advance_bound_part`, the driver outcome that
+    // brought us here is the repair-triggering one, so it carries no instant —
+    // this is the only place the scheduler can learn it.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) => {
+      (config.observe_provider_deferral)(instant)
       return Ok(None)
+    }
+    @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
         @workflow.persist_part_snapshot(
@@ -410,8 +413,14 @@ async fn promote_bound_part(
     Err(error) => return Err(error)
   }
   let persisted = match authorization {
-    @workflow.PartGoalAuthorization::PartGoalNotAuthorized
-    | @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
+    // The promotion pass reports its own deferral for the same reason the
+    // repair pass does: the outcome it returns describes the promotion, not
+    // the capacity bound that refused it.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) => {
+      (config.observe_provider_deferral)(instant)
+      return Ok(scheduling_record_from_snapshot(result.snapshot))
+    }
+    @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
       return Ok(scheduling_record_from_snapshot(result.snapshot))
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match

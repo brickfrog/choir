@@ -501,10 +501,15 @@ fn goal_delivery_has_landed(report : GoalStatusReport) -> Bool {
 /// Whether this Part is waiting on the surface it runs on rather than working.
 ///
 /// The report is read against the same schedule the recovery decision uses, so
-/// a Part counted as deferred here is one `plan_part_recovery_retry` would
-/// also defer, and it stops being counted at the instant it becomes eligible
-/// again. A schedule that could not be built is not itself a reason to report
-/// a Part as waiting.
+/// it stops counting a Part at the instant that Part becomes eligible again. A
+/// schedule that could not be built is not itself a reason to report a Part as
+/// waiting.
+///
+/// It is not equivalent to `plan_part_recovery_retry`, and cannot be:
+/// `GoalPartStatus` carries no admitted surface set, so this cannot see the
+/// failover branch. A Part whose other surface is still admitted is counted
+/// here as waiting while the machine would move it instead. The count is
+/// therefore an upper bound on Parts blocked on provider capacity.
 fn part_is_provider_deferred(part : GoalPartStatus, now : Int64) -> Bool {
   match (part.dispatch_diagnostic, part_provider_recheck_policy()) {
     (Some(diagnostic), Ok(policy)) =>

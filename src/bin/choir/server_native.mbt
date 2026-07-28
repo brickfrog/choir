@@ -1162,10 +1162,24 @@ async fn conductor_goal_loop(config : @types.Config) -> Unit {
 }
 
 ///|
+/// Spawn the Goal worker under a freshly minted fencing generation.
+///
+/// Every worker process is its own generation, and minting here rather than
+/// once at startup is what makes that true for the restart this supervisor
+/// exists to perform. The worker holds provider leases stamped with the epoch
+/// it observed; if a crashed worker's replacement inherited the same epoch,
+/// `reclaim_provider_surface_leases` could not tell the dead worker's slots
+/// from the live one's, and they would stay held until `choir serve` itself
+/// restarted. The daemon mints because it holds the single-instance lock; the
+/// worker only ever observes.
 fn conductor_start_goal_worker(
   state : ConductorServerState,
   executable : String,
 ) -> Result[Int, @types.ChoirError] {
+  match @exec.mint_native_goal_fencing_epoch(state.config.project_dir) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let pid = match
     @exec.spawn_native_goal_worker(executable, state.config.project_dir) {
     Ok(value) => value
@@ -1371,9 +1385,11 @@ fn serve_run() -> Unit {
   @sys.write_pid_file(".choir/run/server.pid")
   @sys.register_cleanup_runtime_artifacts()
   @sys.install_crash_handlers()
-  // Mint the fencing generation while holding the instance lock, before the
-  // goal worker spawns: the worker observes this value, and records written
-  // by older surviving processes are fenced once this generation adopts them.
+  // The daemon's own generation, minted while holding the instance lock, so
+  // that submissions have a valid epoch before any worker exists and records
+  // written by older surviving processes are fenced once this generation
+  // adopts them. Each worker generation mints again in
+  // `conductor_start_goal_worker`; that is the value a worker observes.
   match @exec.mint_native_goal_fencing_epoch(config.project_dir) {
     Ok(_) => ()
     Err(error) => {

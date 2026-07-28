@@ -93,9 +93,9 @@ pub fn classify_provider_availability(
 ///
 /// The type exists so that the schedule cannot express "wait forever": every
 /// bound is positive and the interval is capped, so a deferral always names an
-/// instant at which the surface is re-checked. Fields are private; the only
-/// way to obtain one is `provider_recheck_policy`, which rejects bounds that
-/// would bound nothing.
+/// instant at which the surface is re-checked. The type is read-only outside
+/// this package, so the only way to obtain one is `provider_recheck_policy`,
+/// which rejects bounds that would bound nothing.
 pub struct ProviderRecheckPolicy {
   base_seconds : Int64
   growth : Int64

@@ -61,9 +61,11 @@ can use `choir start`.
 From the Conductor, discuss the intended feature, create or refine Beads when
 needed, then invoke the provider's built-in `/goal`. The Conductor proposes the selected Parts and
 their contracts; Choir validates and schedules them according to dependencies,
-mutation overlap, and the requested concurrency. Provider surfaces have no
-global per-surface admission policy yet, so concurrency is bounded per Goal by
-`maximum_parallel_parts` rather than by measured provider capacity.
+mutation overlap, and the requested concurrency. Concurrency is bounded twice:
+per Goal by `maximum_parallel_parts`, and portfolio-wide by a durable lease on
+each provider surface, sized by the `[capacity]` section of `.choir/config.toml`
+(`claude`, `codex`, and an optional `global` ceiling across all surfaces). A
+Part refused a slot is told when to come back rather than retried in a loop.
 
 Choir does not install a slash command or skill named `goal`: `/goal` remains
 Claude Code's built-in session goal. While a durable Choir Goal is running, a

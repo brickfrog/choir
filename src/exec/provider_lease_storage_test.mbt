@@ -399,6 +399,148 @@ async test "a deferred Part reports its wake instant to the tick" {
 }
 
 ///|
+/// The repair pass has to report its own deferral.
+///
+/// `advance_bound_part` can forward the instant because the driver hands it a
+/// `PartRunGoalDeferredUntil` outcome to read it from. The repair pass cannot:
+/// the outcome that routed the Part here describes the recovery, so if this
+/// pass drops the instant nothing else carries it and the refusal degrades to
+/// polling. This drives the recovery-repair branch with a gate that defers and
+/// checks both halves — the instant is reported, and the repair is not written.
+async test "a repair refused by a capacity bound still names its wake instant" {
+  let repository = workflow_repository("provider-lease-repair-deferral")
+  clean_workflow_repository(repository)
+  let adapters = workflow_repository_adapters()
+  guard @workflow.initialize_part_workflow_repository(repository, adapters)
+    is Ok(_) else {
+    fail("initialize repair-deferral repository")
+  }
+  let initial = workflow_store_fixture()
+  let uncertain = {
+    ..initial,
+    stage: @workflow.PartWorkflowStage::PartRecoveryUncertain,
+    part: {
+      ..initial.part,
+      lifecycle: @control.PartLifecycle::PartBlocked(
+        @control.PartBlockReason::PartRecoveryUncertain,
+      ),
+    },
+    admitted_provider_surfaces: [
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ],
+  }
+  ignore(
+    @workflow.persist_part_snapshot(repository, adapters, {
+      snapshot: uncertain,
+      expected_store_version: None,
+      fault_point: None,
+    }).unwrap(),
+  )
+  let moved : @workflow.PartProviderFailover = {
+    from_surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    to_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    cause: @control.ProviderAvailability::ProviderAllowanceExhausted(None),
+    retry_ordinal: 1,
+    decided_at: 500L,
+  }
+  let planned = {
+    ..uncertain,
+    durable_version: uncertain.durable_version + 1,
+    stage: @workflow.PartWorkflowStage::PartAccepted,
+    identities: {
+      ..uncertain.identities,
+      implementation_session: {
+        ..uncertain.identities.implementation_session,
+        surface: moved.to_surface,
+      },
+      audit_session: {
+        ..uncertain.identities.audit_session,
+        surface: moved.to_surface,
+      },
+    },
+    provider_failovers: [moved],
+  }
+  let execute_count = @ref.new(0)
+  let reconcile_count = @ref.new(0)
+  let dependencies = workflow_driver_dependencies(
+    execute_count,
+    reconcile_count,
+    fn(_) { None },
+    workflow_driver_recover_observation,
+  )
+  let record : @workflow.GoalPartSchedulingRecord = {
+    part: uncertain.part,
+    task_contract: uncertain.task_contract,
+  }
+  let observed_deferral : Ref[Int64?] = @ref.new(None)
+  let config : @exec.GoalPartWorkflowAdapterConfig = {
+    bindings: [
+      { scheduling_record: record, initial_snapshot: initial, repository },
+    ],
+    repository_adapters: adapters,
+    dependencies: fn(_, _) {
+      Ok({
+        ..dependencies,
+        goal_authorizes_new_effects: fn() {
+          Ok(
+            @workflow.PartGoalAuthorization::PartGoalDeferredUntil(
+              7_314L,
+              @workflow.PartGoalDeferralReason::PartGoalProviderSurfaceAtCapacity,
+            ),
+          )
+        },
+      })
+    },
+    integration_input: fn(_, _) {
+      Err(@types.ChoirError::validation_error("integration is not expected"))
+    },
+    plan_conflict_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_audit_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_verification_repair: fn(_) {
+      Err(@types.ChoirError::validation_error("repair is not expected"))
+    },
+    plan_recovery_retry: fn(_) {
+      Ok(
+        @workflow.PartRecoveryRetryDecision::PartRecoveryRetryFailedOver(
+          planned, moved,
+        ),
+      )
+    },
+    read_goal_head: () => Ok(@control.GitOid("goal-head-repair-deferral")),
+    observe_provider_deferral: fn(instant) {
+      observed_deferral.val = Some(instant)
+    },
+    release_provider_lease: fn(_) { Ok(()) },
+  }
+  match (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
+    Ok(_) => ()
+    Err(error) => fail(error.message())
+  }
+  assert_eq(observed_deferral.val, Some(7_314L))
+  // The other half: a refused repair is not written. Were it persisted, the
+  // Part would have moved surfaces on a pass the gate declined to authorize.
+  let stored = @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      initial.workflow_id,
+    )
+    .unwrap()
+    .unwrap().snapshot
+  assert_eq(stored.provider_failovers, [])
+  assert_eq(
+    stored.identities.implementation_session.surface,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  assert_eq(execute_count.val, 0)
+  clean_workflow_repository(repository)
+}
+
+///|
 /// The cheap gate runs first: a Goal that is no longer running is refused
 /// outright, and must not take a provider slot on its way to being refused.
 test "a Goal that is not running is refused without taking a slot" {
