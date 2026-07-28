@@ -14,6 +14,7 @@ fn failover_policy() -> @control.ProviderRecheckPolicy {
       base_seconds=60L,
       growth=2L,
       ceiling_seconds=1_800L,
+      reset_horizon_seconds=691_200L,
     ) {
     Ok(policy) => policy
     Err(_) => abort("the re-check schedule under test is invalid")
@@ -22,24 +23,37 @@ fn failover_policy() -> @control.ProviderRecheckPolicy {
 
 ///|
 test "a re-check schedule that would bound nothing is rejected" {
-  let rejected = fn(base_seconds, growth, ceiling_seconds) {
-    @control.provider_recheck_policy(base_seconds~, growth~, ceiling_seconds~)
+  let rejected = fn(
+    base_seconds,
+    growth,
+    ceiling_seconds,
+    reset_horizon_seconds,
+  ) {
+    @control.provider_recheck_policy(
+      base_seconds~,
+      growth~,
+      ceiling_seconds~,
+      reset_horizon_seconds~,
+    )
     is Err(_)
   }
   // A first interval of zero re-checks a spent surface immediately, which is
   // the same as having no schedule.
-  assert_true(rejected(0L, 2L, 1_800L))
-  assert_true(rejected(-60L, 2L, 1_800L))
+  assert_true(rejected(0L, 2L, 1_800L, 691_200L))
+  assert_true(rejected(-60L, 2L, 1_800L, 691_200L))
   // Growth below one shrinks the wait instead of backing off.
-  assert_true(rejected(60L, 0L, 1_800L))
+  assert_true(rejected(60L, 0L, 1_800L, 691_200L))
   // A ceiling under the first interval is not a ceiling.
-  assert_true(rejected(60L, 2L, 59L))
+  assert_true(rejected(60L, 2L, 59L, 691_200L))
+  // A nonpositive sanity horizon trusts no future reset coherently.
+  assert_true(rejected(60L, 2L, 1_800L, 0L))
   // A flat schedule is still a bounded one.
   assert_true(
     @control.provider_recheck_policy(
       base_seconds=60L,
       growth=1L,
       ceiling_seconds=60L,
+      reset_horizon_seconds=691_200L,
     )
     is Ok(_),
   )
@@ -65,9 +79,9 @@ test "deferral obeys reported evidence and re-checks what reported none" {
   // the ordinary bounded recovery path.
   assert_true(admits(@control.ProviderAvailability::ProviderAvailable, 0, 0L))
   assert_true(admits(@control.ProviderAvailability::ProviderUnavailable, 0, 0L))
-  // A reported reset defers until exactly that instant, whatever the re-check
-  // schedule would have said — both nearer than the first interval and past
-  // the ceiling.
+  // A plausible reported reset defers until exactly that instant, whatever
+  // the re-check schedule would have said — both nearer than the first
+  // interval and past the re-check ceiling.
   let resets_at = fn(instant) {
     @control.ProviderAvailability::ProviderAllowanceExhausted(Some(instant))
   }
@@ -75,6 +89,13 @@ test "deferral obeys reported evidence and re-checks what reported none" {
   assert_true(admits(resets_at(1_010L), 0, 1_010L))
   assert_false(admits(resets_at(9_000L), 0, 8_999L))
   assert_true(admits(resets_at(9_000L), 0, 9_000L))
+  // The configured eight-day boundary itself remains trusted exactly.
+  assert_false(admits(resets_at(692_200L), 0, 692_199L))
+  assert_true(admits(resets_at(692_200L), 0, 692_200L))
+  // A milliseconds-for-seconds value is outside the eight-day sanity horizon,
+  // so it ages out on the capped schedule instead of parking until year 5138.
+  assert_false(admits(resets_at(99_999_999_999L), 0, 1_059L))
+  assert_true(admits(resets_at(99_999_999_999L), 0, 1_060L))
   // A retry-after is the provider's own instant too.
   assert_false(
     admits(@control.ProviderAvailability::ProviderRetryAfter(100L), 0, 99L),

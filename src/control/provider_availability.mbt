@@ -87,9 +87,9 @@ pub fn classify_provider_availability(
 }
 
 ///|
-/// How long a surface that reported a spent allowance and named no reset
-/// instant stays deferred, and how that interval grows when the same surface
-/// keeps reporting one.
+/// How long a spent-allowance observation stays deferred: the re-check
+/// schedule used when no credible reset was reported, and the farthest future
+/// reset instant Choir will trust as seconds rather than malformed units.
 ///
 /// The type exists so that the schedule cannot express "wait forever": every
 /// bound is positive and the interval is capped, so a deferral always names an
@@ -100,6 +100,7 @@ pub struct ProviderRecheckPolicy {
   base_seconds : Int64
   growth : Int64
   ceiling_seconds : Int64
+  reset_horizon_seconds : Int64
 }
 
 ///|
@@ -114,11 +115,14 @@ fn provider_recheck_error(detail : String) -> @types.ChoirError {
 /// burns the recovery budget against it; a growth below one shrinks the
 /// interval instead of backing off; a ceiling under the first interval is not
 /// a ceiling. Each is rejected rather than silently corrected, because a
-/// schedule nobody can read is how "bounded" quietly becomes "never".
+/// schedule nobody can read is how "bounded" quietly becomes "never". A
+/// nonpositive reset horizon is equally incoherent: it would reject every
+/// future reset rather than defining a sanity bound.
 pub fn provider_recheck_policy(
   base_seconds~ : Int64,
   growth~ : Int64,
   ceiling_seconds~ : Int64,
+  reset_horizon_seconds~ : Int64,
 ) -> Result[ProviderRecheckPolicy, @types.ChoirError] {
   if base_seconds <= 0L {
     return Err(provider_recheck_error("first interval is not positive"))
@@ -129,7 +133,10 @@ pub fn provider_recheck_policy(
   if ceiling_seconds < base_seconds {
     return Err(provider_recheck_error("ceiling is below the first interval"))
   }
-  Ok({ base_seconds, growth, ceiling_seconds })
+  if reset_horizon_seconds <= 0L {
+    return Err(provider_recheck_error("reset horizon is not positive"))
+  }
+  Ok({ base_seconds, growth, ceiling_seconds, reset_horizon_seconds })
 }
 
 ///|
@@ -167,7 +174,22 @@ fn provider_availability_deferred_until(
 ) -> Int64? {
   match availability {
     ProviderAvailable | ProviderUnavailable => None
-    ProviderAllowanceExhausted(Some(reset)) => Some(reset)
+    ProviderAllowanceExhausted(Some(reset)) =>
+      if reset <= observed_at ||
+        (
+          observed_at >= 0L &&
+          reset - observed_at <= policy.reset_horizon_seconds
+        ) {
+        Some(reset)
+      } else {
+        // The provider supplied evidence, but its unit or value is not
+        // credible enough to park work on. Preserve liveness by aging this
+        // observation out on the same capped schedule as a missing reset.
+        Some(
+          observed_at +
+          provider_recheck_interval_seconds(policy, prior_deferrals),
+        )
+      }
     // No reset evidence: still nothing is invented about when the allowance
     // returns, but the observation ages out on Choir's own schedule so the
     // surface is asked again rather than written off.
@@ -194,9 +216,10 @@ fn provider_availability_deferred_until(
 /// So an allowance with no reset evidence is now deferred until `observed_at`
 /// plus a capped interval that grows per consecutive deferral of that surface.
 /// That interval still claims no knowledge of when the allowance resets; it
-/// only declines to treat one observation as permanent. Trusted evidence is
-/// unchanged and always wins: a reported reset instant and a retry-after defer
-/// until exactly that instant.
+/// only declines to treat one observation as permanent. A reported reset wins
+/// exactly when it falls within the policy's validated sanity horizon; a
+/// farther value is treated as untrusted units and falls back to the capped
+/// schedule. Retry-after remains exact.
 pub fn provider_availability_admits_dispatch(
   availability : ProviderAvailability,
   observed_at~ : Int64,
