@@ -1287,7 +1287,6 @@ async test "Goal adapter accepts the exact stored contract revision" {
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
-    observe_provider_deferral: fn(_) {  },
     release_provider_lease: fn(_) { Ok(()) },
   }
   let record : @workflow.GoalPartSchedulingRecord = {
@@ -1400,7 +1399,6 @@ async test "Goal adapter persists a Part that moved to another provider" {
       )
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
-    observe_provider_deferral: fn(_) {  },
     release_provider_lease: fn(_) { Ok(()) },
   }
   ignore(
@@ -1676,7 +1674,6 @@ async test "Goal adapter persists an autonomous verification repair revision" {
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
-    observe_provider_deferral: fn(_) {  },
     release_provider_lease: fn(_) { Ok(()) },
   }
   let observed = match
@@ -1765,7 +1762,6 @@ async test "Goal adapter resumes promotion after a durable rollback" {
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
-    observe_provider_deferral: fn(_) {  },
     release_provider_lease: fn(_) { Ok(()) },
   }
   let adapters = @exec.goal_part_workflow_adapters(config)
@@ -1844,7 +1840,6 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
-    observe_provider_deferral: fn(_) {  },
     release_provider_lease: fn(_) { Ok(()) },
   }
   let result = match

@@ -44,17 +44,20 @@ fn provider_lease_authorize(
   capacity : @types.ProviderCapacityPolicy,
   epoch : Int64,
   now : Int64,
+  surface? : @control.ProviderSurfaceId = provider_lease_surface,
+  observed? : Array[@workflow.ProviderSurfaceTickReport] = [],
 ) -> @workflow.PartGoalAuthorization raise {
   match
     native_goal_effect_authorization(
       repository,
       record.goal.id,
       @control.PartId("part-" + label),
-      provider_lease_surface,
+      surface,
       @control.TakeId("take-" + label),
       capacity,
       @control.FencingEpoch(epoch),
       now,
+      observe=fn(report) { observed.push(report) },
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -155,6 +158,80 @@ test "two running Goals cannot both take the last provider slot" {
     is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
   )
   assert_eq(provider_lease_held(repository), 2)
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+/// The scheduler's sleep is decided from what this gate reports, so the gate
+/// has to name the surface it judged and which way it went. A report that named
+/// only refusals would park the daemon on an instant while a surface it just
+/// admitted work on sat idle.
+test "the gate reports the surface it admitted and the surface it refused" {
+  let root = "/tmp/choir-provider-lease-report-" + @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  let goal = provider_lease_running_record("report-goal")
+  archive_native_persist(repository, adapters, goal)
+  let claude = @control.ProviderSurfaceId::ClaudeSubscriptionCli
+  let codex = @control.ProviderSurfaceId::CodexSubscriptionCli
+  // One Claude slot, two Codex slots.
+  let capacity = provider_lease_capacity(1, codex=2)
+  let observed : Array[@workflow.ProviderSurfaceTickReport] = []
+  assert_true(
+    provider_lease_authorize(
+      repository,
+      goal,
+      "report-claude",
+      capacity,
+      3L,
+      1_000L,
+      surface=claude,
+      observed~,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  assert_true(
+    provider_lease_authorize(
+      repository,
+      goal,
+      "report-codex",
+      capacity,
+      3L,
+      1_000L,
+      surface=codex,
+      observed~,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalAuthorized(Some(_)),
+  )
+  // The Claude bound is spent; Codex still has room.
+  assert_true(
+    provider_lease_authorize(
+      repository,
+      goal,
+      "report-claude-second",
+      capacity,
+      3L,
+      1_000L,
+      surface=claude,
+      observed~,
+    )
+    is @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _),
+  )
+  assert_eq(observed, [
+    {
+      surface: claude,
+      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+    },
+    {
+      surface: codex,
+      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceAdmitted,
+    },
+    {
+      surface: claude,
+      disposition: @workflow.ProviderSurfaceTickDisposition::ProviderSurfaceDeferredUntil(
+        1_005L,
+      ),
+    },
+  ])
   ignore(@sys.rm_rf(root))
 }
 
@@ -314,12 +391,13 @@ test "the tick releases exactly the slots its gate leased" {
 }
 
 ///|
-/// The instant has to reach the scheduler, or the gate can name a wake time
-/// nobody waits for. This drives the Goal Part adapter with a gate that defers,
-/// and checks the instant arrives at the observer the execution tick binds.
-/// The capacity rule itself is proven against the real gate above; what is
-/// under test here is only the path the instant travels.
-async test "a deferred Part reports its wake instant to the tick" {
+/// A Part the gate refuses runs nothing and holds nothing.
+///
+/// The wake instant itself is reported by the gate — see "the gate tells the
+/// tick which surface it admitted and which it refused" — so what is under test
+/// here is the other half: a refusal must not start an effect, and must not
+/// leave the Part sitting on a provider slot every other Goal is waiting for.
+async test "a deferred Part runs no effect and gives its slot back" {
   let repository = workflow_repository("provider-lease-deferral")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
@@ -340,7 +418,6 @@ async test "a deferred Part reports its wake instant to the tick" {
     fn(_) { None },
     workflow_driver_recover_observation,
   )
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
   let released : Array[@control.PartId] = []
   let config : @exec.GoalPartWorkflowAdapterConfig = {
     bindings: [
@@ -376,9 +453,6 @@ async test "a deferred Part reports its wake instant to the tick" {
       Err(@types.ChoirError::validation_error("recovery is not expected"))
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-deferral")),
-    observe_provider_deferral: fn(instant) {
-      observed_deferral.val = Some(instant)
-    },
     release_provider_lease: fn(part_id) {
       released.push(part_id)
       Ok(())
@@ -388,7 +462,6 @@ async test "a deferred Part reports its wake instant to the tick" {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }
-  assert_eq(observed_deferral.val, Some(4_242L))
   // A refused Part ran no effect: the deferral is the whole outcome.
   assert_eq(execute_count.val, 0)
   // The slot goes back when the pass returns rather than when the Goal tick
@@ -399,15 +472,12 @@ async test "a deferred Part reports its wake instant to the tick" {
 }
 
 ///|
-/// The repair pass has to report its own deferral.
+/// A repair the gate refuses is not written.
 ///
-/// `advance_bound_part` can forward the instant because the driver hands it a
-/// `PartRunGoalDeferredUntil` outcome to read it from. The repair pass cannot:
-/// the outcome that routed the Part here describes the recovery, so if this
-/// pass drops the instant nothing else carries it and the refusal degrades to
-/// polling. This drives the recovery-repair branch with a gate that defers and
-/// checks both halves — the instant is reported, and the repair is not written.
-async test "a repair refused by a capacity bound still names its wake instant" {
+/// The recovery-repair pass re-arms a Part onto another provider surface, and
+/// it asks the gate before persisting that. Were the refusal ignored, the Part
+/// would have moved surfaces on a pass the gate declined to authorize.
+async test "a repair refused by a capacity bound is not persisted" {
   let repository = workflow_repository("provider-lease-repair-deferral")
   clean_workflow_repository(repository)
   let adapters = workflow_repository_adapters()
@@ -473,7 +543,6 @@ async test "a repair refused by a capacity bound still names its wake instant" {
     part: uncertain.part,
     task_contract: uncertain.task_contract,
   }
-  let observed_deferral : Ref[Int64?] = @ref.new(None)
   let config : @exec.GoalPartWorkflowAdapterConfig = {
     bindings: [
       { scheduling_record: record, initial_snapshot: initial, repository },
@@ -512,18 +581,12 @@ async test "a repair refused by a capacity bound still names its wake instant" {
       )
     },
     read_goal_head: () => Ok(@control.GitOid("goal-head-repair-deferral")),
-    observe_provider_deferral: fn(instant) {
-      observed_deferral.val = Some(instant)
-    },
     release_provider_lease: fn(_) { Ok(()) },
   }
   match (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }
-  assert_eq(observed_deferral.val, Some(7_314L))
-  // The other half: a refused repair is not written. Were it persisted, the
-  // Part would have moved surfaces on a pass the gate declined to authorize.
   let stored = @workflow.load_part_snapshot(
       repository,
       adapters,

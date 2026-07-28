@@ -34,9 +34,6 @@ pub(all) struct GoalPartWorkflowAdapterConfig {
     @types.ChoirError,
   ]
   read_goal_head : async () -> Result[@control.GitOid, @types.ChoirError]
-  /// Told the instant a capacity bound refused a Part, so the tick can report a
-  /// wake time instead of the scheduler polling until a slot happens to free.
-  observe_provider_deferral : (Int64) -> Unit
   /// Give back the provider slot this Part's admission gate took.
   release_provider_lease : (@control.PartId) -> Result[Unit, @types.ChoirError]
 }
@@ -196,17 +193,6 @@ async fn advance_bound_part(
   }
   match result {
     Ok(value) => {
-      // A capacity bound refused this Part and named when to come back. Report
-      // it before anything else looks at the snapshot: the Part did not
-      // advance, and the only thing the scheduler learns from this pass is the
-      // instant.
-      if value.outcome
-        is @workflow.PartWorkflowRunOutcome::PartRunGoalDeferredUntil(
-          instant,
-          _
-        ) {
-        (config.observe_provider_deferral)(instant)
-      }
       let (repaired, repair_name) = match value.snapshot.part.lifecycle {
         @control.PartLifecycle::PartBlocked(
           @control.PartBlockReason::PartAuditFindings
@@ -287,13 +273,10 @@ fn persist_bound_part_repair(
   }
   let persisted = match authorization {
     // A deferral and a standing refusal both mean the repair is not persisted
-    // on this pass. Unlike `advance_bound_part`, the driver outcome that
-    // brought us here is the repair-triggering one, so it carries no instant —
-    // this is the only place the scheduler can learn it.
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) => {
-      (config.observe_provider_deferral)(instant)
+    // on this pass. The gate itself told the tick which surface refused and
+    // when, so nothing has to be forwarded from here.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
       return Ok(None)
-    }
     @workflow.PartGoalAuthorization::PartGoalNotAuthorized => return Ok(None)
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
       match
@@ -413,13 +396,10 @@ async fn promote_bound_part(
     Err(error) => return Err(error)
   }
   let persisted = match authorization {
-    // The promotion pass reports its own deferral for the same reason the
-    // repair pass does: the outcome it returns describes the promotion, not
-    // the capacity bound that refused it.
-    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(instant, _) => {
-      (config.observe_provider_deferral)(instant)
+    // A promotion the gate refused keeps the observed snapshot; the gate has
+    // already told the tick which surface refused it and when.
+    @workflow.PartGoalAuthorization::PartGoalDeferredUntil(_, _) =>
       return Ok(scheduling_record_from_snapshot(result.snapshot))
-    }
     @workflow.PartGoalAuthorization::PartGoalNotAuthorized =>
       return Ok(scheduling_record_from_snapshot(result.snapshot))
     @workflow.PartGoalAuthorization::PartGoalAuthorized(None) =>
