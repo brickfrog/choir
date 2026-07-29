@@ -2115,13 +2115,17 @@ async fn capture_native_goal_source_state(
     Ok(value) => value
     Err(_) => return Ok(None)
   }
-  if snapshot.parts.length() != 1 ||
-    tasks.length() != 1 ||
-    snapshot.parts[0].part_id != claim.part_id ||
-    tasks[0].id != claim.part_id.0 {
+  let mut source : @workflow.GoalSelectionSourcePart? = None
+  for candidate in snapshot.parts {
+    if candidate.part_id == claim.part_id {
+      source = Some(candidate)
+      break
+    }
+  }
+  if source is None || tasks.length() != 1 || tasks[0].id != claim.part_id.0 {
     return Ok(None)
   }
-  Ok(Some((snapshot.parts[0], tasks[0])))
+  Ok(Some((source.unwrap(), tasks[0])))
 }
 
 ///|
@@ -2346,7 +2350,7 @@ fn native_source_claim_test_record(
 ///|
 async test "Beads claim recovers when delivery succeeded but acknowledgement was lost" {
   let open =
-    #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:00:00Z","dependency_count":0}]
+    #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"open","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-21T00:00:00Z","dependency_count":1,"dependencies":[{"id":"choir-delivered-dependency","title":"Delivered","description":"","acceptance_criteria":"","notes":"","status":"closed","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-20T00:00:00Z","dependency_type":"blocks","dependency_count":0}]}]
   let snapshot = @workflow.goal_selection_snapshot_from_beads_json(
     @workflow.RepositoryId("source-claim-repository"),
     @control.GitOid("source-claim-base"),
@@ -2373,7 +2377,7 @@ async test "Beads claim recovers when delivery succeeded but acknowledgement was
         (
           0,
           (
-            #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-claim-test","updated_at":"2026-07-21T00:01:00Z","dependency_count":0}]
+            #|[{"id":"choir-source-claim","title":"Claim me","description":"","acceptance_criteria":"","notes":"","status":"in_progress","priority":2,"issue_type":"task","assignee":"choir:goal-source-claim-test","updated_at":"2026-07-21T00:01:00Z","dependency_count":1,"dependencies":[{"id":"choir-delivered-dependency","title":"Delivered","description":"","acceptance_criteria":"","notes":"","status":"closed","priority":2,"issue_type":"task","assignee":"","updated_at":"2026-07-20T00:00:00Z","dependency_type":"blocks","dependency_count":0}]}]
           ),
         )
       _ => fail("unexpected Beads claim command")

@@ -1139,7 +1139,8 @@ pub fn reconcile_goal_source_claim(
           ),
         ) {
         Ok(GoalCancellationRequested(value))
-        | Ok(GoalCancellationAlreadyCanceling(value)) => Ok(value)
+        | Ok(GoalCancellationAlreadyCanceling(value)) =>
+          Ok({ ..value, durable_version: record.durable_version + 1 })
         Ok(GoalCancellationAlreadyTerminal(_)) =>
           Err(goal_execution_error("source claim cancellation raced"))
         Err(error) => Err(error)
@@ -1350,7 +1351,12 @@ pub fn reconcile_goal_branch_initialization(
         ) {
         Ok(GoalCancellationRequested(value))
         | Ok(GoalCancellationAlreadyCanceling(value)) =>
-          Ok(GoalBranchInitObservationRecorded(value))
+          Ok(
+            GoalBranchInitObservationRecorded({
+              ..value,
+              durable_version: record.durable_version + 1,
+            }),
+          )
         Ok(GoalCancellationAlreadyTerminal(_)) =>
           Err(goal_execution_error("branch initialization cancellation raced"))
         Err(error) => Err(error)
@@ -1397,7 +1403,12 @@ pub fn reconcile_goal_branch_initialization(
         ) {
         Ok(GoalCancellationRequested(value))
         | Ok(GoalCancellationAlreadyCanceling(value)) =>
-          Ok(GoalBranchInitObservationRecorded(value))
+          Ok(
+            GoalBranchInitObservationRecorded({
+              ..value,
+              durable_version: record.durable_version + 1,
+            }),
+          )
         Ok(GoalCancellationAlreadyTerminal(_)) =>
           Err(goal_execution_error("branch initialization cancellation raced"))
         Err(error) => Err(error)
