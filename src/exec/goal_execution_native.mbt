@@ -1549,6 +1549,22 @@ test "a runtime sweep keeps live roots and only matches its own shape" {
 }
 
 ///|
+fn native_runtime_sweep_may_remove_repository_boxes(
+  live_keys : Array[String],
+) -> Bool {
+  live_keys.length() == 0
+}
+
+///|
+test "a runtime sweep preserves shared-home boxes while any Goal is live" {
+  assert_false(native_runtime_sweep_may_remove_repository_boxes(["goal-b"]))
+  assert_false(
+    native_runtime_sweep_may_remove_repository_boxes(["goal-a", "goal-b"]),
+  )
+  assert_true(native_runtime_sweep_may_remove_repository_boxes([]))
+}
+
+///|
 /// Select the durable data root used by repository-scoped BoxLite homes.
 ///
 /// An empty XDG_DATA_HOME is unspecified by the XDG base-directory contract, so
@@ -1985,7 +2001,7 @@ async fn cleanup_native_goal_runtime_identity(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  cleanup_native_boxlite_runtime({
+  cleanup_native_boxlite_runtime_root({
     binary,
     runtime_dir,
     root: runtime_root,
@@ -6758,6 +6774,7 @@ async fn cleanup_native_goal_runtime_at_key(
   repository_id : @workflow.RepositoryId,
   temporary_root : String,
   key : String,
+  repository_boxes_may_be_removed : Bool,
 ) -> Result[Unit, @types.ChoirError] {
   let binary = match native_boxlite_binary_path() {
     Ok(value) => value
@@ -6771,14 +6788,19 @@ async fn cleanup_native_goal_runtime_at_key(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  cleanup_native_boxlite_runtime({
+  let config : NativeBoxLiteServerConfig = {
     binary,
     runtime_dir,
     root: temporary_root + "/" + native_goal_runtime_root_prefix + key,
     home,
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + key,
-  })
+  }
+  if repository_boxes_may_be_removed {
+    cleanup_native_boxlite_runtime(config)
+  } else {
+    cleanup_native_boxlite_runtime_root(config)
+  }
 }
 
 ///|
@@ -6820,6 +6842,14 @@ pub async fn reclaim_native_goal_runtime_roots(
     Err(_) => return Ok(0)
   }
   let mut removed = 0
+  // A repository-wide BoxLite sweep is safe only when the durable store proves
+  // there is no nonterminal Goal. With any live Goal, stale roots are removed
+  // without touching the shared home: its boxes may be exactly what that live
+  // Goal's sandbox manifests name for reuse on the next tick.
+  let repository_boxes_may_be_removed = native_runtime_sweep_may_remove_repository_boxes(
+    live_keys,
+  )
+  let repository_boxes_removed = @ref.new(false)
   for
     entry in native_reclaimable_goal_runtime_roots(
       list_dir(temporary_root),
@@ -6830,8 +6860,18 @@ pub async fn reclaim_native_goal_runtime_roots(
       continue
     }
     match
-      cleanup_native_goal_runtime_at_key(repository_id, temporary_root, key) {
-      Ok(_) => removed = removed + 1
+      cleanup_native_goal_runtime_at_key(
+        repository_id,
+        temporary_root,
+        key,
+        repository_boxes_may_be_removed && !repository_boxes_removed.val,
+      ) {
+      Ok(_) => {
+        removed = removed + 1
+        if repository_boxes_may_be_removed {
+          repository_boxes_removed.val = true
+        }
+      }
       Err(error) => return Err(error)
     }
   }
@@ -7266,18 +7306,10 @@ async fn delete_native_goal_archived_git_refs(
 /// `reclaim_native_goal_runtime_roots` removes whatever a crash left behind on
 /// every daemon start.
 ///
-/// Both of those also run `boxlite rm --all --force` against a BoxLite home
-/// keyed on the repository (`native_goal_boxlite_home_at` digests the
-/// repository id and nothing else), and `--all` is scoped to that home: every
-/// box the repository has, whichever Goal made it. The daemon-start one is
-/// sound — it runs under the single-instance lock before the first tick, so no
-/// Goal of this daemon has a box yet. The terminal-boundary one is not. Ticks
-/// are serial, so two Goals never run at the same instant, but boxes outlive a
-/// tick on purpose: `NativeGoalRuntimeCurrent` exists so the next tick reuses
-/// them. So Goal A finishing destroys the boxes Goal B is between ticks on, and
-/// B's runtime root still holds the sandbox manifests that say to reuse them.
-/// That is a pre-existing exposure on those two paths and is not addressed
-/// here.
+/// Terminal cleanup removes only the Goal-scoped runtime root. Daemon-start
+/// reclamation likewise removes only stale roots whenever the durable store
+/// names a nonterminal Goal; it runs `boxlite rm --all --force` against the
+/// repository-scoped home only after proving there are zero nonterminal Goals.
 ///
 /// What this function does about it is refuse to add a third: an archive is
 /// operator-invoked at an arbitrary moment, so it releases no boxes at all.
