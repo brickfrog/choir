@@ -3332,7 +3332,10 @@ async fn execute_native_goal_record(
     // private Goal branch is not delivery. Closure happens at the Goal
     // delivery boundary, inside finalization once the PR is observed ready.
     Ok(_) => {
-      ignore(cleanup_native_boxlite_server(prepared.server))
+      // A successful pass may still be nonterminal. Preserve the Goal-scoped
+      // runtime and its sandbox-generation witnesses for the next pass;
+      // terminal finalization and cancellation own destructive cleanup.
+      stop_native_boxlite_server(prepared.server)
       released
     }
     Err(error) => {
