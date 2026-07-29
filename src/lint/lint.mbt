@@ -227,7 +227,8 @@ fn is_exec_capture_ref(
 ///|
 fn is_unqualified_exec_capture_ref(file : String, expr : @syntax.Expr) -> Bool {
   let file = canonical_file(file)
-  if !file.has_prefix("src/exec/") || !file.has_suffix("_test.mbt") {
+  if !file.has_prefix("src/exec/") ||
+    !(file.has_suffix("_test.mbt") || file.has_suffix("_wbtest.mbt")) {
     return false
   }
   if dotted_ident_pkg(expr) is Some(_) {
@@ -929,7 +930,11 @@ fn current_decl_name(env : LintEnv) -> String {
 
 ///|
 fn is_explicit_real_exec_integration_test(env : LintEnv) -> Bool {
-  current_decl_name(env).has_prefix("test:real exec integration:")
+  let name = current_decl_name(env)
+  // Real exec fixtures need a named helper so integration tests can share the
+  // live process setup without exempting ordinary helpers in test files.
+  name.has_prefix("test:real exec integration:") ||
+  name.has_prefix("real_exec_integration_")
 }
 
 ///|
@@ -1071,7 +1076,8 @@ fn scan_impls_with_package_aliases(
   )
   let forbidden_helpers = build_forbidden_helpers(function_infos)
   let findings = Array::new(capacity=4)
-  let test_file = canonical.has_suffix("_test.mbt")
+  let test_file = canonical.has_suffix("_test.mbt") ||
+    canonical.has_suffix("_wbtest.mbt")
   for impl_ in impls {
     let test_rules_enabled = test_file ||
       (match impl_ {
