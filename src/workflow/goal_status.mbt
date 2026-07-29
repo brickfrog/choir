@@ -657,6 +657,7 @@ pub fn goal_status_report(
   publication : GoalPublicationRecord?,
   pull_request : GoalPullRequestRecord?,
   finalization : GoalFinalizationRecord?,
+  work_order? : WorkOrderBudget? = None,
   provider_capacity~ : ProviderCapacityObservation?,
 ) -> Result[GoalStatusReport, @types.ChoirError] {
   if snapshots.length() != record.part_workflow_ids.length() {
@@ -852,7 +853,7 @@ pub fn goal_status_report(
     readiness_decision: finalization_status.1,
     readiness_observed_draft: finalization_status.2,
     readiness_observation_sequence: finalization_status.3,
-    work_order: record.work_order_budget,
+    work_order,
     cancellation_cause: record.cancellation_request.map(fn(request) {
       request.cause
     }),

@@ -124,6 +124,12 @@ pub(all) struct GoalProposal {
   migration_production_admission : @migration.MigrationProductionAdmissionRef?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
+  work_order_id : WorkOrderId?
+  work_order_planning_round_id : WorkOrderPlanningRoundId?
+  work_order_objective : String?
+  work_order_selection_policy : WorkOrderSelectionPolicy?
+  work_order_planner : WorkOrderPlannerPolicy?
+  work_order_primary_target_ids : Array[@control.PartId]
   /// Resolved once here, at acceptance, and persisted with the selection
   /// decision. Replay reads the same absolute deadline instead of re-resolving
   /// a relative duration against a later clock.
@@ -184,6 +190,8 @@ pub(all) struct GoalSelectionDecision {
   proposal_digest : @control.Digest
   source_snapshot_digest : @control.Digest
   proposed_part_ids : Array[@control.PartId]
+  primary_target_ids : Array[@control.PartId]
+  prerequisite_closure_ids : Array[@control.PartId]
   accepted_parts : Array[AcceptedGoalPart]
   rejections : Array[PartSelectionRejection]
   goal : @control.Goal?
@@ -479,6 +487,42 @@ fn proposal_part_has_cycle(
 }
 
 ///|
+/// Dependency-first deterministic selection order. Part identity breaks ties
+/// only after dependency precedence has been exhausted.
+fn proposal_dependency_order(
+  proposal : GoalProposal,
+  ids : Array[@control.PartId],
+) -> Array[@control.PartId] {
+  let mut remaining = ids.copy()
+  let ordered : Array[@control.PartId] = []
+  while remaining.length() > 0 {
+    let ready = remaining.filter(fn(id) {
+      match proposed_part(proposal, id) {
+        Some(part) =>
+          part.dependency_ids.all(fn(dependency_id) {
+            !ids.contains(dependency_id) || ordered.contains(dependency_id)
+          })
+        None => true
+      }
+    })
+    ready.sort_by(fn(left, right) { left.compare(right) })
+    if ready.length() == 0 {
+      let fallback = remaining.copy()
+      fallback.sort_by(fn(left, right) { left.compare(right) })
+      for id in fallback {
+        ordered.push(id)
+      }
+      break
+    }
+    for id in ready {
+      ordered.push(id)
+    }
+    remaining = remaining.filter(fn(id) { !ready.contains(id) })
+  }
+  ordered
+}
+
+///|
 fn validate_selection_snapshot(
   snapshot : GoalSelectionSnapshot,
 ) -> Result[Unit, @types.ChoirError] {
@@ -574,6 +618,13 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     })
     .to_json(),
     proposal.maximum_parallel_parts.to_json(),
+    proposal.work_order_id.to_json(),
+    proposal.work_order_planning_round_id.to_json(),
+    proposal.work_order_objective.to_json(),
+    proposal.work_order_selection_policy.to_json(),
+    proposal.work_order_planner.to_json(),
+    sorted_part_ids(proposal.work_order_primary_target_ids).to_json(),
+    proposal.work_order_budget.to_json(),
     rows.to_json(),
   ].to_json()
 }
@@ -610,6 +661,25 @@ pub fn evaluate_goal_proposal(
   }
   if proposal.maximum_parallel_parts <= 0 {
     return Err(goal_submission_error("maximum_parallel_parts is invalid"))
+  }
+  match
+    (
+      proposal.work_order_id,
+      proposal.work_order_objective,
+      proposal.work_order_selection_policy,
+      proposal.work_order_planner,
+      proposal.work_order_budget,
+    ) {
+    (None, None, None, None, None) => ()
+    (Some(_), Some(objective), Some(_), Some(_), Some(_)) =>
+      if objective.trim().to_owned() == "" {
+        return Err(goal_submission_error("WorkOrder objective is invalid"))
+      }
+    _ => return Err(goal_submission_error("WorkOrder contract is incomplete"))
+  }
+  if proposal.work_order_id is None &&
+    proposal.work_order_planning_round_id is Some(_) {
+    return Err(goal_submission_error("WorkOrder round has no owner"))
   }
   match proposal.completion_mode {
     GoalPublishable =>
@@ -654,6 +724,23 @@ pub fn evaluate_goal_proposal(
   let proposed_part_ids = unique_sorted_part_ids(
     proposal.parts.map(fn(part) { part.part_id }),
   )
+  let primary_target_ids = match proposal.work_order_id {
+    Some(_) => unique_sorted_part_ids(proposal.work_order_primary_target_ids)
+    None => proposal_dependency_order(proposal, proposed_part_ids)
+  }
+  if primary_target_ids.length() == 0 ||
+    primary_target_ids.any(fn(id) { !proposed_part_ids.contains(id) }) ||
+    (
+      proposal.work_order_id is Some(_) &&
+      proposal.work_order_primary_target_ids.length() !=
+      primary_target_ids.length()
+    ) {
+    return Err(goal_submission_error("WorkOrder primary targets are invalid"))
+  }
+  let dependency_order = proposal_dependency_order(proposal, proposed_part_ids)
+  let prerequisite_closure_ids = dependency_order.filter(fn(id) {
+    !primary_target_ids.contains(id)
+  })
   let rejections : Array[PartSelectionRejection] = []
   let migration_refs = proposal.parts.filter_map(fn(part) {
     part.task_contract.migration_contract_ref
@@ -771,7 +858,7 @@ pub fn evaluate_goal_proposal(
   let source_snapshot_digest = goal_selection_snapshot_digest(snapshot)
   let accepted_parts : Array[AcceptedGoalPart] = []
   let goal : @control.Goal? = if rejections.length() == 0 {
-    for part_id in proposed_part_ids {
+    for part_id in dependency_order {
       guard proposed_part(proposal, part_id) is Some(part) else { continue }
       accepted_parts.push({
         part: {
@@ -829,6 +916,8 @@ pub fn evaluate_goal_proposal(
     proposal_digest,
     source_snapshot_digest,
     proposed_part_ids,
+    primary_target_ids,
+    prerequisite_closure_ids,
     accepted_parts,
     rejections,
     goal,

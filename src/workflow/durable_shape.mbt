@@ -2387,6 +2387,9 @@ let durable_shapes_work_order_stop_reason : Array[WorkOrderStopReason] = [
   WorkOrderStopReason::WorkOrderNoFurtherFindingsRemain,
   WorkOrderStopReason::WorkOrderSafetyCeilingReached,
   WorkOrderStopReason::WorkOrderFatalIntegrityStop(durable_shape_digest),
+  WorkOrderStopReason::WorkOrderPlannerExhausted(
+    WorkOrderPlanningFailure::WorkOrderPlannerRepeatedEmptyProposal,
+  ),
 ]
 
 ///|
@@ -2401,7 +2404,8 @@ fn durable_guard_work_order_stop_reason(
     | WorkOrderNoEligibleWorkRemains
     | WorkOrderNoFurtherFindingsRemain
     | WorkOrderSafetyCeilingReached
-    | WorkOrderFatalIntegrityStop(_) => value
+    | WorkOrderFatalIntegrityStop(_)
+    | WorkOrderPlannerExhausted(_) => value
   }
 }
 
@@ -2412,6 +2416,328 @@ let durable_shape_work_order_budget : WorkOrderBudget = {
   cutoff_policy: durable_shapes_work_order_cutoff_policy[0],
   counters: durable_shape_work_order_counters,
   stopped: Some(durable_shapes_work_order_stop_reason[0]),
+}
+
+///|
+let durable_shape_work_order_id : WorkOrderId = WorkOrderId("")
+
+///|
+let durable_shapes_work_order_selection_policy : Array[WorkOrderSelectionPolicy] = [
+  WorkOrderExactBeadClosure,
+]
+
+///|
+fn durable_guard_work_order_selection_policy(
+  value : WorkOrderSelectionPolicy,
+) -> WorkOrderSelectionPolicy {
+  match value {
+    WorkOrderExactBeadClosure => value
+  }
+}
+
+///|
+let durable_shape_work_order_planner_policy : WorkOrderPlannerPolicy = {
+  primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+  failover_surfaces: [],
+}
+
+///|
+let durable_shapes_work_order_child_outcome : Array[WorkOrderChildOutcome] = [
+  WorkOrderChildActive,
+  WorkOrderChildDelivered,
+  WorkOrderChildCanceled(durable_shapes_goal_cancellation_cause[0]),
+  WorkOrderChildFailed(durable_shape_digest),
+  WorkOrderChildSkipped(durable_shape_digest),
+  WorkOrderChildQuarantined(durable_shape_digest),
+]
+
+///|
+fn durable_guard_work_order_child_outcome(
+  value : WorkOrderChildOutcome,
+) -> WorkOrderChildOutcome {
+  match value {
+    WorkOrderChildActive
+    | WorkOrderChildDelivered
+    | WorkOrderChildCanceled(_)
+    | WorkOrderChildFailed(_)
+    | WorkOrderChildSkipped(_)
+    | WorkOrderChildQuarantined(_) => value
+  }
+}
+
+///|
+let durable_shapes_work_order_delivery_boundary : Array[
+  WorkOrderDeliveryBoundary,
+] = [WorkOrderReviewReadyPullRequest, WorkOrderExactMergedPullRequest]
+
+///|
+fn durable_guard_work_order_delivery_boundary(
+  value : WorkOrderDeliveryBoundary,
+) -> WorkOrderDeliveryBoundary {
+  match value {
+    WorkOrderReviewReadyPullRequest | WorkOrderExactMergedPullRequest => value
+  }
+}
+
+///|
+let durable_shape_work_order_delivery_evidence : WorkOrderDeliveryEvidence = {
+  boundary: durable_shapes_work_order_delivery_boundary[0],
+  remote_pull_request_id: durable_shape_remote_pull_request_id,
+  observed_head_oid: durable_shape_git_oid,
+  observed_remote_state: durable_shapes_remote_pull_request_state[0],
+  receipt_digest: durable_shape_digest,
+}
+
+///|
+let durable_shape_work_order_child_goal_binding : WorkOrderChildGoalBinding = {
+  goal_id: durable_shape_goal_id,
+  selection_decision_digest: durable_shape_digest,
+  primary_target_ids: [durable_shape_part_id],
+  prerequisite_closure_ids: [],
+  outcome: durable_shapes_work_order_child_outcome[1],
+  delivery_evidence: Some(durable_shape_work_order_delivery_evidence),
+  delivery_accounted: true,
+}
+
+///|
+let durable_shape_work_order_planning_round_id : WorkOrderPlanningRoundId = WorkOrderPlanningRoundId(
+  "",
+)
+
+///|
+let durable_shape_work_order_planning_effect_id : WorkOrderPlanningEffectId = WorkOrderPlanningEffectId(
+  "",
+)
+
+///|
+let durable_shapes_work_order_planning_phase : Array[WorkOrderPlanningPhase] = [
+  WorkOrderPlanningIntentRecorded,
+  WorkOrderPlanningDispatched,
+  WorkOrderPlanningProposalReceived,
+  WorkOrderPlanningBeadsDelivering,
+  WorkOrderPlanningBeadsDelivered,
+  WorkOrderPlanningGoalReady,
+  WorkOrderPlanningRoundTerminal,
+]
+
+///|
+fn durable_guard_work_order_planning_phase(
+  value : WorkOrderPlanningPhase,
+) -> WorkOrderPlanningPhase {
+  match value {
+    WorkOrderPlanningIntentRecorded
+    | WorkOrderPlanningDispatched
+    | WorkOrderPlanningProposalReceived
+    | WorkOrderPlanningBeadsDelivering
+    | WorkOrderPlanningBeadsDelivered
+    | WorkOrderPlanningGoalReady
+    | WorkOrderPlanningRoundTerminal => value
+  }
+}
+
+///|
+let durable_shapes_work_order_planning_failure : Array[WorkOrderPlanningFailure] = [
+  WorkOrderPlannerProviderFailed(durable_shape_digest),
+  WorkOrderPlannerArtifactMismatch,
+  WorkOrderPlannerRepositorySnapshotDrift,
+  WorkOrderPlannerBeadSnapshotDrift,
+  WorkOrderPlannerScopeEscape(""),
+  WorkOrderPlannerDuplicateIdentity(""),
+  WorkOrderPlannerMissingDependency("", ""),
+  WorkOrderPlannerDependencyCycle([]),
+  WorkOrderPlannerOwnershipDrift(""),
+  WorkOrderPlannerContradictoryContract("", ""),
+  WorkOrderPlannerRepeatedEmptyProposal,
+  WorkOrderPlannerCyclicRediscovery(durable_shape_digest),
+]
+
+///|
+fn durable_guard_work_order_planning_failure(
+  value : WorkOrderPlanningFailure,
+) -> WorkOrderPlanningFailure {
+  match value {
+    WorkOrderPlannerProviderFailed(_)
+    | WorkOrderPlannerArtifactMismatch
+    | WorkOrderPlannerRepositorySnapshotDrift
+    | WorkOrderPlannerBeadSnapshotDrift
+    | WorkOrderPlannerScopeEscape(_)
+    | WorkOrderPlannerDuplicateIdentity(_)
+    | WorkOrderPlannerMissingDependency(_, _)
+    | WorkOrderPlannerDependencyCycle(_)
+    | WorkOrderPlannerOwnershipDrift(_)
+    | WorkOrderPlannerContradictoryContract(_, _)
+    | WorkOrderPlannerRepeatedEmptyProposal
+    | WorkOrderPlannerCyclicRediscovery(_) => value
+  }
+}
+
+///|
+let durable_shapes_work_order_planning_outcome : Array[WorkOrderPlanningOutcome] = [
+  WorkOrderPlanningPending,
+  WorkOrderPlanningProposalAccepted,
+  WorkOrderPlanningNoEligibleWork,
+  WorkOrderPlanningNoFurtherFindings,
+  WorkOrderPlanningFailed(durable_shapes_work_order_planning_failure[0]),
+  WorkOrderPlanningQuarantined(durable_shapes_work_order_planning_failure[0]),
+]
+
+///|
+fn durable_guard_work_order_planning_outcome(
+  value : WorkOrderPlanningOutcome,
+) -> WorkOrderPlanningOutcome {
+  match value {
+    WorkOrderPlanningPending
+    | WorkOrderPlanningProposalAccepted
+    | WorkOrderPlanningNoEligibleWork
+    | WorkOrderPlanningNoFurtherFindings
+    | WorkOrderPlanningFailed(_)
+    | WorkOrderPlanningQuarantined(_) => value
+  }
+}
+
+///|
+let durable_shape_conductor_verification_draft : ConductorVerificationDraft = {
+  arguments: [""],
+  timeout_ms: 0L,
+}
+
+///|
+let durable_shape_conductor_part_draft : ConductorPartDraft = {
+  part_id: durable_shape_part_id,
+  commit_title: @control.SemanticCommitTitle(""),
+  instruction: "",
+  exact_paths: [@control.RepoPath("")],
+  path_trees: [@control.RepoPath("")],
+  repository_wide: false,
+  verification: durable_shape_conductor_verification_draft,
+  provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+  provider_failover_surfaces: [],
+  migration_contract_ref: Some(durable_shape_migration_contract_ref),
+  migration_continuation_ref_digest: Some(durable_shape_digest),
+  migration_context: Some({
+    context_assembly_policy_digest: durable_shape_digest,
+    rulebook_section_digests: [durable_shape_digest],
+    dependency_neighborhood_digest: durable_shape_digest,
+    applicable_gap_entry_digests: [durable_shape_digest],
+    source_path_manifest_digest: durable_shape_digest,
+    prior_take_context_digest: Some(durable_shape_digest),
+  }),
+}
+
+///|
+let durable_shape_conductor_goal_draft : ConductorGoalDraft = {
+  proposal_id: durable_shape_goal_proposal_id,
+  goal_id: durable_shape_goal_id,
+  completion_mode: durable_shapes_goal_completion_mode[0],
+  pull_request_document: Some(durable_shape_pull_request_document),
+  maximum_parallel_parts: 1,
+  parts: [durable_shape_conductor_part_draft],
+  work_order: None,
+}
+
+///|
+let durable_shape_work_order_planning_finding : WorkOrderPlanningFinding = {
+  summary: "",
+  evidence: "",
+  related_bead_ids: [durable_shape_part_id],
+}
+
+///|
+let durable_shapes_bead_mutation_intent : Array[@command.BeadMutationIntent] = [
+  @command.BeadMutationIntent::BeadCreateIntent,
+  @command.BeadMutationIntent::BeadUpdateIntent,
+]
+
+///|
+fn durable_guard_bead_mutation_intent(
+  value : @command.BeadMutationIntent,
+) -> @command.BeadMutationIntent {
+  match value {
+    BeadCreateIntent | BeadUpdateIntent => value
+  }
+}
+
+///|
+let durable_shape_bead_mutation : @command.BeadMutation = {
+  id: "",
+  intent: durable_shapes_bead_mutation_intent[0],
+  title: Some(""),
+  description: Some(""),
+  acceptance_criteria: Some(""),
+  notes: Some(""),
+  priority: Some(@command.BeadPriority::BeadP0),
+  issue_type: Some(@command.BeadIssueType::BeadTask),
+  labels: Some([""]),
+  blocked_by: [""],
+  parent: Some(""),
+  expected_updated_at: Some(""),
+}
+
+///|
+let durable_shape_bead_batch_proposal : @command.BeadBatchProposal = {
+  mutations: [durable_shape_bead_mutation],
+}
+
+///|
+let durable_shape_work_order_planning_proposal : WorkOrderPlanningProposal = {
+  findings: [durable_shape_work_order_planning_finding],
+  eligible_work_observed: true,
+  bead_mutations: durable_shape_bead_batch_proposal,
+  primary_target_ids: [durable_shape_part_id],
+  prerequisite_closure_ids: [durable_shape_part_id],
+  finite_goal: Some(durable_shape_conductor_goal_draft),
+}
+
+///|
+let durable_shape_work_order_planning_round : WorkOrderPlanningRound = {
+  id: durable_shape_work_order_planning_round_id,
+  work_order_id: durable_shape_work_order_id,
+  sequence: 1,
+  repository_snapshot_digest: durable_shape_digest,
+  bead_snapshot_digest: durable_shape_digest,
+  effect_id: durable_shape_work_order_planning_effect_id,
+  planner_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+  phase: durable_shapes_work_order_planning_phase[0],
+  proposal_artifact: Some(durable_shape_artifact_reference),
+  proposal_digest: Some(durable_shape_digest),
+  bead_batch_digest: Some(durable_shape_digest),
+  delivered_bead_snapshot_digest: Some(durable_shape_digest),
+  empty_response_count: 0,
+  provider_failure_count: 0,
+  outcome: durable_shapes_work_order_planning_outcome[0],
+}
+
+///|
+let durable_shapes_work_order_lifecycle : Array[WorkOrderLifecycle] = [
+  WorkOrderActive,
+  WorkOrderStopped(durable_shapes_work_order_stop_reason[0]),
+]
+
+///|
+fn durable_guard_work_order_lifecycle(
+  value : WorkOrderLifecycle,
+) -> WorkOrderLifecycle {
+  match value {
+    WorkOrderActive | WorkOrderStopped(_) => value
+  }
+}
+
+///|
+let durable_shape_work_order_record : WorkOrderRecord = {
+  id: durable_shape_work_order_id,
+  repository_id: durable_shape_repository_id,
+  objective: "",
+  selection_policy: durable_shapes_work_order_selection_policy[0],
+  planner: durable_shape_work_order_planner_policy,
+  initial_primary_target_ids: [durable_shape_part_id],
+  initial_prerequisite_closure_ids: [],
+  max_active_child_goals: 1,
+  budget: durable_shape_work_order_budget,
+  child_goals: [durable_shape_work_order_child_goal_binding],
+  planning_rounds: [durable_shape_work_order_planning_round],
+  lifecycle: durable_shapes_work_order_lifecycle[0],
+  durable_version: 0,
+  fencing_epoch: durable_shape_fencing_epoch,
 }
 
 ///|
@@ -2442,7 +2768,7 @@ let durable_shape_goal_execution_record : GoalExecutionRecord = {
   active_input_request: Some(durable_shape_goal_input_request),
   input_answers: [durable_shape_goal_input_answer],
   cancellation_request: Some(durable_shape_goal_cancellation_request),
-  work_order_budget: Some(durable_shape_work_order_budget),
+  work_order_id: Some(WorkOrderId("work-order")),
   durable_version: 0,
   fencing_epoch: durable_shape_fencing_epoch,
 }
@@ -2637,6 +2963,15 @@ let durable_shape_goal_proposal : GoalProposal = {
   ),
   maximum_parallel_parts: 0,
   parts: [durable_shape_conductor_part_proposal],
+  work_order_id: Some(WorkOrderId("work-order")),
+  work_order_planning_round_id: Some(durable_shape_work_order_planning_round_id),
+  work_order_objective: Some("objective"),
+  work_order_selection_policy: Some(WorkOrderExactBeadClosure),
+  work_order_planner: Some({
+    primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    failover_surfaces: [],
+  }),
+  work_order_primary_target_ids: [durable_shape_part_id],
   work_order_budget: Some(durable_shape_work_order_budget),
 }
 
@@ -3015,6 +3350,8 @@ let durable_shape_goal_selection_decision : GoalSelectionDecision = {
   proposal_digest: durable_shape_digest,
   source_snapshot_digest: durable_shape_digest,
   proposed_part_ids: [durable_shape_part_id],
+  primary_target_ids: [durable_shape_part_id],
+  prerequisite_closure_ids: [],
   accepted_parts: [durable_shape_accepted_goal_part],
   rejections: [durable_shape_part_selection_rejection],
   goal: Some(durable_shape_goal),
@@ -3770,6 +4107,77 @@ let durable_shape_goal_executor_schedule_record : GoalExecutorScheduleRecord = {
 }
 
 ///|
+let durable_shape_work_order_execution_job_id : WorkOrderExecutionJobId = work_order_execution_job_id(
+  durable_shape_work_order_id,
+)
+
+///|
+let durable_shape_work_order_executor_lease_id : WorkOrderExecutorLeaseId = WorkOrderExecutorLeaseId(
+  "",
+)
+
+///|
+let durable_shape_work_order_executor_lease : WorkOrderExecutorLease = {
+  id: WorkOrderExecutorLeaseId("lease"),
+  job_id: durable_shape_work_order_execution_job_id,
+  work_order_id: durable_shape_work_order_id,
+  slot: 0,
+  dispatch_sequence: 1L,
+  fencing_epoch: durable_shape_fencing_epoch,
+  acquired_at: 0L,
+}
+
+///|
+let durable_shape_work_order_execution_job : WorkOrderExecutionJob = {
+  id: durable_shape_work_order_execution_job_id,
+  work_order_id: durable_shape_work_order_id,
+  due_at: 0L,
+  consecutive_failures: 0,
+  last_failure_digest: Some(durable_shape_digest),
+  last_dispatch_sequence: 1L,
+  last_completed_lease_id: Some(durable_shape_work_order_executor_lease_id),
+  last_work_order_durable_version: Some(1),
+  ticks_without_progress: 0,
+  provider_reports: [durable_shape_provider_surface_tick_report],
+  lease: Some(durable_shape_work_order_executor_lease),
+}
+
+///|
+let durable_shape_work_order_executor_schedule_record : WorkOrderExecutorScheduleRecord = {
+  jobs: [durable_shape_work_order_execution_job],
+  next_dispatch_sequence: 2L,
+  durable_version: 1,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
+let durable_shape_work_order_planner_attempt_id : WorkOrderPlannerAttemptId = work_order_planner_attempt_id(
+  durable_shape_work_order_planning_round,
+)
+
+///|
+let durable_shape_work_order_planner_attempt_record : WorkOrderPlannerAttemptRecord = {
+  id: durable_shape_work_order_planner_attempt_id,
+  work_order_id: durable_shape_work_order_id,
+  round_id: durable_shape_work_order_planning_round_id,
+  effect_id: work_order_planning_effect_id(
+    durable_shape_work_order_planning_round_id,
+  ),
+  attempt_number: 1,
+  session_id: work_order_planner_session_id(
+    durable_shape_work_order_planner_attempt_id,
+  ),
+  surface: durable_shapes_provider_surface_id[0],
+  instruction_digest: durable_shape_digest,
+  schema_digest: durable_shape_digest,
+  lifecycle: WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptCompleted(
+    durable_shape_artifact_reference, 1L,
+  ),
+  durable_version: 1,
+  fencing_epoch: durable_shape_fencing_epoch,
+}
+
+///|
 /// Every type that reaches a durable record, paired with the serialized form
 /// of each shape it can take. Sorted by name at use so that moving a
 /// declaration in this file does not move the generation.
@@ -3786,6 +4194,14 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
   [
     durable_shape_entry("AcceptedGoalPart", [durable_shape_accepted_goal_part]),
     durable_shape_entry("ArtifactReference", [durable_shape_artifact_reference]),
+    durable_shape_entry("BeadBatchProposal", [durable_shape_bead_batch_proposal]),
+    durable_shape_entry("BeadMutation", [durable_shape_bead_mutation]),
+    durable_shape_entry(
+      "BeadMutationIntent",
+      durable_shapes_bead_mutation_intent.map(
+        durable_guard_bead_mutation_intent,
+      ),
+    ),
     durable_shape_entry(
       "AuditGateCorruptionReason",
       durable_shapes_audit_gate_corruption_reason.map(
@@ -3867,6 +4283,15 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
       "CommandRole",
       durable_shapes_command_role.map(durable_guard_command_role),
     ),
+    durable_shape_entry("ConductorGoalDraft", [
+      durable_shape_conductor_goal_draft,
+    ]),
+    durable_shape_entry("ConductorPartDraft", [
+      durable_shape_conductor_part_draft,
+    ]),
+    durable_shape_entry("ConductorVerificationDraft", [
+      durable_shape_conductor_verification_draft,
+    ]),
     durable_shape_entry("ConductorPartProposal", [
       durable_shape_conductor_part_proposal,
     ]),
@@ -4290,6 +4715,37 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
     durable_shape_entry("GoalExecutorScheduleRecord", [
       durable_shape_goal_executor_schedule_record,
     ]),
+    durable_shape_entry("WorkOrderExecutionJob", [
+      durable_shape_work_order_execution_job,
+    ]),
+    durable_shape_entry("WorkOrderExecutionJobId", [
+      durable_shape_work_order_execution_job_id,
+    ]),
+    durable_shape_entry("WorkOrderExecutorLease", [
+      durable_shape_work_order_executor_lease,
+    ]),
+    durable_shape_entry("WorkOrderExecutorLeaseId", [
+      durable_shape_work_order_executor_lease_id,
+    ]),
+    durable_shape_entry("WorkOrderExecutorScheduleRecord", [
+      durable_shape_work_order_executor_schedule_record,
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptId", [
+      durable_shape_work_order_planner_attempt_id,
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptLifecycle", [
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptPlanned,
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptIssued(1L),
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptCompleted(
+        durable_shape_artifact_reference, 1L,
+      ),
+      WorkOrderPlannerAttemptLifecycle::WorkOrderPlannerAttemptUncertain(
+        durable_shape_digest,
+      ),
+    ]),
+    durable_shape_entry("WorkOrderPlannerAttemptRecord", [
+      durable_shape_work_order_planner_attempt_record,
+    ]),
     durable_shape_entry("ProviderSurfaceTickReport", [
       durable_shape_provider_surface_tick_report,
     ]),
@@ -4560,6 +5016,15 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
       durable_shape_verification_spec_id,
     ]),
     durable_shape_entry("WorkOrderBudget", [durable_shape_work_order_budget]),
+    durable_shape_entry("WorkOrderChildGoalBinding", [
+      durable_shape_work_order_child_goal_binding,
+    ]),
+    durable_shape_entry(
+      "WorkOrderChildOutcome",
+      durable_shapes_work_order_child_outcome.map(
+        durable_guard_work_order_child_outcome,
+      ),
+    ),
     durable_shape_entry("WorkOrderCounters", [durable_shape_work_order_counters]),
     durable_shape_entry(
       "WorkOrderCutoffPolicy",
@@ -4568,9 +5033,68 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
       ),
     ),
     durable_shape_entry(
+      "WorkOrderDeliveryBoundary",
+      durable_shapes_work_order_delivery_boundary.map(
+        durable_guard_work_order_delivery_boundary,
+      ),
+    ),
+    durable_shape_entry("WorkOrderDeliveryEvidence", [
+      durable_shape_work_order_delivery_evidence,
+    ]),
+    durable_shape_entry(
+      "WorkOrderLifecycle",
+      durable_shapes_work_order_lifecycle.map(
+        durable_guard_work_order_lifecycle,
+      ),
+    ),
+    durable_shape_entry("WorkOrderId", [durable_shape_work_order_id]),
+    durable_shape_entry("WorkOrderPlannerPolicy", [
+      durable_shape_work_order_planner_policy,
+    ]),
+    durable_shape_entry("WorkOrderPlanningEffectId", [
+      durable_shape_work_order_planning_effect_id,
+    ]),
+    durable_shape_entry(
+      "WorkOrderPlanningFailure",
+      durable_shapes_work_order_planning_failure.map(
+        durable_guard_work_order_planning_failure,
+      ),
+    ),
+    durable_shape_entry("WorkOrderPlanningFinding", [
+      durable_shape_work_order_planning_finding,
+    ]),
+    durable_shape_entry(
+      "WorkOrderPlanningOutcome",
+      durable_shapes_work_order_planning_outcome.map(
+        durable_guard_work_order_planning_outcome,
+      ),
+    ),
+    durable_shape_entry(
+      "WorkOrderPlanningPhase",
+      durable_shapes_work_order_planning_phase.map(
+        durable_guard_work_order_planning_phase,
+      ),
+    ),
+    durable_shape_entry("WorkOrderPlanningProposal", [
+      durable_shape_work_order_planning_proposal,
+    ]),
+    durable_shape_entry("WorkOrderPlanningRound", [
+      durable_shape_work_order_planning_round,
+    ]),
+    durable_shape_entry("WorkOrderPlanningRoundId", [
+      durable_shape_work_order_planning_round_id,
+    ]),
+    durable_shape_entry("WorkOrderRecord", [durable_shape_work_order_record]),
+    durable_shape_entry(
       "WorkOrderQuotaBasis",
       durable_shapes_work_order_quota_basis.map(
         durable_guard_work_order_quota_basis,
+      ),
+    ),
+    durable_shape_entry(
+      "WorkOrderSelectionPolicy",
+      durable_shapes_work_order_selection_policy.map(
+        durable_guard_work_order_selection_policy,
       ),
     ),
     durable_shape_entry(

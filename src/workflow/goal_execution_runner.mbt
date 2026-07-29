@@ -66,9 +66,9 @@ pub(all) enum GoalInputPolicyDisposition {
 
 ///|
 pub fn goal_input_policy_disposition(
-  work_order_budget : WorkOrderBudget?,
+  work_order_id : WorkOrderId?,
 ) -> GoalInputPolicyDisposition {
-  match work_order_budget {
+  match work_order_id {
     Some(_) => GoalInputPolicyCancelUnattended
     None => GoalInputPolicyRequestInteractiveInput
   }
@@ -512,7 +512,7 @@ fn handle_goal_finalization_outcome(
           GoalInputReason::GoalInputFinalizationAmbiguous
         _ => abort("unreachable finalization input outcome")
       }
-      if goal_input_policy_disposition(selected.record.work_order_budget) ==
+      if goal_input_policy_disposition(selected.record.work_order_id) ==
         GoalInputPolicyCancelUnattended {
         let cancellation = match
           persist_goal_cancellation_request(
@@ -957,42 +957,44 @@ pub async fn run_next_goal_execution_tick(
   // stop durably, then honour the captured cutoff policy. Draining leaves the
   // Goal to finish the effects it already authorized; the cutoff variant
   // installs the existing durable cancellation cutoff.
+  let selected_work_order = match
+    load_goal_work_order(repository, repository_adapters, selected.record) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   match
-    goal_execution_admits_new_agentic_work(
-      selected.record,
+    work_order_admits_new_agentic_work(
+      selected_work_order.map(fn(stored) { stored.record.budget }),
       @env.now().reinterpret_as_int64() / 1000L,
     ) {
     WorkOrderAdmission::WorkOrderAdmitsNewWork => ()
     WorkOrderAdmission::WorkOrderExhausted(_) => {
-      let latched = record_goal_work_order_stop(
-        selected.record,
+      guard selected_work_order is Some(owner) else {
+        return Err(goal_execution_error("exhausted Goal has no WorkOrder"))
+      }
+      let budget = record_work_order_stop(
+        owner.record.budget,
         @env.now().reinterpret_as_int64() / 1000L,
       )
-      let stopped = if latched == selected.record {
-        selected
-      } else {
-        match
-          persist_goal_execution_transition(
-            repository, repository_adapters, selected, latched,
-          ) {
-          Ok(value) => value
-          Err(error) => return Err(error)
-        }
+      let owner = match
+        persist_work_order_budget(
+          repository, repository_adapters, owner, budget,
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
       }
-      guard stopped.record.work_order_budget is Some(budget) else {
-        return Err(goal_execution_error("stopped WorkOrder lost its budget"))
-      }
+      let budget = owner.record.budget
       match budget.cutoff_policy {
         WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary =>
           return Ok(
-            GoalExecutionTickResult::GoalExecutionTickAdvanced(stopped.record),
+            GoalExecutionTickResult::GoalExecutionTickAdvanced(selected.record),
           )
         WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff => {
           let outcome = match
             persist_goal_cancellation_request(
               repository,
               repository_adapters,
-              stopped.record.goal.id,
+              selected.record.goal.id,
               @env.now().reinterpret_as_int64() / 1000L,
               cause=GoalCancellationCause::GoalCancellationWorkOrderStopped(
                 work_order_stop_digest(budget),
@@ -1004,7 +1006,7 @@ pub async fn run_next_goal_execution_tick(
           let record = match outcome {
             GoalCancellationPersisted(value)
             | GoalCancellationReplayed(value) => value
-            GoalCancellationTerminal(_) => stopped.record
+            GoalCancellationTerminal(_) => selected.record
           }
           return Ok(GoalExecutionTickResult::GoalExecutionTickAdvanced(record))
         }
@@ -1064,17 +1066,19 @@ pub async fn run_next_goal_execution_tick(
   }
   // Refresh the WorkOrder counters that are derived from Part state, so the
   // safety ceiling reflects the Takes this pass actually started.
-  let counted = refresh_goal_work_order_counters(current.record, after)
-  let current = if counted == current.record {
-    current
-  } else {
-    match
-      persist_goal_execution_transition(
-        repository, repository_adapters, current, counted,
-      ) {
-      Ok(value) => value
-      Err(error) => return Err(error)
+  match load_goal_work_order(repository, repository_adapters, current.record) {
+    Ok(Some(owner)) => {
+      let counted = refresh_work_order_counters(owner.record.budget, after)
+      match
+        persist_work_order_budget(
+          repository, repository_adapters, owner, counted,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
     }
+    Ok(None) => ()
+    Err(error) => return Err(error)
   }
   for snapshot in after {
     if snapshot.part.lifecycle

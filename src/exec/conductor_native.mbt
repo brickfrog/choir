@@ -409,7 +409,7 @@ async fn dispatch_native_task_list(
 /// Read the graph the way the batch layer needs it. Shared by the batch
 /// dispatcher so validation and reconciliation see exactly what `task_list`
 /// would have shown.
-async fn native_conductor_bead_graph(
+pub async fn native_conductor_bead_graph(
   project_dir : String,
   capture : async (Command) -> (Int, String),
 ) -> Result[Array[@command.BeadRecord], @types.ChoirError] {
@@ -427,6 +427,75 @@ async fn native_conductor_bead_graph(
     _ => return Err(@types.ChoirError::validation_error("invalid Beads JSON"))
   }
   @command.bead_records_from_json(parsed)
+}
+
+///|
+pub(all) struct NativeAppliedBeadBatch {
+  digest : @control.Digest
+  records : Array[@command.BeadRecord]
+} derive(Debug, Eq)
+
+///|
+/// Apply and reread one exact planner batch. The command layer remains the
+/// passive validator; this exec-boundary adapter alone performs tracker I/O.
+/// Redelivery reconciles item by item, and success requires the reread graph to
+/// report every mutation already applied.
+pub async fn apply_native_bead_batch(
+  project_dir : String,
+  proposal : @command.BeadBatchProposal,
+  capture : async (Command) -> (Int, String),
+) -> Result[NativeAppliedBeadBatch, @types.ChoirError] {
+  let graph = match native_conductor_bead_graph(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let verdicts = @command.reconcile_bead_batch(proposal, graph)
+  if !@command.bead_batch_is_admitted_or_applied(verdicts) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "WorkOrder Bead batch was rejected: " +
+        verdicts
+        .map(fn(verdict) {
+          @command.bead_item_verdict_to_json(verdict).stringify(indent=0)
+        })
+        .join(", "),
+      ),
+    )
+  }
+  for index, verdict in verdicts {
+    let invocations = match
+      @command.bead_reconciled_arguments(
+        proposal.mutations[index],
+        verdict.outcome,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    for invocation in invocations {
+      match
+        native_conductor_capture_beads(
+          project_dir, "WorkOrder batch", invocation, capture,
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    }
+  }
+  let reread = match native_conductor_bead_graph(project_dir, capture) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let reconciled = @command.reconcile_bead_batch(proposal, reread)
+  if reconciled.any(fn(verdict) {
+      verdict.outcome != @command.BeadItemOutcome::BeadItemAlreadyApplied
+    }) {
+    return Err(
+      @types.ChoirError::validation_error(
+        "WorkOrder Bead batch did not reconcile after delivery",
+      ),
+    )
+  }
+  Ok({ digest: @command.bead_batch_digest(proposal), records: reread })
 }
 
 ///|

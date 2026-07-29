@@ -159,7 +159,7 @@ async fn real_exec_integration_assurance_loop_fixture(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 1,
     fencing_epoch: current_native_goal_fencing_epoch(),
   }

@@ -35,13 +35,10 @@ test "a relative WorkOrder duration resolves once and survives replay" {
 
 ///|
 test "unattended WorkOrders never park on an input request" {
-  let budget = @workflow.accept_work_order_budget(
-    @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(60L),
-    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
-    1_000L,
-  ).unwrap()
   assert_eq(
-    @workflow.goal_input_policy_disposition(Some(budget)),
+    @workflow.goal_input_policy_disposition(
+      Some(@workflow.WorkOrderId("work-order-test")),
+    ),
     @workflow.GoalInputPolicyDisposition::GoalInputPolicyCancelUnattended,
   )
   assert_eq(
@@ -277,47 +274,42 @@ test "each stop condition reports its own terminal reason" {
 
 ///|
 test "an exhausted WorkOrder budget stops the Goal admitting new agentic work" {
-  let record = workflow_execution_for_attach(workflow_fixture())
   // An unbudgeted Goal admits work exactly as before.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(record, 5_000L),
+    @workflow.work_order_admits_new_agentic_work(None, 5_000L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
-  assert_eq(@workflow.record_goal_work_order_stop(record, 5_000L), record)
   let budget = @workflow.accept_work_order_budget(
     @workflow.WorkOrderStopRequest::WorkOrderRequestRelativeSeconds(100L),
     @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
     100L,
   ).unwrap()
-  let budgeted = { ..record, work_order_budget: Some(budget) }
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 150L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 150L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 250L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 250L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
     ),
   )
-  // The latch is durable on the Goal record and bumps its version once.
-  let stopped = @workflow.record_goal_work_order_stop(budgeted, 250L)
-  assert_eq(stopped.durable_version, budgeted.durable_version + 1)
+  let stopped = @workflow.record_work_order_stop(budget, 250L)
   assert_eq(
-    stopped.work_order_budget.unwrap().stopped,
+    stopped.stopped,
     Some(@workflow.WorkOrderStopReason::WorkOrderDeadlineReached),
   )
   // Restart cannot resurrect it: an earlier clock reading is still refused,
   // and latching again is a no-op rather than a second version bump.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(stopped, 150L),
+    @workflow.work_order_admits_new_agentic_work(Some(stopped), 150L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderDeadlineReached,
     ),
   )
-  assert_eq(@workflow.record_goal_work_order_stop(stopped, 250L), stopped)
+  assert_eq(@workflow.record_work_order_stop(stopped, 250L), stopped)
   assert_eq(
-    stopped.work_order_budget.unwrap().cutoff_policy,
+    stopped.cutoff_policy,
     @workflow.WorkOrderCutoffPolicy::WorkOrderInstallCancellationCutoff,
   )
 }
@@ -360,7 +352,7 @@ test "a Conductor draft carries a WorkOrder request without resolving it" {
   let draft =
     #|{"proposal_id":"proposal-wo","goal_id":"goal-wo","maximum_parallel_parts":1,
     #|"pull_request":{"title":"feat: work order","body":"Body.","draft":false},
-    #|"work_order":{"cutoff":"cancel","stop":{"kind":"any_of","any_of":[
+    #|"work_order":{"objective":"Deliver the selected Beads.","planner":{"provider":"codex"},"initial_primary_targets":["choir-a"],"cutoff":"cancel","stop":{"kind":"any_of","any_of":[
     #|{"kind":"duration","seconds":3600},
     #|{"kind":"delivered","basis":"closure","count":5}]}},
     #|"parts":[{"part_id":"choir-a","commit_title":"feat: a","instruction":"Do the work.","repository_wide":true,"moon_args":["test"]}]}
@@ -455,40 +447,494 @@ test "the safety ceiling counts Takes that actually started" {
     ]),
     started * 2,
   )
-  let record = workflow_execution_for_attach(planned)
-  // An unbudgeted Goal keeps no counters.
-  assert_eq(
-    @workflow.refresh_goal_work_order_counters(record, [drive_to_verified()]),
-    record,
-  )
   let budget = @workflow.accept_work_order_budget(
     @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(started),
     @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
     100L,
   ).unwrap()
-  let budgeted = { ..record, work_order_budget: Some(budget) }
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(budgeted, 101L),
+    @workflow.work_order_admits_new_agentic_work(Some(budget), 101L),
     @workflow.WorkOrderAdmission::WorkOrderAdmitsNewWork,
   )
-  let counted = @workflow.refresh_goal_work_order_counters(budgeted, [
+  let counted = @workflow.refresh_work_order_counters(budget, [
     drive_to_verified(),
   ])
-  assert_eq(
-    counted.work_order_budget.unwrap().counters.agentic_takes_started,
-    started,
-  )
-  assert_eq(counted.durable_version, budgeted.durable_version + 1)
+  assert_eq(counted.counters.agentic_takes_started, started)
   // The ceiling is now reached, so no further agentic Take is authorized.
   assert_eq(
-    @workflow.goal_execution_admits_new_agentic_work(counted, 101L),
+    @workflow.work_order_admits_new_agentic_work(Some(counted), 101L),
     @workflow.WorkOrderAdmission::WorkOrderExhausted(
       @workflow.WorkOrderStopReason::WorkOrderSafetyCeilingReached,
     ),
   )
   // A tick that started nothing new writes nothing.
   assert_eq(
-    @workflow.refresh_goal_work_order_counters(counted, [drive_to_verified()]),
+    @workflow.refresh_work_order_counters(counted, [drive_to_verified()]),
     counted,
+  )
+}
+
+///|
+fn planning_work_order() -> @workflow.WorkOrderRecord {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  {
+    id: @workflow.WorkOrderId("work-order-planning-test"),
+    repository_id: @workflow.RepositoryId("repository-planning-test"),
+    objective: "Select the next bounded Goal.",
+    selection_policy: @workflow.WorkOrderSelectionPolicy::WorkOrderExactBeadClosure,
+    planner: {
+      primary_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      failover_surfaces: [@control.ProviderSurfaceId::ClaudeSubscriptionCli],
+    },
+    initial_primary_target_ids: [@control.PartId("choir-initial")],
+    initial_prerequisite_closure_ids: [],
+    max_active_child_goals: 1,
+    budget: @workflow.accept_work_order_budget(
+      @workflow.WorkOrderStopRequest::WorkOrderRequestSafetyCeiling(20),
+      @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+      100L,
+    ).unwrap(),
+    child_goals: [
+      {
+        goal_id: @control.GoalId("goal-initial"),
+        selection_decision_digest: digest,
+        primary_target_ids: [@control.PartId("choir-initial")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+          digest,
+        ),
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+    planning_rounds: [],
+    lifecycle: @workflow.WorkOrderLifecycle::WorkOrderActive,
+    durable_version: 1,
+    fencing_epoch: @control.FencingEpoch(1L),
+  }
+}
+
+///|
+fn planning_goal_draft() -> @workflow.ConductorGoalDraft {
+  @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-planning-next","goal_id":"goal-planning-next",
+      #|"pull_request":{"title":"feat: deliver planned work","body":"Delivers the bounded planned change."},
+      #|"maximum_parallel_parts":1,
+      #|"parts":[{"part_id":"choir-next","commit_title":"feat: deliver planned work",
+      #|"instruction":"Implement the bounded next change.","provider":"codex",
+      #|"exact_paths":["src/next.mbt"],"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+}
+
+///|
+test "planning rounds bind snapshots and bound provider or empty failures" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let planned = @workflow.plan_work_order_round(
+    planning_work_order(),
+    digest,
+    digest,
+  ).unwrap()
+  assert_eq(planned.planning_rounds[0].sequence, 1)
+  assert_eq(
+    planned.planning_rounds[0].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningIntentRecorded,
+  )
+  let dispatched = @workflow.dispatch_work_order_planning_round(planned, 101L).unwrap()
+  assert_eq(dispatched.budget.counters.agentic_takes_started, 1)
+  let failed = @workflow.record_work_order_planner_failure(
+    dispatched,
+    @storage.artifact_digest(@utf8.encode("provider failed")),
+  ).unwrap()
+  assert_eq(
+    failed.planning_rounds[0].planner_surface,
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+  )
+  let mut current = failed
+  for index = 0; index < 3; index = index + 1 {
+    current = @workflow.dispatch_work_order_planning_round(current, 101L).unwrap()
+    current = @workflow.record_empty_work_order_planner_response(current).unwrap()
+  }
+  assert_true(
+    current.planning_rounds[0].outcome
+    is @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningQuarantined(
+      @workflow.WorkOrderPlanningFailure::WorkOrderPlannerRepeatedEmptyProposal
+    ),
+  )
+}
+
+///|
+test "a planning proposal is validated before replayable Bead delivery" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let planned = @workflow.plan_work_order_round(
+    planning_work_order(),
+    digest,
+    digest,
+  ).unwrap()
+  let dispatched = @workflow.dispatch_work_order_planning_round(planned, 101L).unwrap()
+  let proposal : @workflow.WorkOrderPlanningProposal = {
+    findings: [
+      {
+        summary: "A bounded next Bead is eligible.",
+        evidence: "The captured graph has no open blocker.",
+        related_bead_ids: [@control.PartId("choir-next")],
+      },
+    ],
+    eligible_work_observed: true,
+    bead_mutations: { mutations: [] },
+    primary_target_ids: [@control.PartId("choir-next")],
+    prerequisite_closure_ids: [],
+    finite_goal: Some(planning_goal_draft()),
+  }
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let artifact : @control.ArtifactReference = {
+    artifact_id: "planning-proposal-1",
+    digest: @storage.artifact_digest(content),
+  }
+  let received = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    artifact,
+    content,
+    digest,
+    digest,
+    [],
+    101L,
+  ).unwrap()
+  assert_eq(
+    received.planning_rounds[0].outcome,
+    @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningProposalAccepted,
+  )
+  let delivering = @workflow.begin_work_order_bead_delivery(received).unwrap()
+  assert_true(
+    @workflow.complete_work_order_bead_delivery(
+      delivering,
+      @storage.artifact_digest(@utf8.encode("wrong")),
+      digest,
+    )
+    is Err(_),
+  )
+  let delivered = @workflow.complete_work_order_bead_delivery(
+    delivering,
+    @command.bead_batch_digest(proposal.bead_mutations),
+    digest,
+  ).unwrap()
+  assert_eq(
+    delivered.planning_rounds[0].phase,
+    @workflow.WorkOrderPlanningPhase::WorkOrderPlanningBeadsDelivered,
+  )
+}
+
+///|
+test "planning proposal snapshot drift is a typed terminal outcome" {
+  let digest = @storage.artifact_digest(@utf8.encode("planning-snapshot"))
+  let drift = @storage.artifact_digest(@utf8.encode("planning-drift"))
+  let dispatched = @workflow.dispatch_work_order_planning_round(
+    @workflow.plan_work_order_round(planning_work_order(), digest, digest).unwrap(),
+    101L,
+  ).unwrap()
+  let proposal : @workflow.WorkOrderPlanningProposal = {
+    findings: [],
+    eligible_work_observed: false,
+    bead_mutations: { mutations: [] },
+    primary_target_ids: [],
+    prerequisite_closure_ids: [],
+    finite_goal: None,
+  }
+  let content = @workflow.work_order_planning_proposal_bytes(proposal)
+  let stopped = @workflow.record_work_order_planning_proposal(
+    dispatched,
+    {
+      artifact_id: "planning-proposal-drift",
+      digest: @storage.artifact_digest(content),
+    },
+    content,
+    drift,
+    digest,
+    [],
+    101L,
+  ).unwrap()
+  assert_true(
+    stopped.planning_rounds[0].outcome
+    is @workflow.WorkOrderPlanningOutcome::WorkOrderPlanningFailed(
+      @workflow.WorkOrderPlanningFailure::WorkOrderPlannerRepositorySnapshotDrift
+    ),
+  )
+}
+
+///|
+test "terminal child dispositions permit the next round and replay exactly" {
+  let record = {
+    ..planning_work_order(),
+    child_goals: [
+      {
+        ..planning_work_order().child_goals[0],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+  }
+  let failure = @storage.artifact_digest(@utf8.encode("child failed"))
+  let disposed = @workflow.record_work_order_child_disposition(
+    record,
+    @control.GoalId("goal-initial"),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildFailed(failure),
+    101L,
+  ).unwrap()
+  assert_true(
+    disposed.lifecycle == @workflow.WorkOrderLifecycle::WorkOrderActive,
+  )
+  assert_eq(
+    @workflow.record_work_order_child_disposition(
+      disposed,
+      @control.GoalId("goal-initial"),
+      @workflow.WorkOrderChildOutcome::WorkOrderChildFailed(failure),
+      101L,
+    ).unwrap(),
+    disposed,
+  )
+  let digest = @storage.artifact_digest(@utf8.encode("next snapshot"))
+  assert_true(
+    @workflow.plan_work_order_round(disposed, digest, digest) is Ok(_),
+  )
+}
+
+///|
+test "a child integrity disposition terminally stops its WorkOrder" {
+  let record = {
+    ..planning_work_order(),
+    child_goals: [
+      {
+        ..planning_work_order().child_goals[0],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+      },
+    ],
+  }
+  let stopped = @workflow.record_work_order_child_disposition(
+    record,
+    @control.GoalId("goal-initial"),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildCanceled(
+      @workflow.GoalCancellationCause::GoalCancellationPartBlocked(
+        @control.PartId("choir-initial"),
+        @control.PartBlockReason::PartIntegrityBlocked,
+      ),
+    ),
+    101L,
+  ).unwrap()
+  assert_true(
+    stopped.lifecycle
+    is @workflow.WorkOrderLifecycle::WorkOrderStopped(
+      @workflow.WorkOrderStopReason::WorkOrderFatalIntegrityStop(_)
+    ),
+  )
+  let digest = @storage.artifact_digest(@utf8.encode("next snapshot"))
+  assert_true(
+    @workflow.plan_work_order_round(stopped, digest, digest) is Err(_),
+  )
+}
+
+///|
+test "review-ready and exact-merge delivery count once from latched closure" {
+  let verify = fn(
+    boundary : @workflow.WorkOrderDeliveryBoundary,
+    remote_state : @workflow.RemotePullRequestState,
+  ) raise {
+    let record = {
+      ..planning_work_order(),
+      child_goals: [
+        {
+          ..planning_work_order().child_goals[0],
+          outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+          primary_target_ids: [
+            @control.PartId("choir-primary-a"),
+            @control.PartId("choir-primary-b"),
+          ],
+          prerequisite_closure_ids: [@control.PartId("choir-prerequisite")],
+        },
+      ],
+    }
+    let evidence : @workflow.WorkOrderDeliveryEvidence = {
+      boundary,
+      remote_pull_request_id: @workflow.RemotePullRequestId("PR_delivery"),
+      observed_head_oid: @control.GitOid(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+      observed_remote_state: remote_state,
+      receipt_digest: @storage.artifact_digest(@utf8.encode("delivery receipt")),
+    }
+    let delivered = @workflow.record_work_order_child_delivery(
+      record,
+      @control.GoalId("goal-initial"),
+      evidence,
+      101L,
+    ).unwrap()
+    assert_eq(delivered.budget.counters.delivered_primary_targets, 2)
+    assert_eq(delivered.budget.counters.delivered_dependency_closure, 3)
+    assert_true(delivered.child_goals[0].delivery_accounted)
+    assert_eq(
+      @workflow.record_work_order_child_delivery(
+        delivered,
+        @control.GoalId("goal-initial"),
+        evidence,
+        101L,
+      ).unwrap(),
+      delivered,
+    )
+  }
+  verify(
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+    @workflow.RemotePullRequestState::RemotePullRequestOpen,
+  )
+  verify(
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
+    @workflow.RemotePullRequestState::RemotePullRequestMerged,
+  )
+}
+
+///|
+test "one unattended WorkOrder survives a failed child and two delivery boundaries" {
+  let digest = fn(label : String) {
+    @storage.artifact_digest(@utf8.encode(label))
+  }
+  let restart = fn(record : @workflow.WorkOrderRecord) {
+    @workflow.decode_work_order_record(
+      @workflow.work_order_record_bytes(record),
+    ).unwrap()
+  }
+  let base = planning_work_order()
+  let budget = @workflow.accept_work_order_budget(
+    @workflow.WorkOrderStopRequest::WorkOrderRequestDeliveredQuota(
+      @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+      2,
+    ),
+    @workflow.WorkOrderCutoffPolicy::WorkOrderDrainToSafeBoundary,
+    100L,
+  ).unwrap()
+  let failed_goal = @control.GoalId("goal-unattended-failed")
+  let mut current = restart({
+    ..base,
+    initial_primary_target_ids: [
+      @control.PartId("choir-failed"),
+      @control.PartId("choir-review"),
+      @control.PartId("choir-merge"),
+    ],
+    budget,
+    child_goals: [
+      {
+        goal_id: failed_goal,
+        selection_decision_digest: digest("failed-selection"),
+        primary_target_ids: [@control.PartId("choir-failed")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+  })
+  current = restart(
+    @workflow.record_work_order_child_disposition(
+      current,
+      failed_goal,
+      @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+        digest("failed-child"),
+      ),
+      101L,
+    ).unwrap(),
+  )
+  assert_true(
+    current.lifecycle == @workflow.WorkOrderLifecycle::WorkOrderActive,
+  )
+  let review_goal = @control.GoalId("goal-unattended-review")
+  current = restart({
+    ..current,
+    child_goals: current.child_goals +
+    [
+      {
+        goal_id: review_goal,
+        selection_decision_digest: digest("review-selection"),
+        primary_target_ids: [@control.PartId("choir-review")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+    durable_version: current.durable_version + 1,
+  })
+  let review : @workflow.WorkOrderDeliveryEvidence = {
+    boundary: @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+    remote_pull_request_id: @workflow.RemotePullRequestId("PR-review"),
+    observed_head_oid: @control.GitOid(
+      "1111111111111111111111111111111111111111",
+    ),
+    observed_remote_state: @workflow.RemotePullRequestState::RemotePullRequestOpen,
+    receipt_digest: digest("review-receipt"),
+  }
+  current = restart(
+    @workflow.record_work_order_child_delivery(
+      current, review_goal, review, 102L,
+    ).unwrap(),
+  )
+  assert_eq(current.budget.counters.delivered_primary_targets, 1)
+  assert_eq(
+    @workflow.record_work_order_child_delivery(
+      current, review_goal, review, 102L,
+    ).unwrap(),
+    current,
+  )
+  let merge_goal = @control.GoalId("goal-unattended-merge")
+  current = restart({
+    ..current,
+    child_goals: current.child_goals +
+    [
+      {
+        goal_id: merge_goal,
+        selection_decision_digest: digest("merge-selection"),
+        primary_target_ids: [@control.PartId("choir-merge")],
+        prerequisite_closure_ids: [],
+        outcome: @workflow.WorkOrderChildOutcome::WorkOrderChildActive,
+        delivery_evidence: None,
+        delivery_accounted: false,
+      },
+    ],
+    durable_version: current.durable_version + 1,
+  })
+  let merged : @workflow.WorkOrderDeliveryEvidence = {
+    boundary: @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
+    remote_pull_request_id: @workflow.RemotePullRequestId("PR-merge"),
+    observed_head_oid: @control.GitOid(
+      "2222222222222222222222222222222222222222",
+    ),
+    observed_remote_state: @workflow.RemotePullRequestState::RemotePullRequestMerged,
+    receipt_digest: digest("merge-receipt"),
+  }
+  current = restart(
+    @workflow.record_work_order_child_delivery(
+      current, merge_goal, merged, 103L,
+    ).unwrap(),
+  )
+  assert_eq(current.budget.counters.delivered_primary_targets, 2)
+  assert_true(
+    current.lifecycle
+    is @workflow.WorkOrderLifecycle::WorkOrderStopped(
+      @workflow.WorkOrderStopReason::WorkOrderQuotaSatisfied(
+        @workflow.WorkOrderQuotaBasis::WorkOrderPrimaryTargets,
+        2
+      )
+    ),
+  )
+  assert_eq(current.child_goals.map(fn(child) { child.outcome }), [
+    @workflow.WorkOrderChildOutcome::WorkOrderChildQuarantined(
+      digest("failed-child"),
+    ),
+    @workflow.WorkOrderChildOutcome::WorkOrderChildDelivered,
+    @workflow.WorkOrderChildOutcome::WorkOrderChildDelivered,
+  ])
+  assert_eq(
+    current.child_goals[1].delivery_evidence.unwrap().boundary,
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderReviewReadyPullRequest,
+  )
+  assert_eq(
+    current.child_goals[2].delivery_evidence.unwrap().boundary,
+    @workflow.WorkOrderDeliveryBoundary::WorkOrderExactMergedPullRequest,
   )
 }

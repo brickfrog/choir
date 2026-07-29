@@ -792,7 +792,7 @@ fn workflow_execution_for_attach(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 2,
     fencing_epoch: snapshot.fencing_epoch,
   }
@@ -1992,7 +1992,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 3,
     fencing_epoch: integrated.fencing_epoch,
   }
@@ -2691,7 +2691,7 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     },
     state: @workflow.GoalExecutionState::GoalExecutionBlocked,
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
   }
   assert_true(
     @workflow.validate_rehearsal_admission(

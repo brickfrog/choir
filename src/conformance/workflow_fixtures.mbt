@@ -1178,6 +1178,12 @@ fn selection_fixture_proposal(
     migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
+    work_order_id: None,
+    work_order_planning_round_id: None,
+    work_order_objective: None,
+    work_order_selection_policy: None,
+    work_order_planner: None,
+    work_order_primary_target_ids: parts.map(fn(part) { part.part_id }),
     work_order_budget: None,
   }
 }
@@ -2445,7 +2451,7 @@ fn cancellation_goal_assurance_fixture_with_part_count(
     active_input_request: None,
     input_answers: [],
     cancellation_request: None,
-    work_order_budget: None,
+    work_order_id: None,
     durable_version: 3,
     fencing_epoch: base.fencing_epoch,
   }
