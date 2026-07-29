@@ -529,7 +529,6 @@ fn mcp_required_environment(name : String, inherit_parent : Bool) -> String {
 ///|
 fn mcp_run() -> Unit {
   ignore(@sys.ignore_sigpipe())
-  ignore(@sys.set_parent_death_signal_term())
   let args = @env.args()
   match mcp_arg_value(args, "--stderr-append-log") {
     Some(path) => ignore(@sys.redirect_stderr_append(path))
@@ -678,6 +677,94 @@ test "Conductor MCP request loop uses choird for tool execution" {
   assert_eq(outputs.length(), 2)
   assert_true(outputs[0].contains("protocolVersion"))
   assert_true(outputs[1].contains("running"))
+}
+
+///|
+test "Conductor MCP request loop preserves one mutation across reads" {
+  let inputs = [
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"task_get\",\"arguments\":{\"id\":\"choir-a\"}}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"task_update\",\"arguments\":{\"id\":\"choir-a\",\"notes\":\"delivered\"}}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"task_get\",\"arguments\":{\"id\":\"choir-a\"}}}",
+  ]
+  let outputs = []
+  let mut input_index = 0
+  let mut pending_request = ""
+  let mut notes = "initial"
+  let mut update_count = 0
+  let outcome = mcp_run_request_loop(
+    fn() {
+      if input_index < inputs.length() {
+        let value = inputs[input_index]
+        input_index = input_index + 1
+        Some(value)
+      } else {
+        None
+      }
+    },
+    fn(wire) {
+      pending_request = wire
+      if wire.contains("\"name\":\"task_update\"") {
+        notes = "delivered"
+        update_count = update_count + 1
+      }
+      true
+    },
+    fn() {
+      let result = if pending_request.contains("\"name\":\"task_get\"") {
+        { "id": "choir-a".to_json(), "notes": notes.to_json() }
+      } else {
+        { "updated": true.to_json() }
+      }
+      @transport.format_response(@types.Response::ok_values(result))
+    },
+    fn(output) { outputs.push(output) },
+    true,
+  )
+  match outcome {
+    InputClosed => ()
+    _ => fail("expected input close")
+  }
+  assert_eq(update_count, 1)
+  assert_eq(outputs.length(), 4)
+  assert_true(outputs[1].contains("initial"))
+  assert_true(outputs[3].contains("delivered"))
+}
+
+///|
+test "Conductor MCP request loop does not replay an ambiguous mutation" {
+  let inputs = [
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"task_update\",\"arguments\":{\"id\":\"choir-a\",\"notes\":\"delivered\"}}}",
+  ]
+  let outputs = []
+  let mut input_index = 0
+  let mut update_count = 0
+  let outcome = mcp_run_request_loop(
+    fn() {
+      if input_index < inputs.length() {
+        let value = inputs[input_index]
+        input_index = input_index + 1
+        Some(value)
+      } else {
+        None
+      }
+    },
+    fn(wire) {
+      if wire.contains("\"name\":\"task_update\"") {
+        update_count = update_count + 1
+      }
+      true
+    },
+    fn() { "" },
+    fn(output) { outputs.push(output) },
+    true,
+  )
+  match outcome {
+    Reconnect => ()
+    _ => fail("expected reconnect")
+  }
+  assert_eq(update_count, 1)
+  assert_eq(outputs.length(), 1)
+  assert_true(outputs[0].contains("choird disconnected; retry the tool call"))
 }
 
 ///|
