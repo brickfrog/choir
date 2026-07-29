@@ -1030,6 +1030,39 @@ pub fn plan_part_retry(
 }
 
 ///|
+/// Re-arm an ownership-violating implementation under the same mutation
+/// declaration and retained diagnostic. This is a bounded repair Take, not a
+/// widening of the contract: `plan_part_retry` archives the failed candidate
+/// evidence and preserves the exact TaskContractRevision.
+pub fn plan_part_ownership_repair(
+  snapshot : PartWorkflowSnapshot,
+  identities : PartIdentityPlan,
+  is_nfc : (String) -> Bool,
+) -> Result[PartOwnershipRepairDecision, @types.ChoirError] {
+  if snapshot.stage != PartBlocked ||
+    !(snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartOwnershipViolation
+    )) ||
+    snapshot.pending_effect is Some(_) ||
+    snapshot.dispatch_diagnostic is None {
+    return Err(workflow_error("Part is not eligible for ownership repair"))
+  }
+  let diagnostic = snapshot.dispatch_diagnostic.unwrap()
+  if diagnostic.take_id != snapshot.implementation_take.id ||
+    !diagnostic.detail.has_prefix("candidate failed normalization:") {
+    return Err(workflow_error("ownership violation evidence is absent"))
+  }
+  if snapshot.prior_takes.length() / 3 >= maximum_part_recovery_retries() {
+    return Ok(PartOwnershipRepairLimitReached)
+  }
+  match plan_part_retry(snapshot, identities, is_nfc) {
+    Ok(value) => Ok(PartOwnershipRepairPlanned(value))
+    Err(error) => Err(error)
+  }
+}
+
+///|
 fn stage_effect_suffix(stage : PartWorkflowStage) -> String {
   match stage {
     PartAccepted => "implementation-sandbox"

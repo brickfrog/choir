@@ -1323,6 +1323,28 @@ test "a re-armed Part is planned on the surface it was told to run on" {
 fn plan_native_part_recovery_retry(
   snapshot : @workflow.PartWorkflowSnapshot,
 ) -> Result[@workflow.PartRecoveryRetryDecision, @types.ChoirError] {
+  if snapshot.part.lifecycle
+    is @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartOwnershipViolation
+    ) {
+    return match
+      @workflow.plan_part_ownership_repair(
+        snapshot,
+        native_part_retry_identity_plan(
+          snapshot,
+          snapshot.identities.implementation_session.surface,
+        ),
+        native_path_is_nfc,
+      ) {
+      Ok(
+        @workflow.PartOwnershipRepairDecision::PartOwnershipRepairPlanned(value)
+      ) =>
+        Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryPlanned(value))
+      Ok(@workflow.PartOwnershipRepairDecision::PartOwnershipRepairLimitReached) =>
+        Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryLimitReached)
+      Err(error) => Err(error)
+    }
+  }
   @workflow.plan_part_recovery_retry(
     snapshot,
     fn(surface) { native_part_retry_identity_plan(snapshot, surface) },
@@ -5721,7 +5743,11 @@ async fn advance_native_goal_assurance_attempt(
               @workflow.GoalAssuranceUncertaintyReconciliation::GoalAssuranceUncertaintyRetained
             ) =>
               return Ok(
-                @workflow.GoalAssuranceTickOutcome::GoalAssurancePending,
+                // The authorized effect may have occurred and cannot be
+                // observed safely. Replaying would duplicate authority; the
+                // runner converts this fail-closed outcome into typed terminal
+                // cancellation instead of parking assurance forever.
+                @workflow.GoalAssuranceTickOutcome::GoalAssuranceBlocked,
               )
             Err(error) => return Err(error)
           }

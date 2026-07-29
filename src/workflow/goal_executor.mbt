@@ -166,10 +166,10 @@ pub fn goal_execution_job_candidate(
     GoalExecutionState::GoalExecutionQueued
     | GoalExecutionState::GoalExecutionRunning
     | GoalExecutionState::GoalExecutionAssuring
-    | GoalExecutionState::GoalExecutionAssured =>
+    | GoalExecutionState::GoalExecutionAssured
+    | GoalExecutionState::GoalExecutionBlocked =>
       Some({ goal_id, lane: GoalExecutionJobLane::GoalExecutionProgressLane })
     GoalExecutionState::GoalExecutionPaused
-    | GoalExecutionState::GoalExecutionBlocked
     | GoalExecutionState::GoalExecutionSucceeded
     | GoalExecutionState::GoalExecutionCanceled => None
   }
