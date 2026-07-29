@@ -1433,9 +1433,26 @@ async fn reconcile_unwitnessed_native_part_effect(
     @workflow.PartEffectKind::PrepareImplementationSandbox(lease)
     | @workflow.PartEffectKind::PrepareVerificationSandbox(lease)
     | @workflow.PartEffectKind::PrepareAuditSandbox(lease) =>
-      match runtime.sandboxes.get(lease.generation_id.0) {
-        Some(_) => Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
-        None => Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+      match native_sandbox_registry_path(runtime, lease.generation_id) {
+        Err(error) => Err(error)
+        Ok(path) if @sys.path_exists(path) =>
+          match native_runtime_sandbox(runtime, lease.generation_id) {
+            Ok(_) =>
+              Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+            Err(error) => Err(error)
+          }
+        Ok(_) => {
+          let name = "choir-" + lease.generation_id.0
+          match lookup_native_boxlite_named_box(runtime.server.val, name) {
+            Ok(NativeBoxLiteNamedBoxAbsent) =>
+              Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
+            Ok(
+              NativeBoxLiteNamedBoxExact(_, _)
+              | NativeBoxLiteNamedBoxUncertain
+            ) => Ok(@workflow.PartEffectRecovery::EffectWitnessUnavailable)
+            Err(error) => Err(error)
+          }
+        }
       }
     @workflow.PartEffectKind::DispatchVerification(_, _) => {
       let process_uncertain = match
