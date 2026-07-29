@@ -71,7 +71,12 @@ fn conductor_tools() -> Array[CatalogTool] {
     ),
     "verify_timeout_ms": {
       "type": "integer".to_json(),
-      "description": "Optional verification timeout in milliseconds".to_json(),
+      "description": "Optional verification timeout in milliseconds; choose one listed value or omit it for the 120000 default. Verification is capped at 600000 milliseconds even when the wider provider Take may run longer.".to_json(),
+      // Codex's deferred tool projection preserves enums but currently drops
+      // nested numeric bounds. Keep the bounds for complete JSON Schema
+      // clients and enumerate the ordinary choices so the projected schema
+      // cannot invite the provider-level one-hour timeout here.
+      "enum": [60000, 120000, 180000, 300000, 600000].to_json(),
       "minimum": (1).to_json(),
       "maximum": (600000).to_json(),
     }.to_json(),
