@@ -48,6 +48,12 @@ pub(all) struct PriorPartTakeEvidence {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct PartRepairSource {
+  commit_oid : @control.GitOid
+  tree_oid : @control.GitOid
+} derive(Debug, Eq)
+
+///|
 pub(all) struct PartCommandPreparationPlan {
   role : @command.CommandRole
   take : @control.Take

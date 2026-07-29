@@ -647,8 +647,7 @@ fn plan_native_audit_repair_attempt(
   snapshot : @workflow.PartWorkflowSnapshot,
   repair : @control.AuditRepairReference,
   terminal_response : String,
-  base_commit_oid : @control.GitOid,
-  base_tree_oid : @control.GitOid,
+  source : @workflow.PartRepairSource,
 ) -> Result[@workflow.PartAuditRepairDecision, @types.ChoirError] {
   let repair_number = snapshot.task_contract_history.fold(init=1, fn(
     count,
@@ -696,8 +695,8 @@ fn plan_native_audit_repair_attempt(
         (snapshot.task_contract.revision + 1).to_json(),
         repair.to_json(),
         instruction.to_json(),
-        base_commit_oid.to_json(),
-        base_tree_oid.to_json(),
+        source.commit_oid.to_json(),
+        source.tree_oid.to_json(),
         snapshot.task_contract.mutation_declaration.to_json(),
         snapshot.task_contract.verification_specs.to_json(),
         snapshot.task_contract.audit_policy_digest.to_json(),
@@ -718,8 +717,8 @@ fn plan_native_audit_repair_attempt(
     repair_audit: Some(repair),
     repair_verification: None,
     instruction_artifact: instruction,
-    base_commit_oid,
-    base_tree_oid,
+    base_commit_oid: source.commit_oid,
+    base_tree_oid: source.tree_oid,
   }
   let implementation = native_goal_conflict_repair_take(
     "take-" + key + "-implementation",
@@ -765,6 +764,7 @@ fn plan_native_audit_repair_attempt(
   @workflow.plan_part_audit_repair(
     snapshot,
     repair,
+    source,
     contract,
     {
       implementation_take: implementation,
@@ -837,8 +837,10 @@ fn plan_native_part_audit_repair(
     snapshot,
     repair,
     terminal_response,
-    snapshot.task_contract.base_commit_oid,
-    snapshot.task_contract.base_tree_oid,
+    {
+      commit_oid: result.subject.candidate_commit_oid,
+      tree_oid: result.subject.candidate_tree_oid,
+    },
   )
 }
 
@@ -891,6 +893,7 @@ fn plan_native_verification_repair_attempt(
   snapshot : @workflow.PartWorkflowSnapshot,
   repair : @control.VerificationRepairReference,
   verification_evidence : String,
+  source : @workflow.PartRepairSource,
 ) -> Result[@workflow.PartVerificationRepairDecision, @types.ChoirError] {
   let repair_number = snapshot.task_contract_history.fold(init=1, fn(
     count,
@@ -937,8 +940,8 @@ fn plan_native_verification_repair_attempt(
         (snapshot.task_contract.revision + 1).to_json(),
         repair.to_json(),
         instruction.to_json(),
-        snapshot.task_contract.base_commit_oid.to_json(),
-        snapshot.task_contract.base_tree_oid.to_json(),
+        source.commit_oid.to_json(),
+        source.tree_oid.to_json(),
         snapshot.task_contract.mutation_declaration.to_json(),
         snapshot.task_contract.verification_specs.to_json(),
         snapshot.task_contract.audit_policy_digest.to_json(),
@@ -959,6 +962,8 @@ fn plan_native_verification_repair_attempt(
     repair_audit: None,
     repair_verification: Some(repair),
     instruction_artifact: instruction,
+    base_commit_oid: source.commit_oid,
+    base_tree_oid: source.tree_oid,
   }
   let implementation = native_goal_conflict_repair_take(
     "take-" + key + "-implementation",
@@ -1004,6 +1009,7 @@ fn plan_native_verification_repair_attempt(
   @workflow.plan_part_verification_repair(
     snapshot,
     repair,
+    source,
     contract,
     {
       implementation_take: implementation,
@@ -1073,6 +1079,10 @@ fn plan_native_part_verification_repair(
     snapshot,
     repair,
     @utf8.decode_lossy(bytes),
+    {
+      commit_oid: receipt.subject.candidate_commit_oid,
+      tree_oid: receipt.subject.candidate_tree_oid,
+    },
   )
 }
 
@@ -5095,8 +5105,7 @@ fn plan_and_persist_native_goal_audit_repairs(
         snapshot,
         repair,
         terminal_response,
-        subject.goal_head_oid,
-        subject.goal_tree_oid,
+        { commit_oid: subject.goal_head_oid, tree_oid: subject.goal_tree_oid },
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -5360,7 +5369,14 @@ fn plan_and_persist_native_goal_verification_repairs(
     }
     let decision = match
       plan_native_verification_repair_attempt(
-        repository, snapshot, repair, evidence,
+        repository,
+        snapshot,
+        repair,
+        evidence,
+        {
+          commit_oid: receipt.subject.goal_head_oid,
+          tree_oid: receipt.subject.goal_tree_oid,
+        },
       ) {
       Ok(value) => value
       Err(error) => return Err(error)

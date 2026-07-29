@@ -424,29 +424,82 @@ fn native_source_digest(
 }
 
 ///|
+fn native_part_sandbox_source(
+  implementation : Bool,
+  contract_source : @workflow.PartRepairSource,
+  candidate_source : @workflow.PartRepairSource?,
+) -> Result[(@control.GitOid, @control.GitOid, Bool), @types.ChoirError] {
+  if implementation {
+    Ok((contract_source.commit_oid, contract_source.tree_oid, false))
+  } else {
+    match candidate_source {
+      Some(candidate) => Ok((candidate.commit_oid, candidate.tree_oid, true))
+      None => Err(native_part_effect_error("candidate is missing"))
+    }
+  }
+}
+
+///|
 async fn prepare_native_part_sandbox(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
   lease : @control.SandboxLease,
 ) -> Result[@control.SandboxLease, @types.ChoirError] {
-  let (commit_oid, tree_oid) = if lease.take_id ==
-    snapshot.implementation_take.id {
-    (
-      snapshot.task_contract.base_commit_oid,
-      snapshot.task_contract.base_tree_oid,
-    )
-  } else {
-    match snapshot.candidate {
-      Some(candidate) => (candidate.commit_oid, candidate.tree_oid)
-      None => return Err(native_part_effect_error("candidate is missing"))
-    }
+  let candidate_source : @workflow.PartRepairSource? = snapshot.candidate.map(fn(
+    candidate,
+  ) {
+    { commit_oid: candidate.commit_oid, tree_oid: candidate.tree_oid }
+  })
+  let (commit_oid, tree_oid, read_only_subject) = match
+    native_part_sandbox_source(
+      lease.take_id == snapshot.implementation_take.id,
+      {
+        commit_oid: snapshot.task_contract.base_commit_oid,
+        tree_oid: snapshot.task_contract.base_tree_oid,
+      },
+      candidate_source,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   prepare_native_source_sandbox(
     runtime,
     lease,
     commit_oid,
     tree_oid,
-    read_only_subject=lease.take_id != snapshot.implementation_take.id,
+    read_only_subject~,
+  )
+}
+
+///|
+test "implementation sandbox selects the contract base after repair" {
+  let contract_source : @workflow.PartRepairSource = {
+    commit_oid: @control.GitOid("rejected-candidate"),
+    tree_oid: @control.GitOid("rejected-tree"),
+  }
+  match native_part_sandbox_source(true, contract_source, None) {
+    Ok((commit_oid, tree_oid, read_only)) => {
+      assert_eq(commit_oid, @control.GitOid("rejected-candidate"))
+      assert_eq(tree_oid, @control.GitOid("rejected-tree"))
+      assert_false(read_only)
+    }
+    Err(error) => fail(error.message())
+  }
+  let candidate_source : @workflow.PartRepairSource = {
+    commit_oid: @control.GitOid("verified-candidate"),
+    tree_oid: @control.GitOid("verified-tree"),
+  }
+  match
+    native_part_sandbox_source(false, contract_source, Some(candidate_source)) {
+    Ok((commit_oid, tree_oid, read_only)) => {
+      assert_eq(commit_oid, @control.GitOid("verified-candidate"))
+      assert_eq(tree_oid, @control.GitOid("verified-tree"))
+      assert_true(read_only)
+    }
+    Err(error) => fail(error.message())
+  }
+  assert_true(
+    native_part_sandbox_source(false, contract_source, None) is Err(_),
   )
 }
 
