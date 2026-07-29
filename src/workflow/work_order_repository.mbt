@@ -70,6 +70,7 @@ pub fn persist_work_order_record(
         expected_version: request.expected_store_version,
         next_version: request.record.durable_version,
         fencing_epoch: request.record.fencing_epoch,
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: digest,
       },
       outbox: {

@@ -92,6 +92,7 @@ pub fn persist_goal_finalization_record(
           expected_version: request.expected_store_version,
           next_version: expected_durable_version,
           fencing_epoch: request.record.fencing_epoch,
+          schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
           value_digest: record_digest,
         },
         outbox: {
@@ -213,6 +214,7 @@ fn persist_finalization_authorized_advance(
           expected_version: Some(execution.state_record.version),
           next_version: succeeded.durable_version,
           fencing_epoch: succeeded.fencing_epoch,
+          schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
           value_digest: digest,
         },
         outbox: {

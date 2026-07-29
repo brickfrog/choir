@@ -115,6 +115,7 @@ fn persist_goal_executor_schedule_record(
       expected_version: expected_store_version,
       next_version: expected_durable_version,
       fencing_epoch: record.fencing_epoch,
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: record_digest,
     },
     outbox: {

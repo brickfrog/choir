@@ -31,11 +31,18 @@ pub(all) enum StateStoreFaultPoint {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum StateRecordScheduleClass {
+  StateRecordNotSchedulable
+  StateRecordSchedulable
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct StateMutation {
   key : StateRecordKey
   expected_version : Int?
   next_version : Int
   fencing_epoch : @control.FencingEpoch
+  schedule_class : StateRecordScheduleClass
   value_digest : @control.Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -89,6 +96,7 @@ pub(all) struct StateRecord {
   key : StateRecordKey
   version : Int
   fencing_epoch : @control.FencingEpoch
+  schedule_class : StateRecordScheduleClass
   value_digest : @control.Digest
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -117,10 +125,41 @@ pub(all) struct StateStoreAdapters {
     Array[StateRecord],
     @types.ChoirError,
   ]
+  list_state_by_schedule_class : (
+    SqliteStateStore,
+    String,
+    StateRecordScheduleClass,
+  ) -> Result[Array[StateRecord], @types.ChoirError]
   read_outbox : (SqliteStateStore, SemanticEventKey) -> Result[
     CompletionOutboxRecord?,
     @types.ChoirError,
   ]
+}
+
+///|
+pub fn state_record_schedule_class_code(
+  class : StateRecordScheduleClass,
+) -> Int {
+  match class {
+    StateRecordNotSchedulable => 0
+    StateRecordSchedulable => 1
+  }
+}
+
+///|
+pub fn state_record_schedule_class_from_code(
+  code : Int,
+) -> Result[StateRecordScheduleClass, @types.ChoirError] {
+  match code {
+    0 => Ok(StateRecordNotSchedulable)
+    1 => Ok(StateRecordSchedulable)
+    _ =>
+      Err(
+        @types.ChoirError::validation_error(
+          "invalid state record schedule class",
+        ),
+      )
+  }
 }
 
 ///|

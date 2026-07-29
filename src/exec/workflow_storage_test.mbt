@@ -853,6 +853,7 @@ async test "Goal cutoff atomically rejects a concurrently authorized Part effect
       expected_version: None,
       next_version: 1,
       fencing_epoch: @control.FencingEpoch(7L),
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: workflow_store_digest_a,
     },
     outbox: {
@@ -2366,14 +2367,69 @@ async test "Goal finalization input request and answer survive restart" {
       fault_point: None,
     }).unwrap(),
   )
+  let persisted_state = adapters.state
+  let mismatched_adapters : @workflow.PartWorkflowRepositoryAdapters = {
+    ..adapters,
+    state: {
+      ..persisted_state,
+      read_state: fn(store, key) {
+        match (persisted_state.read_state)(store, key) {
+          Ok(Some(record)) =>
+            Ok(
+              Some({
+                ..record,
+                schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
+              }),
+            )
+          other => other
+        }
+      },
+    },
+  }
+  match
+    @workflow.load_goal_execution_record(
+      repository,
+      mismatched_adapters,
+      execution.goal.id,
+    ) {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains("schedulability projection disagrees with Goal state"),
+      )
+    Ok(_) => fail("mismatched schedulability projection was accepted")
+  }
   // Merge observation is finalization work, not provider work. Pin the runner
   // boundary directly: an assured Goal waiting on its finalizer must not enter
   // either provider-capable adapter, and a pending observation leaves it due
   // for another ordinary Goal job.
   let provider_path_called = @ref.new(false)
+  let exact_reads = @ref.new(0)
+  let unfiltered_lists = @ref.new(0)
+  let filtered_lists = @ref.new(0)
+  let base_state = adapters.state
+  let observed_adapters : @workflow.PartWorkflowRepositoryAdapters = {
+    ..adapters,
+    state: {
+      ..base_state,
+      read_state: fn(store, key) {
+        exact_reads.val = exact_reads.val + 1
+        (base_state.read_state)(store, key)
+      },
+      list_state: fn(store, prefix) {
+        unfiltered_lists.val = unfiltered_lists.val + 1
+        (base_state.list_state)(store, prefix)
+      },
+      list_state_by_schedule_class: fn(store, prefix, class) {
+        filtered_lists.val = filtered_lists.val + 1
+        (base_state.list_state_by_schedule_class)(store, prefix, class)
+      },
+    },
+  }
   let waiting = @workflow.run_next_goal_execution_tick(
     repository,
-    adapters,
+    observed_adapters,
     {
       initialize: _ => fail("assured Goal initialized"),
       execute: (_, _) => {
@@ -2392,6 +2448,9 @@ async test "Goal finalization input request and answer survive restart" {
     goal_id=Some(execution.goal.id),
   ).unwrap()
   assert_false(provider_path_called.val)
+  assert_true(exact_reads.val > 0)
+  assert_eq(unfiltered_lists.val, 0)
+  assert_eq(filtered_lists.val, 0)
   guard waiting
     is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(
       waiting_record
@@ -2402,17 +2461,24 @@ async test "Goal finalization input request and answer survive restart" {
     waiting_record.state,
     @workflow.GoalExecutionState::GoalExecutionAssured,
   )
-  let tick = @workflow.run_next_goal_execution_tick(repository, adapters, {
-    initialize: _ => fail("assured Goal initialized"),
-    execute: (_, _) => fail("answered Goal executed Parts"),
-    assure: (_, _) => fail("answered Goal repeated assurance"),
-    finalize: (_, _) => {
-      Ok(
-        @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
-      )
+  exact_reads.val = 0
+  let tick = @workflow.run_next_goal_execution_tick(
+    repository,
+    observed_adapters,
+    {
+      initialize: _ => fail("assured Goal initialized"),
+      execute: (_, _) => fail("answered Goal executed Parts"),
+      assure: (_, _) => fail("answered Goal repeated assurance"),
+      finalize: (_, _) => {
+        Ok(
+          @workflow.GoalFinalizationTickOutcome::GoalFinalizationPublicationRemoteUnavailable,
+        )
+      },
+      cancel: (_, _) => fail("answered Goal entered cancellation"),
     },
-    cancel: (_, _) => fail("answered Goal entered cancellation"),
-  }).unwrap()
+  ).unwrap()
+  assert_eq(unfiltered_lists.val, 0)
+  assert_eq(filtered_lists.val, 1)
   guard tick
     is @workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(paused) else {
     fail("finalization input did not pause the Goal")
@@ -2425,6 +2491,18 @@ async test "Goal finalization input request and answer survive restart" {
     @workflow.GoalInputReason::GoalInputPublicationRemoteUnavailable,
   )
   assert_eq(paused.state, @workflow.GoalExecutionState::GoalExecutionPaused)
+  let retained_history = @workflow.list_goal_execution_records(
+    repository, adapters,
+  ).unwrap()
+  assert_eq(retained_history.length(), 1)
+  assert_eq(
+    retained_history[0].record.state,
+    @workflow.GoalExecutionState::GoalExecutionPaused,
+  )
+  let schedulable = @workflow.list_schedulable_goal_execution_records(
+    repository, adapters,
+  ).unwrap()
+  assert_eq(schedulable.length(), 0)
   let idle = @workflow.run_next_goal_execution_tick(repository, adapters, {
     initialize: _ => fail("input-blocked Goal initialized"),
     execute: (_, _) => fail("input-blocked Goal executed Parts"),

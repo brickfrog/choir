@@ -29,6 +29,7 @@ fn initial_state_request(
       expected_version: None,
       next_version: 1,
       fencing_epoch: @control.FencingEpoch(1L),
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: store_digest_a,
     },
     outbox: {
@@ -116,6 +117,16 @@ test "SQLite state transaction persists atomically and replays after restart" {
     Ok(_) => fail("unexpected replay outcome")
     Err(error) => fail(error.message())
   }
+  assert_eq(
+    commit_state_transaction(restarted, {
+      ..request,
+      state: {
+        ..request.state,
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordSchedulable,
+      },
+    }).unwrap(),
+    @storage.StateTransactionOutcome::StateTransactionSemanticConflict,
+  )
   ignore(@sys.rm_rf(path))
   ignore(@sys.rm_rf(path + "-shm"))
   ignore(@sys.rm_rf(path + "-wal"))
@@ -140,6 +151,7 @@ test "completion outbox pruning deletes only one typed Goal owner" {
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(1L),
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: store_digest_a,
       },
       outbox: {
@@ -205,6 +217,7 @@ test "SQLite state listing returns only the requested durable prefix" {
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(1L),
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordSchedulable,
         value_digest: store_digest_a,
       },
       outbox: {
@@ -220,6 +233,7 @@ test "SQLite state listing returns only the requested durable prefix" {
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(2L),
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: store_digest_b,
       },
       outbox: {
@@ -249,6 +263,43 @@ test "SQLite state listing returns only the requested durable prefix" {
     }
     Err(error) => fail(error.message())
   }
+  match
+    list_state_records_by_schedule_class(
+      store,
+      "goal-run:",
+      @storage.StateRecordScheduleClass::StateRecordSchedulable,
+    ) {
+    Ok([record]) => {
+      assert_eq(@storage.state_record_key_text(record.key), "goal-run:first")
+      assert_eq(
+        record.schedule_class,
+        @storage.StateRecordScheduleClass::StateRecordSchedulable,
+      )
+    }
+    Ok(_) => fail("schedulable listing returned the wrong records")
+    Err(error) => fail(error.message())
+  }
+  match
+    list_state_records_by_schedule_class(
+      store,
+      "goal-run:",
+      @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
+    ) {
+    Ok([record]) =>
+      assert_eq(@storage.state_record_key_text(record.key), "goal-run:second")
+    Ok(_) => fail("terminal listing returned the wrong records")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(
+    list_state_records_by_schedule_class(
+      store,
+      "goal:",
+      @storage.StateRecordScheduleClass::StateRecordSchedulable,
+    )
+    .unwrap()
+    .length(),
+    0,
+  )
   ignore(@sys.rm_rf(path))
   ignore(@sys.rm_rf(path + "-shm"))
   ignore(@sys.rm_rf(path + "-wal"))
@@ -386,6 +437,7 @@ test "guarded state transaction orders Part authorization against Goal cutoff" {
       expected_version: None,
       next_version: 1,
       fencing_epoch: @control.FencingEpoch(1L),
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: store_digest_b,
     },
     outbox: {
@@ -404,6 +456,29 @@ test "guarded state transaction orders Part authorization against Goal cutoff" {
     @storage.GuardedStateTransactionOutcome::GuardedStateTransactionCompleted(
       @storage.StateTransactionOutcome::StateTransactionCommitted,
     ),
+  )
+  let wrong_class_guard : @storage.GuardedStateTransactionRequest = {
+    transaction: {
+      ..authorized,
+      state: {
+        ..authorized.state,
+        key: @storage.StateRecordKey("part:p-class"),
+      },
+      outbox: {
+        ..authorized.outbox,
+        semantic_key: @storage.SemanticEventKey("part:p-class:authorized"),
+      },
+    },
+    precondition: {
+      record: {
+        ..running_record,
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordSchedulable,
+      },
+    },
+  }
+  assert_eq(
+    commit_guarded_state_transaction(store, wrong_class_guard).unwrap(),
+    @storage.GuardedStateTransactionOutcome::GuardedStateTransactionPreconditionConflict,
   )
   let cancellation : @storage.StateTransactionRequest = {
     state: {
@@ -972,6 +1047,7 @@ fn control_probe_record(
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(1L),
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: digest,
       },
       outbox: {
@@ -1290,55 +1366,6 @@ async test "a current stamp with a decodable record remains untouched" {
   assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
   assert_eq(reached, [])
   assert_eq(list_state_records(store, prefix).unwrap().length(), 1)
-  ignore(@sys.rm_rf(project_dir))
-}
-
-///|
-/// Version 2 adds only a nullable owner column. Existing outbox rows remain
-/// unowned and must survive the migration; none of the destructive cleanup
-/// effects is authorized.
-async test "the outbox owner DDL migrates in place" {
-  let reached : Array[String] = []
-  let project_dir = storage_test_path("control-ddl-migrate")
-  let control_root = project_dir + "/.choir/state/control"
-  let store : @storage.SqliteStateStore = {
-    path: control_root + "/workflow.db",
-  }
-  ignore(@sys.rm_rf(project_dir))
-  guard @sys.create_dir_all(control_root) else { fail("create control root") }
-  initialize_state_store(store).unwrap()
-  write_state_store_generation(
-    store,
-    @workflow.durable_value_shape_generation(),
-  ).unwrap()
-  write_state_store_ddl_version(store, 1).unwrap()
-  let request = initial_state_request("before-ddl-migration", None)
-  assert_eq(
-    commit_state_transaction(store, request).unwrap(),
-    @storage.StateTransactionOutcome::StateTransactionCommitted,
-  )
-  let prepared = prepare_native_goal_control_state(
-    project_dir,
-    capture=fn(_) {
-      reached.push("claims")
-      (0, "[]")
-    },
-    cleanup_runtime=fn(_, _) {
-      reached.push("runtime")
-      Ok(())
-    },
-    purge_refs=fn(_) {
-      reached.push("refs")
-      Ok(0)
-    },
-  )
-  assert_eq(prepared.unwrap(), NativeGoalControlStateCurrent)
-  assert_eq(reached, [])
-  assert_eq(read_state_store_ddl_version(store).unwrap(), 2)
-  assert_true(
-    read_completion_outbox(store, request.outbox.semantic_key).unwrap()
-    is Some(_),
-  )
   ignore(@sys.rm_rf(project_dir))
 }
 

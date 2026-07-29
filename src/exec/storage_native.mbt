@@ -119,6 +119,7 @@ test "the control store DDL is pinned to the version it declares" {
   // DDL already stamped onto stores in the field.
   let pins = [
     "7a0eb3bd1ed169bdf66f683e43da2b61855cabb53d03b778936432bdaec54662", "9905a47a5e19f9ef5771e8d2dc9c6b7cead67345a1cbea9891ecaa742087b6d9",
+    "b15d2a95253f2ffbc53cd9c1138015b493c164f4dd59a614ca91251bbfc5fbe4",
   ]
   let buf = Bytes::new(4096)
   let written = state_store_ddl_text_ffi(buf, 4096)
@@ -134,6 +135,18 @@ test "the control store DDL is pinned to the version it declares" {
     ),
     pins[pins.length() - 1],
   )
+}
+
+///|
+test "the schedulable state query uses its composite index" {
+  let path = "/tmp/choir-schedule-query-plan-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(path))
+  let store : @storage.SqliteStateStore = { path, }
+  initialize_state_store(store).unwrap()
+  let (encoded, length) = exec_string_to_null_terminated_bytes(path)
+  assert_eq(state_store_schedule_query_uses_index_ffi(encoded, length), 1)
+  forget_state_store(store)
+  ignore(@sys.rm_rf(path))
 }
 
 ///|
@@ -174,24 +187,6 @@ pub fn write_state_store_ddl_version(
     Ok(())
   } else {
     Err(state_store_failure("DDL version write"))
-  }
-}
-
-///|
-pub fn migrate_state_store_ddl(
-  store : @storage.SqliteStateStore,
-  from_version : Int,
-  to_version : Int,
-) -> Result[Unit, @types.ChoirError] {
-  match validate_store_path(store.path) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
-  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
-  if state_store_migrate_ddl_ffi(path, path_len, from_version, to_version) == 0 {
-    Ok(())
-  } else {
-    Err(state_store_failure("DDL migration"))
   }
 }
 
@@ -277,6 +272,7 @@ pub fn commit_state_transaction(
     expected,
     request.state.next_version,
     @storage.fencing_epoch_value(request.state.fencing_epoch),
+    @storage.state_record_schedule_class_code(request.state.schedule_class),
     value,
     value_len,
     semantic,
@@ -291,6 +287,7 @@ pub fn commit_state_transaction(
     empty_len,
     0,
     0L,
+    0,
     empty,
     empty_len,
   )
@@ -370,6 +367,7 @@ pub fn commit_guarded_state_transaction(
     expected,
     transaction.state.next_version,
     @storage.fencing_epoch_value(transaction.state.fencing_epoch),
+    @storage.state_record_schedule_class_code(transaction.state.schedule_class),
     value,
     value_len,
     semantic,
@@ -384,6 +382,7 @@ pub fn commit_guarded_state_transaction(
     precondition_key_len,
     precondition.version,
     @storage.fencing_epoch_value(precondition.fencing_epoch),
+    @storage.state_record_schedule_class_code(precondition.schedule_class),
     precondition_digest,
     precondition_digest_len,
   )
@@ -446,7 +445,7 @@ fn parse_state_record_capture(
   output : String,
 ) -> Result[@storage.StateRecord, @types.ChoirError] {
   let fields = output.split("|").to_array()
-  if fields.length() != 3 {
+  if fields.length() != 4 {
     return Err(state_store_failure("record decoding"))
   }
   let version = @string.parse_int(fields[0]) catch {
@@ -455,13 +454,22 @@ fn parse_state_record_capture(
   let fence = @string.parse_int(fields[1]) catch {
     _ => return Err(state_store_failure("record fence decoding"))
   }
-  let digest = @control.Digest(fields[2].to_owned())
+  let schedule_code = @string.parse_int(fields[2]) catch {
+    _ => return Err(state_store_failure("record schedule class decoding"))
+  }
+  let schedule_class = match
+    @storage.state_record_schedule_class_from_code(schedule_code) {
+    Ok(value) => value
+    Err(_) => return Err(state_store_failure("record schedule class decoding"))
+  }
+  let digest = @control.Digest(fields[3].to_owned())
   match @storage.validate_digest(digest) {
     Ok(_) =>
       Ok({
         key,
         version,
         fencing_epoch: @control.FencingEpoch(fence.to_int64()),
+        schedule_class,
         value_digest: digest,
       })
     Err(_) => Err(state_store_failure("record digest decoding"))
@@ -522,9 +530,10 @@ fn maximum_state_listing_bytes() -> Int {
 }
 
 ///|
-pub fn list_state_records(
+fn list_state_records_with_schedule_class(
   store : @storage.SqliteStateStore,
   prefix : String,
+  schedule_class : @storage.StateRecordScheduleClass?,
 ) -> Result[Array[@storage.StateRecord], @types.ChoirError] {
   match validate_store_path(store.path) {
     Ok(_) => ()
@@ -542,9 +551,25 @@ pub fn list_state_records(
   // overflow reported as an ordinary listing failure.
   let mut capacity = 64 * 1024
   let mut output = Bytes::new(capacity)
-  let mut result = state_store_list_state_ffi(
-    path, path_len, prefix_bytes, prefix_len, output, capacity,
-  )
+  let list = fn(output : Bytes, capacity : Int) {
+    match schedule_class {
+      Some(class) =>
+        state_store_list_state_by_schedule_class_ffi(
+          path,
+          path_len,
+          prefix_bytes,
+          prefix_len,
+          @storage.state_record_schedule_class_code(class),
+          output,
+          capacity,
+        )
+      None =>
+        state_store_list_state_ffi(
+          path, path_len, prefix_bytes, prefix_len, output, capacity,
+        )
+    }
+  }
+  let mut result = list(output, capacity)
   while result == state_store_list_overflow() &&
         capacity < maximum_state_listing_bytes() {
     capacity = capacity * 4
@@ -552,9 +577,7 @@ pub fn list_state_records(
       capacity = maximum_state_listing_bytes()
     }
     output = Bytes::new(capacity)
-    result = state_store_list_state_ffi(
-      path, path_len, prefix_bytes, prefix_len, output, capacity,
-    )
+    result = list(output, capacity)
   }
   if result < 0 {
     return Err(state_store_failure("record listing"))
@@ -568,20 +591,43 @@ pub fn list_state_records(
       continue
     }
     let fields = line.split("|").to_array()
-    if fields.length() != 4 {
+    if fields.length() != 5 {
       return Err(state_store_failure("record listing decode"))
     }
     let key = @storage.StateRecordKey(fields[0].to_owned())
     if !@storage.state_record_key_text(key).has_prefix(prefix) {
       return Err(state_store_failure("record listing prefix"))
     }
-    let encoded = fields[1] + "|" + fields[2] + "|" + fields[3]
+    let encoded = fields[1] +
+      "|" +
+      fields[2] +
+      "|" +
+      fields[3] +
+      "|" +
+      fields[4]
     match parse_state_record_capture(key, encoded.to_owned()) {
       Ok(record) => records.push(record)
       Err(error) => return Err(error)
     }
   }
   Ok(records)
+}
+
+///|
+pub fn list_state_records(
+  store : @storage.SqliteStateStore,
+  prefix : String,
+) -> Result[Array[@storage.StateRecord], @types.ChoirError] {
+  list_state_records_with_schedule_class(store, prefix, None)
+}
+
+///|
+pub fn list_state_records_by_schedule_class(
+  store : @storage.SqliteStateStore,
+  prefix : String,
+  schedule_class : @storage.StateRecordScheduleClass,
+) -> Result[Array[@storage.StateRecord], @types.ChoirError] {
+  list_state_records_with_schedule_class(store, prefix, Some(schedule_class))
 }
 
 ///|
@@ -630,6 +676,7 @@ pub fn sqlite_state_store_adapters() -> @storage.StateStoreAdapters {
     commit_guarded: commit_guarded_state_transaction,
     read_state: read_state_record,
     list_state: list_state_records,
+    list_state_by_schedule_class: list_state_records_by_schedule_class,
     read_outbox: read_completion_outbox,
   }
 }

@@ -272,15 +272,6 @@ extern "C" fn state_store_write_ddl_version_ffi(
 
 ///|
 #borrow(path)
-extern "C" fn state_store_migrate_ddl_ffi(
-  path : Bytes,
-  path_len : Int,
-  from_version : Int,
-  to_version : Int,
-) -> Int = "choir_state_store_migrate_ddl"
-
-///|
-#borrow(path)
 extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
 
 ///|
@@ -298,6 +289,7 @@ extern "C" fn state_store_commit_ffi(
   expected_version : Int,
   next_version : Int,
   fencing_epoch : Int64,
+  schedule_class : Int,
   value_digest : Bytes,
   value_digest_len : Int,
   semantic_key : Bytes,
@@ -312,6 +304,7 @@ extern "C" fn state_store_commit_ffi(
   precondition_key_len : Int,
   precondition_version : Int,
   precondition_fencing_epoch : Int64,
+  precondition_schedule_class : Int,
   precondition_digest : Bytes,
   precondition_digest_len : Int,
 ) -> Int = "choir_state_store_commit"
@@ -346,6 +339,25 @@ extern "C" fn state_store_list_state_ffi(
   output : Bytes,
   output_size : Int,
 ) -> Int = "choir_state_store_list_state"
+
+///|
+#borrow(path, prefix, output)
+extern "C" fn state_store_list_state_by_schedule_class_ffi(
+  path : Bytes,
+  path_len : Int,
+  prefix : Bytes,
+  prefix_len : Int,
+  schedule_class : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_list_state_by_schedule_class"
+
+///|
+#borrow(path)
+extern "C" fn state_store_schedule_query_uses_index_ffi(
+  path : Bytes,
+  path_len : Int,
+) -> Int = "choir_state_store_schedule_query_uses_index"
 
 ///|
 #borrow(path, semantic_key, output)

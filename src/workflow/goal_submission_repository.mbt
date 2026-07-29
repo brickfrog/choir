@@ -73,6 +73,7 @@ pub fn persist_goal_selection_decision(
         expected_version: None,
         next_version: 1,
         fencing_epoch: @control.FencingEpoch(1L),
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: decision_digest,
       },
       outbox: {

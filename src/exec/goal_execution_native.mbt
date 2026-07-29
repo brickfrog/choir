@@ -7078,16 +7078,12 @@ pub async fn prepare_native_goal_control_state(
     // records and let what they decode to decide.
     @storage.ControlStateDecision::ControlStateProveRecordsDecodable(
       recorded,
-      _,
-      ddl_migration_from
+      _
     ) =>
       match probe_native_durable_record_decoding(control_root) {
         Ok(undecodable) =>
           @storage.decide_control_state_from_records(
-            recorded,
-            schema,
-            undecodable,
-            ddl_migration_from~,
+            recorded, schema, undecodable,
           )
         Err(error) => return Err(error)
       }
@@ -7106,17 +7102,6 @@ pub async fn prepare_native_goal_control_state(
         Ok(_) => Ok(NativeGoalControlStateCurrent)
         Err(error) => Err(error)
       }
-    @storage.ControlStatePlan::ControlStateMigrateDdl(from, target) => {
-      let store : @storage.SqliteStateStore = { path: workflow_store_path }
-      match migrate_state_store_ddl(store, from, target.ddl_version) {
-        Ok(_) => ()
-        Err(error) => return Err(error)
-      }
-      match record_native_goal_control_store_schema(store, target) {
-        Ok(_) => Ok(NativeGoalControlStateCurrent)
-        Err(error) => Err(error)
-      }
-    }
     @storage.ControlStatePlan::ControlStateInitialize =>
       match native_goal_control_state_create(control_root, schema) {
         Ok(_) => Ok(NativeGoalControlStateInitialized)

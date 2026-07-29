@@ -90,6 +90,7 @@ pub fn persist_goal_publication_record(
           expected_version: request.expected_store_version,
           next_version: expected_durable_version,
           fencing_epoch: request.record.fencing_epoch,
+          schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
           value_digest: record_digest,
         },
         outbox: {
