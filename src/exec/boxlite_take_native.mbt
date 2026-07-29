@@ -44,6 +44,13 @@ pub(all) struct NativeBoxLiteTakeSandbox {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum NativeBoxLiteNamedBoxLookup {
+  NativeBoxLiteNamedBoxAbsent
+  NativeBoxLiteNamedBoxExact(String, String)
+  NativeBoxLiteNamedBoxUncertain
+} derive(Debug, Eq)
+
+///|
 pub(all) struct NativeSandboxProcessResult {
   exit_code : Int
   output : String
@@ -399,6 +406,97 @@ async fn capture_native_boxlite_local_cli(
     ),
     timeout_ms,
   )
+}
+
+///|
+fn parse_native_boxlite_named_box_lookup(
+  output : String,
+  name : String,
+) -> NativeBoxLiteNamedBoxLookup {
+  let json = @json.parse(output) catch {
+    _ => return NativeBoxLiteNamedBoxUncertain
+  }
+  guard json is Array(items) else { return NativeBoxLiteNamedBoxUncertain }
+  let matches : Array[(String, String)] = []
+  for item in items {
+    guard item is Object(fields) else { return NativeBoxLiteNamedBoxUncertain }
+    match (fields.get("ID"), fields.get("Names"), fields.get("Status")) {
+      (Some(String(id)), Some(String(observed_name)), Some(String(status))) =>
+        if observed_name == name {
+          matches.push((id, status))
+        }
+      _ => return NativeBoxLiteNamedBoxUncertain
+    }
+  }
+  match matches {
+    [] => NativeBoxLiteNamedBoxAbsent
+    [(id, status)] => NativeBoxLiteNamedBoxExact(id, status)
+    _ => NativeBoxLiteNamedBoxUncertain
+  }
+}
+
+///|
+test "BoxLite named-box lookup requires one exact typed match" {
+  assert_eq(
+    parse_native_boxlite_named_box_lookup("[]", "choir-box"),
+    NativeBoxLiteNamedBoxAbsent,
+  )
+  assert_eq(
+    parse_native_boxlite_named_box_lookup(
+      (
+        #|[{"ID":"box-1","Names":"choir-box","Status":"Stopped"}]
+      ),
+      "choir-box",
+    ),
+    NativeBoxLiteNamedBoxExact("box-1", "Stopped"),
+  )
+  assert_eq(
+    parse_native_boxlite_named_box_lookup(
+      (
+        #|[{"ID":"box-1","Names":"other","Status":"Stopped"},{"ID":"box-2","Names":"choir-box","Status":"Running"}]
+      ),
+      "choir-box",
+    ),
+    NativeBoxLiteNamedBoxExact("box-2", "Running"),
+  )
+  assert_eq(
+    parse_native_boxlite_named_box_lookup(
+      (
+        #|[{"ID":"box-1","Names":"choir-box","Status":"Stopped"},{"ID":"box-2","Names":"choir-box","Status":"Stopped"}]
+      ),
+      "choir-box",
+    ),
+    NativeBoxLiteNamedBoxUncertain,
+  )
+  assert_eq(
+    parse_native_boxlite_named_box_lookup("{}", "choir-box"),
+    NativeBoxLiteNamedBoxUncertain,
+  )
+}
+
+///|
+pub async fn lookup_native_boxlite_named_box(
+  server : NativeBoxLiteServerHandle,
+  name : String,
+) -> Result[NativeBoxLiteNamedBoxLookup, @types.ChoirError] {
+  if !valid_native_boxlite_token(name, 120) {
+    return Err(
+      @types.ChoirError::validation_error("BoxLite box name is invalid"),
+    )
+  }
+  let listed = match
+    capture_native_boxlite_cli(
+      server,
+      ["list", "--all", "--format", "json"],
+      60000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if listed.exit_code != 0 {
+    return Ok(NativeBoxLiteNamedBoxUncertain)
+  }
+  Ok(parse_native_boxlite_named_box_lookup(listed.output, name))
 }
 
 ///|
@@ -1181,22 +1279,36 @@ pub async fn prepare_native_boxlite_environment(
       @types.ChoirError::validation_error("Moon toolchain root is invalid"),
     )
   }
-  let base_box_id = match create_and_start_native_boxlite(server, base_name) {
+  let existing = match lookup_native_boxlite_named_box(server, base_name) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let stopped_before_transfer = match
-    capture_native_boxlite_http(
-      server,
-      "POST",
-      "/v1/boxes/" + base_box_id + "/stop",
-      None,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error)
+  let (base_box_id, reused) = match existing {
+    NativeBoxLiteNamedBoxAbsent =>
+      match create_and_start_native_boxlite(server, base_name) {
+        Ok(value) => (value, false)
+        Err(error) => return Err(error)
+      }
+    NativeBoxLiteNamedBoxExact(id, "Stopped") => (id, true)
+    NativeBoxLiteNamedBoxExact(_, _) | NativeBoxLiteNamedBoxUncertain =>
+      return Err(
+        native_boxlite_take_error("prepared base identity is uncertain"),
+      )
   }
-  if stopped_before_transfer.exit_code != 0 {
-    return Err(native_boxlite_take_error("prepared base stop failed"))
+  if !reused {
+    let stopped_before_transfer = match
+      capture_native_boxlite_http(
+        server,
+        "POST",
+        "/v1/boxes/" + base_box_id + "/stop",
+        None,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if stopped_before_transfer.exit_code != 0 {
+      return Err(native_boxlite_take_error("prepared base stop failed"))
+    }
   }
   let toolchain = server.config.root + "/staging/moon-toolchain"
   let toolchain_marker = toolchain + "/.choir-toolchain-root"
@@ -1248,10 +1360,16 @@ pub async fn prepare_native_boxlite_environment(
   }
   stop_native_boxlite_server(server)
   @async.sleep(400)
-  match
-    copy_native_boxlite_toolchain_offline(server.config, base_box_id, toolchain) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
+  if !reused {
+    match
+      copy_native_boxlite_toolchain_offline(
+        server.config,
+        base_box_id,
+        toolchain,
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
   }
   let verified = match
     capture_native_boxlite_local_cli(
