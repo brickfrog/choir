@@ -173,6 +173,7 @@ pub(all) struct GoalStatusReport {
   readiness_observation_sequence : Int64?
   /// The WorkOrder budget this Goal runs under, when it has one, so a reader
   /// sees the target and deadline the counts are measured against.
+  work_order_id : WorkOrderId?
   work_order : WorkOrderBudget?
   /// Why this Goal was canceled, carried as the durable typed cause rather
   /// than prose. Every variant but a user request names the evidence digest
@@ -853,6 +854,7 @@ pub fn goal_status_report(
     readiness_decision: finalization_status.1,
     readiness_observed_draft: finalization_status.2,
     readiness_observation_sequence: finalization_status.3,
+    work_order_id: record.work_order_id,
     work_order,
     cancellation_cause: record.cancellation_request.map(fn(request) {
       request.cause
