@@ -313,6 +313,28 @@ test "Codex Conductor accepts a restricted resumable turn" {
 }
 
 ///|
+test "Codex Conductor reports a bounded redacted process failure" {
+  let error = @harness.evaluate_codex_conductor_capture(
+    {
+      exit_code: 2,
+      output: "error: unknown configuration key secret=sk-private /home/person/repo\n" +
+      "see https://example.invalid/session/opaque",
+    },
+    None,
+    "choir",
+    ["goal_status"],
+  ).unwrap_err()
+  let detail = error.message()
+  assert_true(detail.contains("Conductor process exited 2"))
+  assert_true(detail.contains("output bytes"))
+  assert_true(detail.contains("unknown configuration key"))
+  assert_false(detail.contains("sk-private"))
+  assert_false(detail.contains("/home/person"))
+  assert_false(detail.contains("https://"))
+  assert_true(detail.length() < 300)
+}
+
+///|
 test "Codex Conductor rejects native host-tool events and thread drift" {
   let base =
     #|{"type":"thread.started","thread_id":"019f80a5-df42-7411-9065-e0866506338c"}

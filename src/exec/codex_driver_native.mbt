@@ -327,7 +327,7 @@ fn native_codex_conductor_args(
   push_codex_config(
     args,
     server_key + ".command",
-    config.mcp_executable.to_json().stringify(),
+    native_provider_bound_tool_path().to_json().stringify(),
   )
   push_codex_config(
     args,
@@ -451,7 +451,7 @@ fn native_codex_conductor_environment(
   environment["CHOIR_CONDUCTOR_TOKEN"] = config.environment.conductor_token
   environment["CHOIR_STATUSLINE_CACHE_KEY"] = config.environment.statusline_cache_key
   environment["CHOIR_WORKSPACE"] = config.environment.workspace
-  environment["CHOIR_LISTEN_UDS"] = config.environment.listen_uds
+  environment["CHOIR_LISTEN_UDS"] = native_provider_bound_socket_path()
   environment
 }
 
@@ -510,6 +510,10 @@ test "native Codex Conductor environment isolates writable provider state" {
   assert_eq(environment["HOME"], "/home/user")
   assert_eq(environment["CODEX_HOME"], "/run/choir/conductor/codex-home")
   assert_eq(environment["CHOIR_WORKSPACE"], "/repo")
+  assert_eq(
+    environment["CHOIR_LISTEN_UDS"],
+    native_provider_bound_socket_path(),
+  )
 }
 
 ///|
@@ -2346,6 +2350,8 @@ pub async fn run_native_codex_conductor_turn(
     None,
     codex_native,
     args,
+    provider_tool=Some(config.mcp_executable),
+    provider_socket=Some(config.environment.listen_uds),
   )
   abort_if_hermetic_test_exec(
     command_to_shell_string({
@@ -2734,6 +2740,11 @@ test "native Codex Conductor argv is resumable and restricted" {
   assert_true(initial.contains("shell_tool"))
   assert_true(initial.contains("unified_exec"))
   assert_true(initial.contains("mcp_servers.choir.required=true"))
+  assert_true(
+    initial.contains(
+      "mcp_servers.choir.command=\"" + native_provider_bound_tool_path() + "\"",
+    ),
+  )
   assert_true(
     initial.contains("mcp_servers.choir.enabled_tools=[\"goal_status\"]"),
   )
