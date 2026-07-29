@@ -48,6 +48,16 @@ fn native_provider_owner_socket_path() -> String {
 }
 
 ///|
+fn native_provider_bound_tool_path() -> String {
+  "/choir-provider-tool"
+}
+
+///|
+fn native_provider_bound_socket_path() -> String {
+  "/choir-provider.sock"
+}
+
+///|
 /// Host directories credential-bearing enough that even the provider's own
 /// HOME must not expose them to a Take-influenced provider turn.
 let native_provider_masked_home_entries : Array[String] = [
@@ -70,6 +80,8 @@ fn native_provider_host_boundary_args(
   executable_args : Array[String],
   provider_home? : String? = @sys.getenv("HOME"),
   mask_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  provider_tool? : String? = None,
+  provider_socket? : String? = None,
 ) -> Array[String] {
   let args : Array[String] = ["--die-with-parent"]
   for path in ["/usr", "/etc"] {
@@ -101,6 +113,22 @@ fn native_provider_host_boundary_args(
       }
     }
     _ => ()
+  }
+  match provider_tool {
+    Some(source) => {
+      args.push("--ro-bind")
+      args.push(source)
+      args.push(native_provider_bound_tool_path())
+    }
+    None => ()
+  }
+  match provider_socket {
+    Some(source) => {
+      args.push("--ro-bind")
+      args.push(source)
+      args.push(native_provider_bound_socket_path())
+    }
+    None => ()
   }
   for
     tail in [
@@ -164,6 +192,21 @@ test "provider boundary allowlists reads and masks credential directories" {
   assert_true(homeless.contains("--tmpfs"))
   assert_true(homeless.contains("/usr"))
   assert_false(homeless.contains("/home/provider"))
+  let conductor = native_provider_host_boundary_args(
+    "/tmp/choir-boundary-test",
+    "/tmp/choir-boundary-test",
+    None,
+    "/usr/bin/true",
+    [],
+    provider_home=None,
+    mask_entry_exists=fn(_) { false },
+    provider_tool=Some("/opt/choir/bin/choir"),
+    provider_socket=Some("/repo/.choir/run/server.sock"),
+  )
+  assert_true(conductor.contains("/opt/choir/bin/choir"))
+  assert_true(conductor.contains(native_provider_bound_tool_path()))
+  assert_true(conductor.contains("/repo/.choir/run/server.sock"))
+  assert_true(conductor.contains(native_provider_bound_socket_path()))
 }
 
 ///|

@@ -353,7 +353,7 @@ async fn start_codex_conductor(
       "--raw-stdio",
       "--inherit-parent-environment",
       "--stderr-append-log",
-      config.project_dir + "/.choir/logs/codex-mcp.stderr.log",
+      config.project_dir + "/.choir/run/codex-conductor/codex-mcp.stderr.log",
     ],
     mcp_server_name: "choir",
     allowed_tools: @mcp.conductor_tool_names(),

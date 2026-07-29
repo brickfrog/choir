@@ -172,10 +172,25 @@ pub fn evaluate_codex_conductor_capture(
   expected_mcp_server : String,
   allowed_tools : Array[String],
 ) -> Result[CodexConductorTurn, @types.ChoirError] {
-  if capture.exit_code != 0 ||
-    expected_mcp_server == "" ||
-    allowed_tools.length() == 0 {
+  if expected_mcp_server == "" || allowed_tools.length() == 0 {
     return Err(codex_driver_error("Conductor process capture is invalid"))
+  }
+  if capture.exit_code != 0 {
+    let excerpt = @control.redact_provider_excerpt(capture.output)
+    let detail = "Conductor process exited " +
+      capture.exit_code.to_string() +
+      " with " +
+      @utf8.encode(capture.output).length().to_string() +
+      " output bytes"
+    return Err(
+      codex_driver_error(
+        if excerpt == "" {
+          detail
+        } else {
+          detail + ": " + excerpt
+        },
+      ),
+    )
   }
   for index, tool in allowed_tools {
     if !valid_codex_tool_name(tool) || allowed_tools[:index].contains(tool) {
