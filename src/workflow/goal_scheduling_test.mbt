@@ -315,6 +315,47 @@ test "scheduler admits independent Parts in stable order" {
 }
 
 ///|
+test "scheduler admits a Part whose delivered dependency is external" {
+  let external = @control.PartId("closed-external")
+  let part = scheduling_record(
+    "selected",
+    [external],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  let schedule = match @workflow.schedule_goal_parts([part], 1) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
+  assert_eq(schedule.admitted_part_ids, [part.part.id])
+  assert_eq(
+    schedule.decisions[0].admission,
+    @workflow.GoalPartAdmission::GoalPartAdmitted,
+  )
+  let audited = {
+    ..part,
+    part: {
+      ..part.part,
+      lifecycle: @control.PartLifecycle::PartAudited(
+        @control.CandidateId("candidate-selected"),
+        schedule_digest,
+        @control.ReceiptId("audit-selected"),
+      ),
+    },
+  }
+  let promotion = match
+    @workflow.select_next_deterministic_promotion(
+      [audited],
+      @control.GitOid("goal-head"),
+    ) {
+    Ok(Some(value)) => value
+    Ok(None) => fail("externally unblocked Part was not promotable")
+    Err(error) => fail(error.message())
+  }
+  assert_eq(promotion.part_id, part.part.id)
+}
+
+///|
 test "scheduler serializes overlapping and unknown mutation declarations" {
   let part_a = scheduling_record(
     "a",
@@ -425,6 +466,17 @@ test "scheduler rejects cyclic dependencies" {
     @control.MutationDeclaration::CompleteMutationDeclaration([]),
   )
   assert_true(@workflow.schedule_goal_parts([part_a, part_b], 2) is Err(_))
+}
+
+///|
+test "scheduler rejects a self dependency even without another record" {
+  let part = scheduling_record(
+    "self",
+    [@control.PartId("self")],
+    @control.PartLifecycle::PartPending,
+    @control.MutationDeclaration::CompleteMutationDeclaration([]),
+  )
+  assert_true(@workflow.schedule_goal_parts([part], 1) is Err(_))
 }
 
 ///|

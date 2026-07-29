@@ -54,6 +54,7 @@ fn stable_topological_records(
     let mut ready_index = -1
     for index, record in remaining {
       if record.part.dependency_ids.all(fn(dependency_id) {
+          find_scheduling_record(records, dependency_id) is None ||
           ordered.any(fn(completed) { completed.part.id == dependency_id })
         }) {
         ready_index = index
@@ -132,11 +133,10 @@ fn validate_scheduling_records(
       }
     }
     for dependency_id in record.part.dependency_ids {
-      if dependency_id == record.part.id ||
-        find_scheduling_record(records, dependency_id) is None {
+      if dependency_id == record.part.id {
         return Err(
           @types.ChoirError::validation_error(
-            "Part dependency is self-referential or absent",
+            "Part dependency is self-referential",
           ),
         )
       }
@@ -174,7 +174,10 @@ fn dependency_partition(
         }
       ) => unavailable.push(dependency_id)
       Some(_) => waiting.push(dependency_id)
-      None => unavailable.push(dependency_id)
+      // Goal submission has already proved the exact open dependency closure.
+      // A dependency absent from this Goal's records is therefore an external,
+      // delivered dependency rather than a Goal-local scheduling edge.
+      None => ()
     }
   }
   (waiting, unavailable)
