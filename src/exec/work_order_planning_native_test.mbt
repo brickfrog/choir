@@ -193,23 +193,31 @@ async test "delivered round admits one durable successor and replays it" {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }
-  let first = admit_observed_native_work_order_successor(
-    root,
-    owner.id,
-    snapshot,
-    capture,
-    successor_epoch,
-  ).unwrap()
+  let first = match
+    admit_observed_native_work_order_successor(
+      root,
+      owner.id,
+      snapshot,
+      capture,
+      successor_epoch,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
   assert_true(first.accepted)
   assert_false(first.replayed)
   assert_eq(first.work_order_id, Some(owner.id))
-  let replay = admit_observed_native_work_order_successor(
-    root,
-    owner.id,
-    snapshot,
-    capture,
-    successor_epoch,
-  ).unwrap()
+  let replay = match
+    admit_observed_native_work_order_successor(
+      root,
+      owner.id,
+      snapshot,
+      capture,
+      successor_epoch,
+    ) {
+    Ok(value) => value
+    Err(error) => fail(error.message())
+  }
   assert_true(replay.replayed)
   assert_eq(replay.selection_decision_digest, first.selection_decision_digest)
   let stored = @workflow.load_work_order_record(
