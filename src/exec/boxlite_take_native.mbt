@@ -1104,6 +1104,28 @@ async fn copy_native_toolchain_directory(
 }
 
 ///|
+async fn copy_native_toolchain_nfc_library(
+  server : NativeBoxLiteServerHandle,
+  source : String,
+  destination : String,
+) -> Result[Unit, @types.ChoirError] {
+  let capture = @process.collect_output_merged(
+    "/usr/bin/cp",
+    ["-L", source, destination],
+    extra_env=native_boxlite_environment(server, false),
+    inherit_env=false,
+    cwd=server.config.root,
+  ) catch {
+    _ => return Err(native_boxlite_take_error("NFC library staging failed"))
+  }
+  if capture.0 == 0 {
+    Ok(())
+  } else {
+    Err(native_boxlite_take_error("NFC library staging failed"))
+  }
+}
+
+///|
 pub async fn prepare_native_boxlite_environment(
   server : NativeBoxLiteServerHandle,
   moon_home : String,
@@ -1140,6 +1162,7 @@ pub async fn prepare_native_boxlite_environment(
       @sys.realpath_native(toolchain) != Some(toolchain) ||
       !@sys.path_exists(toolchain + "/bin/moon") ||
       !@sys.path_exists(toolchain + "/lib") ||
+      !@sys.path_exists(toolchain + "/lib/libutf8proc.so.3") ||
       !@sys.path_exists(toolchain + "/include") ||
       !@sys.path_exists(toolchain + "/registry/cache") ||
       !@sys.path_exists(toolchain + "/registry/index") {
@@ -1161,6 +1184,22 @@ pub async fn prepare_native_boxlite_environment(
         Err(error) => return Err(error)
       }
     }
+    let nfc_library = match native_path_nfc_library_path() {
+      Some(value) => value
+      None =>
+        return Err(
+          native_boxlite_take_error("NFC library source is unavailable"),
+        )
+    }
+    match
+      copy_native_toolchain_nfc_library(
+        server,
+        nfc_library,
+        toolchain + "/lib/libutf8proc.so.3",
+      ) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
   }
   stop_native_boxlite_server(server)
   @async.sleep(400)
@@ -1178,7 +1217,7 @@ pub async fn prepare_native_boxlite_environment(
         "--",
         "/bin/sh",
         "-c",
-        "test \"$(cat /opt/moon/.choir-toolchain-root)\" = \"$1\" && /opt/moon/bin/moon version",
+        "test \"$(cat /opt/moon/.choir-toolchain-root)\" = \"$1\" && test -f /opt/moon/lib/libutf8proc.so.3 && /opt/moon/bin/moon version",
         "choir-toolchain",
         @sandbox.boxlite_take_tool_manifest_digest().0,
       ],
