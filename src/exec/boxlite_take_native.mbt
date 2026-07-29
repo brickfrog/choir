@@ -642,34 +642,79 @@ pub async fn stop_native_boxlite_server(
 ///
 /// Goal terminal cleanup must use this operation: multiple live Goals share
 /// one home, so `boxlite rm --all` is repository-wide rather than Goal-wide.
+async fn make_native_boxlite_runtime_root_writable(root : String) -> Bool {
+  let writable = @process.collect_output_merged(
+    "/usr/bin/chmod",
+    ["-R", "u+rwX", "--", root],
+    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
+    inherit_env=false,
+    cwd="/tmp",
+  ) catch {
+    _ => return false
+  }
+  writable.0 == 0
+}
+
+///|
 pub async fn cleanup_native_boxlite_runtime_root(
   config : NativeBoxLiteServerConfig,
+  path_exists? : (String) -> Bool = @sys.path_exists,
+  make_writable? : async (String) -> Bool = make_native_boxlite_runtime_root_writable,
+  remove? : (String) -> Bool = @sys.rm_rf,
 ) -> Result[Unit, @types.ChoirError] {
   match validate_native_boxlite_server_config(config) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.path_exists(config.root) {
+  if !path_exists(config.root) {
     return Ok(())
   }
-  let writable = @process.collect_output_merged(
-    "/usr/bin/chmod",
-    ["-R", "u+rwX", "--", config.root],
-    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
-    inherit_env=false,
-    cwd="/tmp",
-  ) catch {
-    _ => return Err(native_boxlite_take_error("runtime root cleanup failed"))
-  }
-  if writable.0 != 0 {
+  if !make_writable(config.root) {
     return Err(native_boxlite_take_error("runtime root cleanup failed"))
   }
-  ignore(@sys.rm_rf(config.root))
-  if @sys.path_exists(config.root) {
+  ignore(remove(config.root))
+  if path_exists(config.root) {
     Err(native_boxlite_take_error("runtime root cleanup failed"))
   } else {
     Ok(())
   }
+}
+
+///|
+async test "runtime root cleanup authorizes only the exact configured root" {
+  let root = "/tmp/choir-take-goal-scoped-a"
+  let calls : Array[String] = []
+  let existence_checks = @ref.new(0)
+  cleanup_native_boxlite_runtime_root(
+    {
+      binary: "/unused/boxlite",
+      runtime_dir: "/unused/runtime",
+      root,
+      home: "/tmp/choir-boxlite-goal-scoped-cleanup",
+      port: 22000,
+      api_key: "goal-a",
+    },
+    path_exists=fn(path) {
+      calls.push("exists:" + path)
+      existence_checks.val = existence_checks.val + 1
+      existence_checks.val == 1
+    },
+    make_writable=async fn(path) {
+      @async.sleep(0)
+      calls.push("writable:" + path)
+      true
+    },
+    remove=fn(path) {
+      calls.push("remove:" + path)
+      true
+    },
+  ).unwrap()
+  assert_eq(calls, [
+    "exists:" + root,
+    "writable:" + root,
+    "remove:" + root,
+    "exists:" + root,
+  ])
 }
 
 ///|
