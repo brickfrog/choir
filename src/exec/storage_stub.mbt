@@ -6,15 +6,6 @@ pub fn initialize_state_store(
 }
 
 ///|
-pub fn migrate_state_store_ddl(
-  _store : @storage.SqliteStateStore,
-  _from_version : Int,
-  _to_version : Int,
-) -> Result[Unit, @types.ChoirError] {
-  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
-}
-
-///|
 pub fn commit_state_transaction(
   _store : @storage.SqliteStateStore,
   _request : @storage.StateTransactionRequest,
@@ -47,6 +38,15 @@ pub fn list_state_records(
 }
 
 ///|
+pub fn list_state_records_by_schedule_class(
+  _store : @storage.SqliteStateStore,
+  _prefix : String,
+  _schedule_class : @storage.StateRecordScheduleClass,
+) -> Result[Array[@storage.StateRecord], @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
+}
+
+///|
 pub fn read_completion_outbox(
   _store : @storage.SqliteStateStore,
   _key : @storage.SemanticEventKey,
@@ -70,6 +70,7 @@ pub fn sqlite_state_store_adapters() -> @storage.StateStoreAdapters {
     commit_guarded: commit_guarded_state_transaction,
     read_state: read_state_record,
     list_state: list_state_records,
+    list_state_by_schedule_class: list_state_records_by_schedule_class,
     read_outbox: read_completion_outbox,
   }
 }

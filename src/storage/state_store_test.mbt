@@ -9,6 +9,23 @@ let digest_b : @control.Digest = @control.Digest(
 )
 
 ///|
+test "state record schedule classes have a closed storage encoding" {
+  let not_schedulable = @storage.StateRecordScheduleClass::StateRecordNotSchedulable
+  let schedulable = @storage.StateRecordScheduleClass::StateRecordSchedulable
+  assert_eq(@storage.state_record_schedule_class_code(not_schedulable), 0)
+  assert_eq(@storage.state_record_schedule_class_code(schedulable), 1)
+  match @storage.state_record_schedule_class_from_code(0) {
+    Ok(value) => assert_eq(value, not_schedulable)
+    Err(_) => fail("zero schedule class did not decode")
+  }
+  match @storage.state_record_schedule_class_from_code(1) {
+    Ok(value) => assert_eq(value, schedulable)
+    Err(_) => fail("one schedule class did not decode")
+  }
+  assert_true(@storage.state_record_schedule_class_from_code(2) is Err(_))
+}
+
+///|
 test "state transaction validator enforces version fence keys and digests" {
   let valid : @storage.StateTransactionRequest = {
     state: {
@@ -16,6 +33,7 @@ test "state transaction validator enforces version fence keys and digests" {
       expected_version: None,
       next_version: 1,
       fencing_epoch: @control.FencingEpoch(1L),
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: digest_a,
     },
     outbox: {

@@ -195,6 +195,7 @@ fn persist_native_process_execution(
           expected_version,
           next_version,
           fencing_epoch,
+          schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
           value_digest: digest,
         },
         outbox: {

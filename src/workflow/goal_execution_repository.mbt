@@ -51,6 +51,23 @@ fn goal_execution_state_key(
 }
 
 ///|
+pub fn goal_execution_schedule_class(
+  state : GoalExecutionState,
+) -> @storage.StateRecordScheduleClass {
+  match state {
+    GoalExecutionQueued
+    | GoalExecutionRunning
+    | GoalExecutionAssuring
+    | GoalExecutionAssured
+    | GoalExecutionBlocked
+    | GoalExecutionCanceling =>
+      @storage.StateRecordScheduleClass::StateRecordSchedulable
+    GoalExecutionPaused | GoalExecutionSucceeded | GoalExecutionCanceled =>
+      @storage.StateRecordScheduleClass::StateRecordNotSchedulable
+  }
+}
+
+///|
 pub fn goal_execution_state_precondition(
   record : GoalExecutionRecord,
 ) -> @storage.StateRecordPrecondition {
@@ -59,6 +76,7 @@ pub fn goal_execution_state_precondition(
       key: goal_execution_state_key(record.goal.id),
       version: record.durable_version,
       fencing_epoch: record.fencing_epoch,
+      schedule_class: goal_execution_schedule_class(record.state),
       value_digest: goal_execution_record_digest(record),
     },
   }
@@ -117,6 +135,7 @@ pub fn persist_goal_execution_record(
         expected_version: request.expected_store_version,
         next_version: expected_durable_version,
         fencing_epoch: request.record.fencing_epoch,
+        schedule_class: goal_execution_schedule_class(request.record.state),
         value_digest: record_digest,
       },
       outbox: {
@@ -162,6 +181,13 @@ fn load_goal_execution_from_state(
     state_record.fencing_epoch != record.fencing_epoch {
     return Err(goal_execution_error("state identity is inconsistent"))
   }
+  if state_record.schedule_class != goal_execution_schedule_class(record.state) {
+    return Err(
+      goal_execution_error(
+        "schedulability projection disagrees with Goal state",
+      ),
+    )
+  }
   Ok({ state_record, record })
 }
 
@@ -193,6 +219,30 @@ pub fn list_goal_execution_records(
 ) -> Result[Array[StoredGoalExecutionRecord], @types.ChoirError] {
   let states = match
     (adapters.state.list_state)(repository.state_store, "goal-run:") {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let records : Array[StoredGoalExecutionRecord] = []
+  for state in states {
+    match load_goal_execution_from_state(repository, adapters, state) {
+      Ok(value) => records.push(value)
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(records)
+}
+
+///|
+pub fn list_schedulable_goal_execution_records(
+  repository : PartWorkflowRepository,
+  adapters : PartWorkflowRepositoryAdapters,
+) -> Result[Array[StoredGoalExecutionRecord], @types.ChoirError] {
+  let states = match
+    (adapters.state.list_state_by_schedule_class)(
+      repository.state_store,
+      "goal-run:",
+      @storage.StateRecordScheduleClass::StateRecordSchedulable,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

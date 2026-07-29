@@ -116,10 +116,6 @@ pub(all) enum ControlStatePlan {
   /// schema that will be, so an adoption is distinguishable from a no-op in a
   /// log.
   ControlStateMigrate(String?, ControlStoreSchema)
-  /// The store uses a specifically supported older table shape. The host may
-  /// apply only the exact migration named by these versions, then record the
-  /// target schema. Every other DDL mismatch remains destructive.
-  ControlStateMigrateDdl(Int, ControlStoreSchema)
   ControlStateAuthorizedReset(ControlStateResetReason)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -131,19 +127,8 @@ pub(all) enum ControlStateDecision {
   /// matters cannot be read off the two strings, so the caller reads the stored
   /// records and returns through `decide_control_state_from_records`. Carries
   /// the recorded and expected generations so the answer can name both.
-  ControlStateProveRecordsDecodable(String, String, Int?)
+  ControlStateProveRecordsDecodable(String, String)
 } derive(Debug, Eq, ToJson, FromJson)
-
-///|
-/// Declared compatibility policy for table shapes. Version 2 adds only the
-/// nullable outbox owner column; existing idempotency rows remain deliberately
-/// unowned and therefore unprunable.
-fn control_store_ddl_migration_supported(
-  recorded : Int,
-  expected : Int,
-) -> Bool {
-  recorded == 1 && expected == 2
-}
 
 ///|
 /// Decide what to do with the control store, as far as observing it allows.
@@ -178,23 +163,6 @@ pub fn decide_control_state(
   let ddl_stamped = observation.recorded_ddl_version !=
     control_store_unstamped_ddl_version
   if ddl_stamped && observation.recorded_ddl_version != expected.ddl_version {
-    if control_store_ddl_migration_supported(
-        observation.recorded_ddl_version,
-        expected.ddl_version,
-      ) {
-      return match observation.recorded_generation {
-        Some(recorded) if recorded != expected.generation =>
-          ControlStateProveRecordsDecodable(
-            recorded,
-            expected.generation,
-            Some(observation.recorded_ddl_version),
-          )
-        _ =>
-          ControlStatePlanned(
-            ControlStateMigrateDdl(observation.recorded_ddl_version, expected),
-          )
-      }
-    }
     return ControlStatePlanned(
       ControlStateAuthorizedReset(
         ControlStoreDdlSuperseded(
@@ -214,7 +182,7 @@ pub fn decide_control_state(
     Some(recorded) if recorded == expected.generation =>
       ControlStatePlanned(ControlStateMigrate(Some(recorded), expected))
     Some(recorded) =>
-      ControlStateProveRecordsDecodable(recorded, expected.generation, None)
+      ControlStateProveRecordsDecodable(recorded, expected.generation)
     // A readable store that never recorded its generation is this schema by
     // construction: an incompatible one would not have decoded. Adopting it is
     // what stops a lost marker from discarding healthy state.
@@ -243,17 +211,12 @@ pub fn decide_control_state_from_records(
   recorded_generation : String,
   expected : ControlStoreSchema,
   undecodable : StateRecordKey?,
-  ddl_migration_from? : Int? = None,
 ) -> ControlStatePlan {
   match undecodable {
     Some(key) =>
       ControlStateAuthorizedReset(
         ControlRecordUndecodable(key, recorded_generation, expected.generation),
       )
-    None =>
-      match ddl_migration_from {
-        Some(version) => ControlStateMigrateDdl(version, expected)
-        None => ControlStateMigrate(Some(recorded_generation), expected)
-      }
+    None => ControlStateMigrate(Some(recorded_generation), expected)
   }
 }

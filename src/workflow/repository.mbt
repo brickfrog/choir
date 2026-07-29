@@ -139,6 +139,7 @@ fn persist_part_snapshot_internal(
       expected_version: request.expected_store_version,
       next_version: store_version,
       fencing_epoch: request.snapshot.fencing_epoch,
+      schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
       value_digest: snapshot_digest,
     },
     outbox: {
@@ -484,6 +485,7 @@ pub fn record_part_effect_witness(
         expected_version: None,
         next_version: 1,
         fencing_epoch: snapshot.fencing_epoch,
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: digest,
       },
       outbox: {

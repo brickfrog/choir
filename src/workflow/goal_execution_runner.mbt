@@ -112,25 +112,18 @@ fn runnable_goal_execution(
 }
 
 ///|
-fn runnable_goal_execution_for_goal(
-  records : Array[StoredGoalExecutionRecord],
-  goal_id : @control.GoalId,
+fn runnable_goal_execution_record(
+  stored : StoredGoalExecutionRecord,
 ) -> StoredGoalExecutionRecord? {
-  for stored in records {
-    if stored.record.goal.id != goal_id {
-      continue
-    }
-    match stored.record.state {
-      GoalExecutionState::GoalExecutionQueued
-      | GoalExecutionState::GoalExecutionRunning
-      | GoalExecutionState::GoalExecutionAssuring
-      | GoalExecutionState::GoalExecutionAssured
-      | GoalExecutionState::GoalExecutionBlocked
-      | GoalExecutionState::GoalExecutionCanceling => return Some(stored)
-      _ => return None
-    }
+  match stored.record.state {
+    GoalExecutionState::GoalExecutionQueued
+    | GoalExecutionState::GoalExecutionRunning
+    | GoalExecutionState::GoalExecutionAssuring
+    | GoalExecutionState::GoalExecutionAssured
+    | GoalExecutionState::GoalExecutionBlocked
+    | GoalExecutionState::GoalExecutionCanceling => Some(stored)
+    _ => None
   }
-  None
 }
 
 ///|
@@ -601,14 +594,19 @@ pub async fn run_next_goal_execution_tick(
   fencing_epoch? : @control.FencingEpoch = @control.FencingEpoch(1L),
   goal_id? : @control.GoalId? = None,
 ) -> Result[GoalExecutionTickResult, @types.ChoirError] {
-  let listed = match
-    list_goal_execution_records(repository, repository_adapters) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
   let selected_candidate = match goal_id {
-    Some(id) => runnable_goal_execution_for_goal(listed, id)
-    None => runnable_goal_execution(listed)
+    Some(id) =>
+      match load_goal_execution_record(repository, repository_adapters, id) {
+        Ok(Some(value)) => runnable_goal_execution_record(value)
+        Ok(None) => None
+        Err(error) => return Err(error)
+      }
+    None =>
+      match
+        list_schedulable_goal_execution_records(repository, repository_adapters) {
+        Ok(value) => runnable_goal_execution(value)
+        Err(error) => return Err(error)
+      }
   }
   let candidate = match selected_candidate {
     Some(value) => value

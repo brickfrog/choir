@@ -135,6 +135,7 @@ fn commit_work_order_planner_attempt(
         expected_version,
         next_version: record.durable_version,
         fencing_epoch: record.fencing_epoch,
+        schedule_class: @storage.StateRecordScheduleClass::StateRecordNotSchedulable,
         value_digest: digest,
       },
       outbox: {

@@ -260,7 +260,7 @@ static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
  * 0 is reserved and means "created before this was stamped at all". It is
  * adopted rather than reset, because every store that can hold 0 was created by
  * this exact DDL; from the first adoption on, the number is load-bearing. */
-#define CHOIR_STATE_STORE_DDL_VERSION 2
+#define CHOIR_STATE_STORE_DDL_VERSION 3
 #define CHOIR_STRINGIFY_INNER(value) #value
 #define CHOIR_STRINGIFY(value) CHOIR_STRINGIFY_INNER(value)
 
@@ -274,8 +274,11 @@ static const char choir_state_store_schema[] =
     " record_key TEXT PRIMARY KEY NOT NULL,"
     " version INTEGER NOT NULL CHECK(version > 0),"
     " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
+    " schedule_class INTEGER NOT NULL CHECK(schedule_class IN (0, 1)),"
     " value_digest TEXT NOT NULL CHECK(length(value_digest) = 64)"
     ") STRICT;"
+    "CREATE INDEX IF NOT EXISTS state_records_schedule_class_key"
+    " ON state_records(schedule_class, record_key);"
     "CREATE TABLE IF NOT EXISTS completion_outbox("
     " semantic_key TEXT PRIMARY KEY NOT NULL,"
     " payload_digest TEXT NOT NULL CHECK(length(payload_digest) = 64),"
@@ -283,6 +286,8 @@ static const char choir_state_store_schema[] =
     " record_key TEXT NOT NULL,"
     " state_version INTEGER NOT NULL CHECK(state_version > 0),"
     " fencing_epoch INTEGER NOT NULL CHECK(fencing_epoch > 0),"
+    " state_schedule_class INTEGER NOT NULL"
+    " CHECK(state_schedule_class IN (0, 1)),"
     " state_value_digest TEXT NOT NULL CHECK(length(state_value_digest) = 64)"
     ") STRICT;"
     /* The schema generation lives in the store it describes. A sibling
@@ -570,52 +575,6 @@ static long long choir_state_store_epoch_row(sqlite3 *db) {
     return epoch;
 }
 
-int choir_state_store_migrate_ddl(
-    const char *path,
-    int path_len,
-    int from_version,
-    int to_version
-) {
-    if (from_version != 1 || to_version != 2) {
-        return -1;
-    }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
-        return -1;
-    }
-    sqlite3_stmt *stmt = NULL;
-    int has_owner = -1;
-    if (choir_sqlite.prepare_statement(
-            db,
-            "SELECT count(*) FROM pragma_table_info('completion_outbox') "
-            "WHERE name = 'owner_goal_id'",
-            -1,
-            &stmt,
-            NULL
-        ) == SQLITE_OK &&
-        choir_sqlite.step(stmt) == SQLITE_ROW) {
-        has_owner = choir_sqlite.column_int64(stmt, 0) == 1 ? 1 : 0;
-    }
-    if (stmt != NULL) choir_sqlite.finalize(stmt);
-    if (has_owner < 0 || choir_sqlite_exec(db, "BEGIN IMMEDIATE") != 0) {
-        return -1;
-    }
-    if (has_owner == 0 &&
-        choir_sqlite_exec(
-            db,
-            "ALTER TABLE completion_outbox ADD COLUMN owner_goal_id TEXT"
-        ) != 0) {
-        choir_sqlite_exec(db, "ROLLBACK");
-        return -1;
-    }
-    if (choir_sqlite_exec(db, "PRAGMA user_version = 2") != 0 ||
-        choir_sqlite_exec(db, "COMMIT") != 0) {
-        choir_sqlite_exec(db, "ROLLBACK");
-        return -1;
-    }
-    return 0;
-}
-
 long long choir_state_store_mint_epoch(const char *path, int path_len) {
     sqlite3 *db = NULL;
     if (choir_sqlite_acquire(path, path_len, &db) != 0) {
@@ -697,13 +656,15 @@ static int choir_sqlite_read_outbox_transition(
     int *has_owner_goal_id,
     sqlite3_int64 *state_version,
     sqlite3_int64 *fence,
+    sqlite3_int64 *schedule_class,
     char *state_digest,
     size_t state_digest_size
 ) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         "SELECT payload_digest, record_key, owner_goal_id, state_version, fencing_epoch, "
-        "state_value_digest FROM completion_outbox WHERE semantic_key = ?1";
+        "state_schedule_class, state_value_digest "
+        "FROM completion_outbox WHERE semantic_key = ?1";
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic_key) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
@@ -715,7 +676,7 @@ static int choir_sqlite_read_outbox_transition(
         const unsigned char *payload = choir_sqlite.column_text(stmt, 0);
         const unsigned char *key = choir_sqlite.column_text(stmt, 1);
         const unsigned char *owner = choir_sqlite.column_text(stmt, 2);
-        const unsigned char *value = choir_sqlite.column_text(stmt, 5);
+        const unsigned char *value = choir_sqlite.column_text(stmt, 6);
         if (payload == NULL || key == NULL || value == NULL ||
             strlen((const char *)payload) + 1U > payload_digest_size ||
             strlen((const char *)key) + 1U > record_key_size ||
@@ -732,6 +693,7 @@ static int choir_sqlite_read_outbox_transition(
             }
             *state_version = choir_sqlite.column_int64(stmt, 3);
             *fence = choir_sqlite.column_int64(stmt, 4);
+            *schedule_class = choir_sqlite.column_int64(stmt, 5);
             strcpy(state_digest, (const char *)value);
             result = 1;
         }
@@ -747,12 +709,14 @@ static int choir_sqlite_read_state_values(
     const char *record_key,
     sqlite3_int64 *version,
     sqlite3_int64 *fence,
+    sqlite3_int64 *schedule_class,
     char *digest,
     size_t digest_size
 ) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
-        "SELECT version, fencing_epoch, value_digest FROM state_records WHERE record_key = ?1";
+        "SELECT version, fencing_epoch, schedule_class, value_digest "
+        "FROM state_records WHERE record_key = ?1";
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, record_key) != 0) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
@@ -761,12 +725,13 @@ static int choir_sqlite_read_state_values(
     int step = choir_sqlite.step(stmt);
     int result = 0;
     if (step == SQLITE_ROW) {
-        const unsigned char *value = choir_sqlite.column_text(stmt, 2);
+        const unsigned char *value = choir_sqlite.column_text(stmt, 3);
         if (value == NULL || strlen((const char *)value) + 1U > digest_size) {
             result = -1;
         } else {
             *version = choir_sqlite.column_int64(stmt, 0);
             *fence = choir_sqlite.column_int64(stmt, 1);
+            *schedule_class = choir_sqlite.column_int64(stmt, 2);
             strcpy(digest, (const char *)value);
             result = 1;
         }
@@ -794,6 +759,7 @@ int choir_state_store_commit(
     int expected_version,
     int next_version,
     int64_t fencing_epoch,
+    int schedule_class,
     const char *value_digest,
     int value_digest_len,
     const char *semantic_key,
@@ -808,6 +774,7 @@ int choir_state_store_commit(
     int precondition_key_len,
     int precondition_version,
     int64_t precondition_fencing_epoch,
+    int precondition_schedule_class,
     const char *precondition_digest,
     int precondition_digest_len
 ) {
@@ -855,6 +822,7 @@ int choir_state_store_commit(
     int existing_has_owner = 0;
     sqlite3_int64 existing_version = 0;
     sqlite3_int64 existing_fence = 0;
+    sqlite3_int64 existing_schedule_class = 0;
     int outbox_found = choir_sqlite_read_outbox_transition(
         db,
         semantic,
@@ -867,6 +835,7 @@ int choir_state_store_commit(
         &existing_has_owner,
         &existing_version,
         &existing_fence,
+        &existing_schedule_class,
         existing_value,
         sizeof(existing_value)
     );
@@ -878,6 +847,7 @@ int choir_state_store_commit(
              (owner != NULL && strcmp(existing_owner, owner) == 0)) &&
             existing_version == next_version &&
             existing_fence == fencing_epoch &&
+            existing_schedule_class == schedule_class &&
             strcmp(existing_value, value) == 0) {
             result = 1;
         } else {
@@ -889,12 +859,14 @@ int choir_state_store_commit(
     if (has_precondition) {
         sqlite3_int64 guard_version = 0;
         sqlite3_int64 guard_fence = 0;
+        sqlite3_int64 guard_schedule_class = 0;
         char observed_guard_digest[65] = {0};
         int guard_found = choir_sqlite_read_state_values(
             db,
             guard_key,
             &guard_version,
             &guard_fence,
+            &guard_schedule_class,
             observed_guard_digest,
             sizeof(observed_guard_digest)
         );
@@ -902,6 +874,7 @@ int choir_state_store_commit(
         if (guard_found == 0 ||
             guard_version != precondition_version ||
             guard_fence != precondition_fencing_epoch ||
+            guard_schedule_class != precondition_schedule_class ||
             strcmp(observed_guard_digest, guard_digest) != 0) {
             result = 8;
             goto rollback;
@@ -910,9 +883,16 @@ int choir_state_store_commit(
 
     sqlite3_int64 current_version = 0;
     sqlite3_int64 current_fence = 0;
+    sqlite3_int64 current_schedule_class = 0;
     char current_digest[65] = {0};
     int state_found = choir_sqlite_read_state_values(
-        db, key, &current_version, &current_fence, current_digest, sizeof(current_digest)
+        db,
+        key,
+        &current_version,
+        &current_fence,
+        &current_schedule_class,
+        current_digest,
+        sizeof(current_digest)
     );
     if (state_found < 0) goto rollback;
     if ((!has_expected_version && state_found == 1) ||
@@ -928,13 +908,16 @@ int choir_state_store_commit(
 
     sqlite3_stmt *stmt = NULL;
     const char *mutation_sql = state_found == 0
-        ? "INSERT INTO state_records(record_key, version, fencing_epoch, value_digest) VALUES(?1, ?2, ?3, ?4)"
-        : "UPDATE state_records SET version = ?2, fencing_epoch = ?3, value_digest = ?4 WHERE record_key = ?1";
+        ? "INSERT INTO state_records(record_key, version, fencing_epoch, schedule_class, value_digest) "
+          "VALUES(?1, ?2, ?3, ?4, ?5)"
+        : "UPDATE state_records SET version = ?2, fencing_epoch = ?3, "
+          "schedule_class = ?4, value_digest = ?5 WHERE record_key = ?1";
     if (choir_sqlite.prepare_statement(db, mutation_sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, key) != 0 ||
         choir_sqlite.bind_int64(stmt, 2, next_version) != SQLITE_OK ||
         choir_sqlite.bind_int64(stmt, 3, fencing_epoch) != SQLITE_OK ||
-        choir_sqlite_bind_text(stmt, 4, value) != 0 ||
+        choir_sqlite.bind_int64(stmt, 4, schedule_class) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 5, value) != 0 ||
         choir_sqlite.step(stmt) != SQLITE_DONE) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         goto rollback;
@@ -961,8 +944,8 @@ int choir_state_store_commit(
     stmt = NULL;
     const char *outbox_sql =
         "INSERT INTO completion_outbox(semantic_key, payload_digest, owner_goal_id, record_key, "
-        "state_version, fencing_epoch, state_value_digest) "
-        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+        "state_version, fencing_epoch, state_schedule_class, state_value_digest) "
+        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
     if (choir_sqlite.prepare_statement(db, outbox_sql, -1, &stmt, NULL) != SQLITE_OK ||
         choir_sqlite_bind_text(stmt, 1, semantic) != 0 ||
         choir_sqlite_bind_text(stmt, 2, payload) != 0 ||
@@ -970,7 +953,8 @@ int choir_state_store_commit(
         choir_sqlite_bind_text(stmt, 4, key) != 0 ||
         choir_sqlite.bind_int64(stmt, 5, next_version) != SQLITE_OK ||
         choir_sqlite.bind_int64(stmt, 6, fencing_epoch) != SQLITE_OK ||
-        choir_sqlite_bind_text(stmt, 7, value) != 0 ||
+        choir_sqlite.bind_int64(stmt, 7, schedule_class) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 8, value) != 0 ||
         choir_sqlite.step(stmt) != SQLITE_DONE) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         goto rollback;
@@ -1085,15 +1069,19 @@ int choir_state_store_read_state(
     }
     sqlite3_int64 version = 0;
     sqlite3_int64 fence = 0;
+    sqlite3_int64 schedule_class = 0;
     char digest[65] = {0};
     int found = choir_sqlite_read_state_values(
-        db, key, &version, &fence, digest, sizeof(digest)
+        db, key, &version, &fence, &schedule_class, digest, sizeof(digest)
     );
     int result = found;
     if (found == 1) {
         int written = snprintf(
-            output, (size_t)output_size, "%lld|%lld|%s",
-            (long long)version, (long long)fence, digest
+            output, (size_t)output_size, "%lld|%lld|%lld|%s",
+            (long long)version,
+            (long long)fence,
+            (long long)schedule_class,
+            digest
         );
         if (written < 0 || written >= output_size) {
             result = -1;
@@ -1105,11 +1093,13 @@ int choir_state_store_read_state(
     return result;
 }
 
-int choir_state_store_list_state(
+static int choir_state_store_list_state_filtered(
     const char *path,
     int path_len,
     const char *record_prefix,
     int record_prefix_len,
+    int has_schedule_class,
+    int schedule_class,
     char *output,
     int output_size
 ) {
@@ -1129,17 +1119,26 @@ int choir_state_store_list_state(
      * SCANs the primary key index and the cost grows with total Goal history
      * rather than with the number of matches. The range form SEARCHes. */
     char *upper = choir_prefix_upper_bound(prefix);
-    const char *sql =
-        upper != NULL
-            ? "SELECT record_key, version, fencing_epoch, value_digest "
+    const char *sql = has_schedule_class
+        ? (upper != NULL
+            ? "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
+              "FROM state_records WHERE schedule_class = ?1 "
+              "AND record_key >= ?2 AND record_key < ?3 ORDER BY record_key"
+            : "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
+              "FROM state_records WHERE schedule_class = ?1 "
+              "AND record_key >= ?2 ORDER BY record_key")
+        : (upper != NULL
+            ? "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
               "FROM state_records WHERE record_key >= ?1 AND record_key < ?2 "
               "ORDER BY record_key"
-            : "SELECT record_key, version, fencing_epoch, value_digest "
-              "FROM state_records WHERE record_key >= ?1 "
-              "ORDER BY record_key";
+            : "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
+              "FROM state_records WHERE record_key >= ?1 ORDER BY record_key");
     if (choir_sqlite.prepare_statement(db, sql, -1, &stmt, NULL) != SQLITE_OK ||
-        choir_sqlite_bind_text(stmt, 1, prefix) != 0 ||
-        (upper != NULL && choir_sqlite_bind_text(stmt, 2, upper) != 0)) {
+        (has_schedule_class &&
+         choir_sqlite.bind_int64(stmt, 1, schedule_class) != SQLITE_OK) ||
+        choir_sqlite_bind_text(stmt, has_schedule_class ? 2 : 1, prefix) != 0 ||
+        (upper != NULL &&
+         choir_sqlite_bind_text(stmt, has_schedule_class ? 3 : 2, upper) != 0)) {
         if (stmt != NULL) choir_sqlite.finalize(stmt);
         free(upper);
         free(prefix);
@@ -1155,7 +1154,7 @@ int choir_state_store_list_state(
             break;
         }
         const unsigned char *key = choir_sqlite.column_text(stmt, 0);
-        const unsigned char *digest = choir_sqlite.column_text(stmt, 3);
+        const unsigned char *digest = choir_sqlite.column_text(stmt, 4);
         if (key == NULL || digest == NULL) {
             result = -1;
             break;
@@ -1163,10 +1162,11 @@ int choir_state_store_list_state(
         int written = snprintf(
             output + used,
             (size_t)(output_size - used),
-            "%s|%lld|%lld|%s\n",
+            "%s|%lld|%lld|%lld|%s\n",
             (const char *)key,
             (long long)choir_sqlite.column_int64(stmt, 1),
             (long long)choir_sqlite.column_int64(stmt, 2),
+            (long long)choir_sqlite.column_int64(stmt, 3),
             (const char *)digest
         );
         if (written < 0 || written >= output_size - used) {
@@ -1180,6 +1180,89 @@ int choir_state_store_list_state(
     free(upper);
     free(prefix);
     return result;
+}
+
+int choir_state_store_list_state(
+    const char *path,
+    int path_len,
+    const char *record_prefix,
+    int record_prefix_len,
+    char *output,
+    int output_size
+) {
+    return choir_state_store_list_state_filtered(
+        path,
+        path_len,
+        record_prefix,
+        record_prefix_len,
+        0,
+        0,
+        output,
+        output_size
+    );
+}
+
+int choir_state_store_list_state_by_schedule_class(
+    const char *path,
+    int path_len,
+    const char *record_prefix,
+    int record_prefix_len,
+    int schedule_class,
+    char *output,
+    int output_size
+) {
+    return choir_state_store_list_state_filtered(
+        path,
+        path_len,
+        record_prefix,
+        record_prefix_len,
+        1,
+        schedule_class,
+        output,
+        output_size
+    );
+}
+
+/* Pin the planner behavior the schedulable listing exists for. The production
+ * query remains in `choir_state_store_list_state_filtered`; this probe asks
+ * SQLite whether that exact predicate is backed by the declared composite
+ * index instead of growing with terminal history. */
+int choir_state_store_schedule_query_uses_index(
+    const char *path,
+    int path_len
+) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    if (choir_sqlite_acquire(path, path_len, &db) != 0 ||
+        choir_sqlite.prepare_statement(
+            db,
+            "EXPLAIN QUERY PLAN "
+            "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
+            "FROM state_records WHERE schedule_class = ?1 "
+            "AND record_key >= ?2 AND record_key < ?3 ORDER BY record_key",
+            -1,
+            &stmt,
+            NULL
+        ) != SQLITE_OK ||
+        choir_sqlite.bind_int64(stmt, 1, 1) != SQLITE_OK ||
+        choir_sqlite_bind_text(stmt, 2, "goal-run:") != 0 ||
+        choir_sqlite_bind_text(stmt, 3, "goal-run;") != 0) {
+        if (stmt != NULL) choir_sqlite.finalize(stmt);
+        return -1;
+    }
+    int uses_index = 0;
+    while (choir_sqlite.step(stmt) == SQLITE_ROW) {
+        const unsigned char *detail = choir_sqlite.column_text(stmt, 3);
+        if (detail != NULL &&
+            strstr(
+                (const char *)detail,
+                "state_records_schedule_class_key"
+            ) != NULL) {
+            uses_index = 1;
+        }
+    }
+    choir_sqlite.finalize(stmt);
+    return uses_index;
 }
 
 int choir_state_store_read_outbox(
