@@ -45,7 +45,8 @@ pub fn boxlite_assurance_codex_mcp_tools() -> Array[String] {
 pub fn boxlite_take_tool_manifest_digest() -> @control.Digest {
   @storage.artifact_digest(
     @utf8.encode(
-      "choir.boxlite-take-tools.v1\u{00}" + boxlite_take_mcp_tools().join("\n"),
+      "choir.boxlite-take-tools.v2\u{00}nfc=utf8proc\u{00}" +
+      boxlite_take_mcp_tools().join("\n"),
     ),
   )
 }
@@ -66,7 +67,7 @@ pub fn boxlite_take_runtime_policy_digest() -> @control.Digest {
 test "Take runtime digests bind the declared tools and policy" {
   assert_eq(
     boxlite_take_tool_manifest_digest().0,
-    "8a57b7fd99472c6e2449dc551aa2d817f9bc0e902a8e1057bb0e26b88da6f4fb",
+    "3589ec9e79d6b9b39c02a838aeb56cac7848bd8d867998feaf798aff77978b77",
   )
   assert_eq(
     boxlite_take_runtime_policy_digest().0,
