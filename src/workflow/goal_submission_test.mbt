@@ -782,6 +782,7 @@ test "source drift records a typed conflict without minting a receipt" {
     @workflow.GoalSourceClaimObservation::GoalSourceContentDrifted,
     10L,
   ).unwrap()
+  assert_eq(conflicted.durable_version, authorized.durable_version + 1)
   assert_true(@workflow.goal_source_claims_have_conflict(conflicted))
   assert_eq(conflicted.source_claims[0].receipt, None)
   assert_eq(
@@ -1797,6 +1798,7 @@ test "partial and divergent Goal branch initialization fail closed" {
     fail("partial initialization was not recorded")
   }
   assert_eq(blocked.state, @workflow.GoalExecutionState::GoalExecutionCanceling)
+  assert_eq(blocked.durable_version, authorized.durable_version + 1)
   assert_eq(
     blocked.branch_initialization.lifecycle,
     @workflow.GoalBranchInitLifecycle::GoalBranchInitIntegrityBlocked,
@@ -1823,6 +1825,7 @@ test "partial and divergent Goal branch initialization fail closed" {
     uncertain.state,
     @workflow.GoalExecutionState::GoalExecutionCanceling,
   )
+  assert_eq(uncertain.durable_version, authorized.durable_version + 1)
   assert_eq(
     uncertain.branch_initialization.lifecycle,
     @workflow.GoalBranchInitLifecycle::GoalBranchInitUncertain,
