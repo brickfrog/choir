@@ -498,7 +498,9 @@ async test "real exec integration: a displaced assurance tick returns its slot" 
     return
   }
   let surface = @control.ProviderSurfaceId::ClaudeSubscriptionCli
-  let fixture = real_exec_integration_assurance_loop_fixture("displaced", surface)
+  let fixture = real_exec_integration_assurance_loop_fixture(
+    "displaced", surface,
+  )
   // The audit sandbox effect is already planned, so this tick's first act is to
   // ask for the slot that authorizing it needs.
   let planned = match

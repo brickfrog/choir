@@ -591,6 +591,7 @@ pub fn plan_part_conflict_repair(
 pub fn plan_part_audit_repair(
   snapshot : PartWorkflowSnapshot,
   repair : @control.AuditRepairReference,
+  source : PartRepairSource,
   contract : @control.TaskContractRevision,
   identities : PartIdentityPlan,
   is_nfc : (String) -> Bool,
@@ -641,6 +642,8 @@ pub fn plan_part_audit_repair(
     contract.revision != snapshot.task_contract.revision + 1 ||
     contract.repair_conflict_id is Some(_) ||
     contract.repair_audit != Some(repair) ||
+    contract.base_commit_oid != source.commit_oid ||
+    contract.base_tree_oid != source.tree_oid ||
     contract.mutation_declaration != snapshot.task_contract.mutation_declaration ||
     !conflict_repair_take_is_fresh(
       snapshot.implementation_take,
@@ -753,6 +756,7 @@ pub fn plan_part_audit_repair(
 pub fn plan_part_verification_repair(
   snapshot : PartWorkflowSnapshot,
   repair : @control.VerificationRepairReference,
+  source : PartRepairSource,
   contract : @control.TaskContractRevision,
   identities : PartIdentityPlan,
   is_nfc : (String) -> Bool,
@@ -812,6 +816,8 @@ pub fn plan_part_verification_repair(
     contract.repair_conflict_id is Some(_) ||
     contract.repair_audit is Some(_) ||
     contract.repair_verification != Some(repair) ||
+    contract.base_commit_oid != source.commit_oid ||
+    contract.base_tree_oid != source.tree_oid ||
     contract.mutation_declaration != snapshot.task_contract.mutation_declaration ||
     !conflict_repair_take_is_fresh(
       snapshot.implementation_take,

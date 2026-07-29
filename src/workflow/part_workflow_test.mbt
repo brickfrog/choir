@@ -1430,6 +1430,7 @@ test "Goal audit repair reopens an integrated Part and preserves its receipt" {
     @workflow.plan_part_audit_repair(
       integrated,
       repair,
+      { commit_oid: contract.base_commit_oid, tree_oid: contract.base_tree_oid },
       contract,
       {
         implementation_take: implementation,
@@ -1522,10 +1523,25 @@ test "combined verification repair reopens an integrated Part on routed paths" {
     base_tree_oid: promotion.tree_oid,
   }
   let identities = goal_verification_repair_identities(integrated, contract)
+  assert_true(
+    @workflow.plan_part_verification_repair(
+      integrated,
+      repair,
+      {
+        commit_oid: integrated.task_contract.base_commit_oid,
+        tree_oid: integrated.task_contract.base_tree_oid,
+      },
+      contract,
+      identities,
+      fn(_) { true },
+    )
+    is Err(_),
+  )
   let repaired = match
     @workflow.plan_part_verification_repair(
       integrated,
       repair,
+      { commit_oid: promotion.commit_oid, tree_oid: promotion.tree_oid },
       contract,
       identities,
       fn(_) { true },
@@ -1564,6 +1580,7 @@ test "combined verification repair reopens an integrated Part on routed paths" {
     @workflow.plan_part_verification_repair(
       integrated,
       unrouted,
+      { commit_oid: promotion.commit_oid, tree_oid: promotion.tree_oid },
       { ..contract, repair_verification: Some(unrouted) },
       identities,
       fn(_) { true },
@@ -1581,6 +1598,7 @@ test "combined verification repair reopens an integrated Part on routed paths" {
     @workflow.plan_part_verification_repair(
       integrated,
       part_scoped,
+      { commit_oid: promotion.commit_oid, tree_oid: promotion.tree_oid },
       { ..contract, repair_verification: Some(part_scoped) },
       identities,
       fn(_) { true },
@@ -1780,6 +1798,7 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
     @workflow.plan_part_verification_repair(
       blocked,
       repair,
+      { commit_oid: contract.base_commit_oid, tree_oid: contract.base_tree_oid },
       contract,
       {
         implementation_take: implementation,
@@ -1858,6 +1877,7 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
     @workflow.plan_part_verification_repair(
       exhausted,
       exhausted_repair,
+      { commit_oid: contract.base_commit_oid, tree_oid: contract.base_tree_oid },
       contract,
       {
         implementation_take: implementation,

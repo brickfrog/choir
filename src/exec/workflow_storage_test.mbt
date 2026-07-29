@@ -1705,6 +1705,10 @@ async test "Goal adapter persists an autonomous verification repair revision" {
     @workflow.plan_part_verification_repair(
       blocked,
       repair,
+      {
+        commit_oid: revised_contract.base_commit_oid,
+        tree_oid: revised_contract.base_tree_oid,
+      },
       revised_contract,
       {
         implementation_take: implementation,
