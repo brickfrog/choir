@@ -232,6 +232,13 @@ extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir
 extern "C" fn state_store_forget_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_forget"
 
 ///|
+#borrow(root)
+extern "C" fn state_store_cache_lease_probe_ffi(
+  root : Bytes,
+  root_len : Int,
+) -> Int = "choir_state_store_cache_lease_probe"
+
+///|
 #borrow(path, buf)
 extern "C" fn state_store_read_generation_ffi(
   path : Bytes,

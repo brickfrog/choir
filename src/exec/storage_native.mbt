@@ -150,6 +150,18 @@ test "the schedulable state query uses its composite index" {
 }
 
 ///|
+test "the SQLite cache retains borrowed connections until release" {
+  let root = "/tmp/choir-sqlite-cache-lease-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  let (encoded, length) = exec_string_to_null_terminated_bytes(root)
+  let result = state_store_cache_lease_probe_ffi(encoded, length)
+  ignore(@sys.rm_rf(root))
+  guard result == 0 else {
+    fail("SQLite cache lease probe failed at stage " + result.to_string())
+  }
+}
+
+///|
 /// What DDL version the store's tables were created under.
 ///
 /// `Ok(0)` means the store predates the stamp, which is adopted rather than

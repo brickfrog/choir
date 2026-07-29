@@ -105,8 +105,10 @@ static int choir_sqlite_exec(sqlite3 *db, const char *sql) {
  * between choird and the goal worker into an immediate hard failure.
  * Connections are cached per path for the process lifetime; entries are
  * recycled round-robin so test binaries touching many temp stores stay
- * bounded. Handles are opened FULLMUTEX and every FFI call runs a complete
- * operation, so sharing a cached handle is safe.
+ * bounded. A borrower owns one connection for its complete FFI operation.
+ * FULLMUTEX serializes individual SQLite calls, but it does not make closing a
+ * handle underneath another thread safe and it does not keep the statements in
+ * one transaction from interleaving with another borrower.
  */
 #define CHOIR_SQLITE_CACHE_SLOTS 8
 
@@ -119,11 +121,19 @@ typedef struct {
      * the pool loses the flag with the slot, which is correct: the replacement
      * genuinely has not been prepared. */
     int schema_ready;
+    int borrowed;
+    int retiring;
 } choir_sqlite_cached;
+
+typedef struct {
+    choir_sqlite_cached *slot;
+    sqlite3 *db;
+} choir_sqlite_lease;
 
 static choir_sqlite_cached choir_sqlite_cache[CHOIR_SQLITE_CACHE_SLOTS];
 static unsigned choir_sqlite_cache_next = 0;
 static pthread_mutex_t choir_sqlite_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t choir_sqlite_cache_changed = PTHREAD_COND_INITIALIZER;
 
 static int choir_sqlite_configure(sqlite3 *db) {
     return choir_sqlite_exec(
@@ -134,8 +144,32 @@ static int choir_sqlite_configure(sqlite3 *db) {
     );
 }
 
-static int choir_sqlite_acquire(const char *path, int path_len, sqlite3 **db) {
+static void choir_sqlite_release(choir_sqlite_lease *lease) {
+    if (lease == NULL || lease->slot == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    lease->slot->borrowed = 0;
+    lease->slot = NULL;
+    lease->db = NULL;
+    pthread_cond_broadcast(&choir_sqlite_cache_changed);
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+}
+
+#define CHOIR_SQLITE_LEASE(name)                                               \
+    choir_sqlite_lease name                                                    \
+        __attribute__((cleanup(choir_sqlite_release))) = {0}
+
+static int choir_sqlite_acquire_internal(
+    const char *path,
+    int path_len,
+    choir_sqlite_lease *lease,
+    int wait
+) {
     if (choir_sqlite_load() != 0) {
+        return -1;
+    }
+    if (lease == NULL) {
         return -1;
     }
     char *copy = choir_store_copy_string(path, path_len);
@@ -143,45 +177,105 @@ static int choir_sqlite_acquire(const char *path, int path_len, sqlite3 **db) {
         return -1;
     }
     pthread_mutex_lock(&choir_sqlite_cache_mutex);
-    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
-        if (choir_sqlite_cache[i].path != NULL &&
-            strcmp(choir_sqlite_cache[i].path, copy) == 0) {
-            *db = choir_sqlite_cache[i].db;
+    for (;;) {
+        choir_sqlite_cached *matching = NULL;
+        for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+            if (choir_sqlite_cache[i].path != NULL &&
+                strcmp(choir_sqlite_cache[i].path, copy) == 0) {
+                matching = &choir_sqlite_cache[i];
+                break;
+            }
+        }
+        if (matching != NULL) {
+            if (!matching->borrowed && !matching->retiring) {
+                matching->borrowed = 1;
+                lease->slot = matching;
+                lease->db = matching->db;
+                pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                free(copy);
+                return 0;
+            }
+            if (!wait) {
+                pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                free(copy);
+                return 1;
+            }
+            if (pthread_cond_wait(
+                    &choir_sqlite_cache_changed,
+                    &choir_sqlite_cache_mutex
+                ) != 0) {
+                pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                free(copy);
+                return -1;
+            }
+            continue;
+        }
+
+        choir_sqlite_cached *slot = NULL;
+        for (int offset = 0; offset < CHOIR_SQLITE_CACHE_SLOTS; ++offset) {
+            unsigned index =
+                (choir_sqlite_cache_next + (unsigned)offset) %
+                CHOIR_SQLITE_CACHE_SLOTS;
+            if (!choir_sqlite_cache[index].borrowed &&
+                !choir_sqlite_cache[index].retiring) {
+                slot = &choir_sqlite_cache[index];
+                choir_sqlite_cache_next = index + 1U;
+                break;
+            }
+        }
+        if (slot == NULL) {
+            if (!wait) {
+                pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                free(copy);
+                return 1;
+            }
+            if (pthread_cond_wait(
+                    &choir_sqlite_cache_changed,
+                    &choir_sqlite_cache_mutex
+                ) != 0) {
+                pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                free(copy);
+                return -1;
+            }
+            continue;
+        }
+
+        sqlite3 *opened = NULL;
+        int rc = choir_sqlite.open_v2(
+            copy,
+            &opened,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            NULL
+        );
+        if (rc != SQLITE_OK || choir_sqlite_configure(opened) != 0) {
+            if (opened != NULL) {
+                choir_sqlite.close(opened);
+            }
             pthread_mutex_unlock(&choir_sqlite_cache_mutex);
             free(copy);
-            return 0;
+            return -1;
         }
-    }
-    sqlite3 *opened = NULL;
-    int rc = choir_sqlite.open_v2(
-        copy,
-        &opened,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-        NULL
-    );
-    if (rc != SQLITE_OK || choir_sqlite_configure(opened) != 0) {
-        if (opened != NULL) {
-            choir_sqlite.close(opened);
+        if (slot->path != NULL) {
+            choir_sqlite.close(slot->db);
+            free(slot->path);
         }
+        slot->path = copy;
+        slot->db = opened;
+        slot->schema_ready = 0;
+        slot->borrowed = 1;
+        lease->slot = slot;
+        lease->db = opened;
         pthread_mutex_unlock(&choir_sqlite_cache_mutex);
-        free(copy);
-        return -1;
+        return 0;
     }
-    choir_sqlite_cached *slot =
-        &choir_sqlite_cache[choir_sqlite_cache_next % CHOIR_SQLITE_CACHE_SLOTS];
-    choir_sqlite_cache_next += 1;
-    if (slot->path != NULL) {
-        choir_sqlite.close(slot->db);
-        free(slot->path);
-    }
-    slot->path = copy;
-    slot->db = opened;
-    /* A replaced slot must not inherit the evicted connection's readiness: this
-     * connection has had nothing applied to it. */
-    slot->schema_ready = 0;
-    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
-    *db = opened;
-    return 0;
+}
+
+static int choir_sqlite_acquire(
+    const char *path,
+    int path_len,
+    choir_sqlite_lease *lease
+) {
+    return choir_sqlite_acquire_internal(path, path_len, lease, 1);
 }
 
 /* Drop any pooled connection for this path.
@@ -199,6 +293,20 @@ int choir_state_store_forget(const char *path, int path_len) {
     for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
         if (choir_sqlite_cache[i].path != NULL &&
             strcmp(choir_sqlite_cache[i].path, copy) == 0) {
+            choir_sqlite_cache[i].retiring = 1;
+            pthread_cond_broadcast(&choir_sqlite_cache_changed);
+            while (choir_sqlite_cache[i].borrowed) {
+                if (pthread_cond_wait(
+                        &choir_sqlite_cache_changed,
+                        &choir_sqlite_cache_mutex
+                    ) != 0) {
+                    choir_sqlite_cache[i].retiring = 0;
+                    pthread_cond_broadcast(&choir_sqlite_cache_changed);
+                    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+                    free(copy);
+                    return -1;
+                }
+            }
             if (choir_sqlite.close != NULL) {
                 choir_sqlite.close(choir_sqlite_cache[i].db);
             }
@@ -206,6 +314,8 @@ int choir_state_store_forget(const char *path, int path_len) {
             choir_sqlite_cache[i].path = NULL;
             choir_sqlite_cache[i].db = NULL;
             choir_sqlite_cache[i].schema_ready = 0;
+            choir_sqlite_cache[i].retiring = 0;
+            pthread_cond_broadcast(&choir_sqlite_cache_changed);
         }
     }
     pthread_mutex_unlock(&choir_sqlite_cache_mutex);
@@ -213,29 +323,202 @@ int choir_state_store_forget(const char *path, int path_len) {
     return 0;
 }
 
-/* Whether this connection has already had the schema applied. */
-static int choir_sqlite_schema_ready(sqlite3 *db) {
-    int ready = 0;
-    pthread_mutex_lock(&choir_sqlite_cache_mutex);
-    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
-        if (choir_sqlite_cache[i].db == db) {
-            ready = choir_sqlite_cache[i].schema_ready;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
-    return ready;
+/* Whether this borrowed connection has already had the schema applied. */
+static int choir_sqlite_schema_ready(const choir_sqlite_lease *lease) {
+    return lease->slot->schema_ready;
 }
 
-static void choir_sqlite_mark_schema_ready(sqlite3 *db) {
+static void choir_sqlite_mark_schema_ready(choir_sqlite_lease *lease) {
+    lease->slot->schema_ready = 1;
+}
+
+typedef struct {
+    const char *path;
+    int path_len;
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    int started;
+    int result;
+} choir_sqlite_forget_probe;
+
+static void *choir_sqlite_forget_probe_thread(void *opaque) {
+    choir_sqlite_forget_probe *probe = (choir_sqlite_forget_probe *)opaque;
+    pthread_mutex_lock(&probe->mutex);
+    probe->started = 1;
+    pthread_cond_broadcast(&probe->changed);
+    pthread_mutex_unlock(&probe->mutex);
+    probe->result = choir_state_store_forget(probe->path, probe->path_len);
+    return NULL;
+}
+
+/*
+ * Deterministic whitebox probe for the cache ownership contract. It uses the
+ * non-waiting acquisition arm to observe contention without sleeps, then a
+ * real waiter to prove forget retires a slot only after its borrower releases.
+ * Returns a distinct positive stage on invariant failure.
+ */
+int choir_state_store_cache_lease_probe(const char *root, int root_len) {
+    char *root_path = choir_store_copy_string(root, root_len);
+    char paths[CHOIR_SQLITE_CACHE_SLOTS + 1][4096] = {{0}};
+    choir_sqlite_lease leases[CHOIR_SQLITE_CACHE_SLOTS + 1] = {0};
+    choir_sqlite_forget_probe forget_probe = {0};
+    pthread_t forget_thread;
+    int forget_started = 0;
+    int forget_joined = 0;
+    int result = 0;
+
+    if (root_path == NULL || mkdir(root_path, 0700) != 0) {
+        free(root_path);
+        return 1;
+    }
+    for (int i = 0; i <= CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        int written = snprintf(
+            paths[i], sizeof(paths[i]), "%s/cache-%d.db", root_path, i
+        );
+        if (written < 0 || written >= (int)sizeof(paths[i])) {
+            result = 2;
+            goto cleanup;
+        }
+    }
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_acquire(
+                paths[i], (int)strlen(paths[i]), &leases[i]
+            ) != 0) {
+            result = 3;
+            goto cleanup;
+        }
+    }
+
+    choir_sqlite_lease contended = {0};
+    if (choir_sqlite_acquire_internal(
+            paths[1], (int)strlen(paths[1]), &contended, 0
+        ) != 1) {
+        choir_sqlite_release(&contended);
+        result = 4;
+        goto cleanup;
+    }
+    if (choir_sqlite_acquire_internal(
+            paths[CHOIR_SQLITE_CACHE_SLOTS],
+            (int)strlen(paths[CHOIR_SQLITE_CACHE_SLOTS]),
+            &contended,
+            0
+        ) != 1) {
+        choir_sqlite_release(&contended);
+        result = 5;
+        goto cleanup;
+    }
+    for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_exec(leases[i].db, "SELECT 1") != 0) {
+            result = 6;
+            goto cleanup;
+        }
+    }
+
+    choir_sqlite_release(&leases[0]);
+    if (choir_sqlite_acquire(
+            paths[CHOIR_SQLITE_CACHE_SLOTS],
+            (int)strlen(paths[CHOIR_SQLITE_CACHE_SLOTS]),
+            &leases[CHOIR_SQLITE_CACHE_SLOTS]
+        ) != 0) {
+        result = 7;
+        goto cleanup;
+    }
+    for (int i = 1; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        if (choir_sqlite_exec(leases[i].db, "SELECT 1") != 0) {
+            result = 8;
+            goto cleanup;
+        }
+    }
+
+    forget_probe.path = paths[1];
+    forget_probe.path_len = (int)strlen(paths[1]);
+    if (pthread_mutex_init(&forget_probe.mutex, NULL) != 0) {
+        result = 9;
+        goto cleanup;
+    }
+    if (pthread_cond_init(&forget_probe.changed, NULL) != 0) {
+        pthread_mutex_destroy(&forget_probe.mutex);
+        result = 9;
+        goto cleanup;
+    }
+    if (pthread_create(
+            &forget_thread,
+            NULL,
+            choir_sqlite_forget_probe_thread,
+            &forget_probe
+        ) != 0) {
+        pthread_cond_destroy(&forget_probe.changed);
+        pthread_mutex_destroy(&forget_probe.mutex);
+        result = 10;
+        goto cleanup;
+    }
+    forget_started = 1;
+    pthread_mutex_lock(&forget_probe.mutex);
+    while (!forget_probe.started) {
+        pthread_cond_wait(&forget_probe.changed, &forget_probe.mutex);
+    }
+    pthread_mutex_unlock(&forget_probe.mutex);
+
+    pthread_mutex_lock(&choir_sqlite_cache_mutex);
+    choir_sqlite_cached *retiring = NULL;
+    while (retiring == NULL || !retiring->retiring) {
+        retiring = NULL;
+        for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+            if (choir_sqlite_cache[i].path != NULL &&
+                strcmp(choir_sqlite_cache[i].path, paths[1]) == 0) {
+                retiring = &choir_sqlite_cache[i];
+                break;
+            }
+        }
+        if (retiring == NULL || !retiring->retiring) {
+            pthread_cond_wait(
+                &choir_sqlite_cache_changed,
+                &choir_sqlite_cache_mutex
+            );
+        }
+    }
+    int retained =
+        retiring->borrowed && retiring->db == leases[1].db &&
+        choir_sqlite_exec(leases[1].db, "SELECT 1") == 0;
+    pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+    if (!retained) {
+        result = 11;
+        goto cleanup;
+    }
+
+    choir_sqlite_release(&leases[1]);
+    pthread_join(forget_thread, NULL);
+    forget_joined = 1;
+    pthread_cond_destroy(&forget_probe.changed);
+    pthread_mutex_destroy(&forget_probe.mutex);
+    if (forget_probe.result != 0) {
+        result = 12;
+        goto cleanup;
+    }
     pthread_mutex_lock(&choir_sqlite_cache_mutex);
     for (int i = 0; i < CHOIR_SQLITE_CACHE_SLOTS; ++i) {
-        if (choir_sqlite_cache[i].db == db) {
-            choir_sqlite_cache[i].schema_ready = 1;
+        if (choir_sqlite_cache[i].path != NULL &&
+            strcmp(choir_sqlite_cache[i].path, paths[1]) == 0) {
+            result = 13;
             break;
         }
     }
     pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+
+cleanup:
+    for (int i = 0; i <= CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        choir_sqlite_release(&leases[i]);
+    }
+    if (forget_started && !forget_joined) {
+        pthread_join(forget_thread, NULL);
+        pthread_cond_destroy(&forget_probe.changed);
+        pthread_mutex_destroy(&forget_probe.mutex);
+    }
+    for (int i = 0; i <= CHOIR_SQLITE_CACHE_SLOTS; ++i) {
+        choir_state_store_forget(paths[i], (int)strlen(paths[i]));
+    }
+    free(root_path);
+    return result;
 }
 
 /* The version of the DDL below.
@@ -337,14 +620,15 @@ static int choir_sqlite_database_empty(sqlite3 *db) {
 }
 
 int choir_state_store_init(const char *path, int path_len) {
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     /* The Goal tick calls this every second. The statements are idempotent, so
      * repeating them is harmless but not free: each one is parsed and run
      * against the pooled connection. */
-    if (choir_sqlite_schema_ready(db)) {
+    if (choir_sqlite_schema_ready(&lease)) {
         return 0;
     }
     /* Asked before the schema runs, because afterwards every database looks
@@ -367,7 +651,7 @@ int choir_state_store_init(const char *path, int path_len) {
         ) != 0) {
         return -1;
     }
-    choir_sqlite_mark_schema_ready(db);
+    choir_sqlite_mark_schema_ready(&lease);
     return 0;
 }
 
@@ -382,12 +666,13 @@ int choir_state_store_init(const char *path, int path_len) {
  * than as some version, because a number this build's writer cannot produce is
  * not evidence about this build's DDL. */
 int choir_state_store_read_ddl_version(const char *path, int path_len) {
-    sqlite3 *db = NULL;
+    CHOIR_SQLITE_LEASE(lease);
     sqlite3_stmt *stmt = NULL;
     int version = -1;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     /* `PRAGMA user_version` prepares against a file that is not a database at
      * all and only fails when stepped, so the same sqlite_master probe the
      * generation read uses decides readability first. */
@@ -413,14 +698,15 @@ int choir_state_store_read_ddl_version(const char *path, int path_len) {
 int choir_state_store_write_ddl_version(
     const char *path, int path_len, int version
 ) {
-    sqlite3 *db = NULL;
+    CHOIR_SQLITE_LEASE(lease);
     char statement[64];
     if (version < 0) {
         return -1;
     }
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     /* `PRAGMA user_version = ?` does not accept a bound parameter, so the
      * value is formatted in. It is an int by the signature, so there is nothing
      * here to inject. */
@@ -437,15 +723,16 @@ int choir_state_store_write_ddl_version(
 int choir_state_store_read_generation(
     const char *path, int path_len, char *buf, int max_size
 ) {
-    sqlite3 *db = NULL;
+    CHOIR_SQLITE_LEASE(lease);
     sqlite3_stmt *stmt = NULL;
     int written = 0;
     if (buf == NULL || max_size <= 0) {
         return -1;
     }
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     /* Distinguish "not a usable database" from "no metadata table yet". Both
      * fail to prepare the SELECT, and conflating them would adopt a corrupt
      * store as if it were simply an older one. */
@@ -513,13 +800,14 @@ static int choir_sqlite_bind_text(sqlite3_stmt *stmt, int index, const char *val
 int choir_state_store_write_generation(
     const char *path, int path_len, const char *generation
 ) {
-    sqlite3 *db = NULL;
+    CHOIR_SQLITE_LEASE(lease);
     if (generation == NULL) {
         return -1;
     }
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     if (choir_sqlite_exec(
             db,
             "CREATE TABLE IF NOT EXISTS control_metadata("
@@ -576,10 +864,11 @@ static long long choir_state_store_epoch_row(sqlite3 *db) {
 }
 
 long long choir_state_store_mint_epoch(const char *path, int path_len) {
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
+    sqlite3 *db = lease.db;
     if (choir_sqlite_exec(
             db,
             "CREATE TABLE IF NOT EXISTS fencing_generation("
@@ -607,11 +896,11 @@ long long choir_state_store_mint_epoch(const char *path, int path_len) {
 }
 
 long long choir_state_store_read_epoch(const char *path, int path_len) {
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         return -1;
     }
-    return choir_state_store_epoch_row(db);
+    return choir_state_store_epoch_row(lease.db);
 }
 
 static int choir_sqlite_read_outbox_digest(
@@ -799,13 +1088,14 @@ int choir_state_store_commit(
         free(guard_key); free(guard_digest);
         return 6;
     }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         free(key); free(value); free(semantic); free(payload);
         free(owner);
         free(guard_key); free(guard_digest);
         return 6;
     }
+    sqlite3 *db = lease.db;
     int begin_rc = choir_sqlite_exec_rc(db, "BEGIN IMMEDIATE");
     if (begin_rc != SQLITE_OK) {
         free(key); free(value); free(semantic); free(payload);
@@ -994,11 +1284,12 @@ int choir_state_store_prune_goal_outbox(
         free(owner);
         return -1;
     }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         free(owner);
         return -1;
     }
+    sqlite3 *db = lease.db;
     int begin_rc = choir_sqlite_exec_rc(db, "BEGIN IMMEDIATE");
     if (begin_rc != SQLITE_OK) {
         free(owner);
@@ -1062,11 +1353,12 @@ int choir_state_store_read_state(
         free(key);
         return -1;
     }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         free(key);
         return -1;
     }
+    sqlite3 *db = lease.db;
     sqlite3_int64 version = 0;
     sqlite3_int64 fence = 0;
     sqlite3_int64 schedule_class = 0;
@@ -1108,11 +1400,12 @@ static int choir_state_store_list_state_filtered(
         free(prefix);
         return -1;
     }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         free(prefix);
         return -1;
     }
+    sqlite3 *db = lease.db;
     sqlite3_stmt *stmt = NULL;
     /* A half-open key range rather than substr(record_key,1,n)=prefix. The
      * function form is not sargable: SQLite has to evaluate it per row, so it
@@ -1231,10 +1524,13 @@ int choir_state_store_schedule_query_uses_index(
     const char *path,
     int path_len
 ) {
-    sqlite3 *db = NULL;
+    CHOIR_SQLITE_LEASE(lease);
     sqlite3_stmt *stmt = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0 ||
-        choir_sqlite.prepare_statement(
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
+        return -1;
+    }
+    sqlite3 *db = lease.db;
+    if (choir_sqlite.prepare_statement(
             db,
             "EXPLAIN QUERY PLAN "
             "SELECT record_key, version, fencing_epoch, schedule_class, value_digest "
@@ -1278,11 +1574,12 @@ int choir_state_store_read_outbox(
         free(key);
         return -1;
     }
-    sqlite3 *db = NULL;
-    if (choir_sqlite_acquire(path, path_len, &db) != 0) {
+    CHOIR_SQLITE_LEASE(lease);
+    if (choir_sqlite_acquire(path, path_len, &lease) != 0) {
         free(key);
         return -1;
     }
+    sqlite3 *db = lease.db;
     int result = choir_sqlite_read_outbox_digest(
         db, key, output, (size_t)output_size
     );
