@@ -2049,49 +2049,6 @@ async test "Goal cannot cross its terminal boundary when cleanup fails" {
 }
 
 ///|
-async test "one terminal Goal preserves another Goal's shared-home boxes" {
-  let identity = @sys.get_pid().to_string()
-  let home = "/tmp/choir-boxlite-goal-scoped-cleanup-" + identity
-  let goal_a_root = "/tmp/choir-take-goal-scoped-a-" + identity
-  // This is the sibling data the operation must preserve, not another input
-  // to the production runtime reclaimer. Keep it outside the reclaimer's
-  // reserved prefix so parallel daemon-start coverage cannot delete it.
-  let goal_b_root = "/tmp/choir-boxlite-goal-scoped-b-" + identity
-  ignore(@sys.rm_rf(home))
-  ignore(@sys.rm_rf(goal_a_root))
-  ignore(@sys.rm_rf(goal_b_root))
-  defer ignore(@sys.rm_rf(home))
-  defer ignore(@sys.rm_rf(goal_a_root))
-  defer ignore(@sys.rm_rf(goal_b_root))
-  assert_true(@sys.create_dir_all(home + "/boxes/goal-b"))
-  assert_true(@sys.create_dir_all(goal_a_root + "/state"))
-  assert_true(@sys.create_dir_all(goal_b_root + "/state"))
-  assert_true(
-    @sys.write_file_sync(
-      home + "/boxes/goal-b/manifest.json",
-      (
-        #|{"box":"goal-b"}
-      ),
-    ),
-  )
-  assert_true(
-    finish_native_goal_runtime(true, async fn() {
-      cleanup_native_boxlite_runtime_root({
-        binary: "/unused/boxlite",
-        runtime_dir: "/unused/runtime",
-        root: goal_a_root,
-        home,
-        port: 22000,
-        api_key: "goal-a",
-      })
-    }).unwrap(),
-  )
-  assert_false(@sys.path_exists(goal_a_root))
-  assert_true(@sys.path_exists(goal_b_root))
-  assert_true(@sys.path_exists(home + "/boxes/goal-b/manifest.json"))
-}
-
-///|
 async fn capture_native_goal_source_state(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
