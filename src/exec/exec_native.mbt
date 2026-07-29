@@ -6,6 +6,24 @@ extern "C" fn exec_path_is_nfc_ffi(path : Bytes, len : Int) -> Int = "choir_exec
 extern "C" fn exec_path_nfc_available_ffi() -> Int = "choir_exec_path_nfc_available"
 
 ///|
+#borrow(out)
+extern "C" fn exec_path_nfc_library_path_ffi(
+  out : Bytes,
+  max_size : Int,
+) -> Int = "choir_exec_path_nfc_library_path"
+
+///|
+fn native_path_nfc_library_path() -> String? {
+  let out = Bytes::new(4096)
+  let length = exec_path_nfc_library_path_ffi(out, out.length())
+  if length <= 0 {
+    None
+  } else {
+    Some(@utf8.decode_lossy(out[:length]))
+  }
+}
+
+///|
 fn native_path_is_nfc(path : String) -> Bool {
   let encoded = @utf8.encode(path)
   exec_path_is_nfc_ffi(encoded, encoded.length()) == 1
@@ -186,6 +204,8 @@ test "real exec integration: native path NFC oracle accepts composed Unicode and
     return
   }
   assert_true(exec_path_nfc_available_ffi() == 1)
+  let library_path = native_path_nfc_library_path().unwrap()
+  assert_true(@sys.realpath_native(library_path) is Some(_))
   assert_true(native_path_is_nfc("src/plain.mbt"))
   assert_true(native_path_is_nfc("docs/café.md"))
   assert_false(native_path_is_nfc("docs/cafe\u{301}.md"))
