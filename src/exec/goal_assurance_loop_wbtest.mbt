@@ -38,7 +38,7 @@ priv struct NativeAssuranceLoopFixture {
 /// Both records are built here rather than driven through the workflow because
 /// what is under test is one decision inside the loop; the decoders on the way
 /// back in are what keep the fixture honest about the shape.
-async fn native_assurance_loop_fixture(
+async fn real_exec_integration_assurance_loop_fixture(
   label : String,
   surface : @control.ProviderSurfaceId,
 ) -> NativeAssuranceLoopFixture {
@@ -397,7 +397,7 @@ async test "real exec integration: a full surface refuses the Goal assurance loo
     return
   }
   let surface = @control.ProviderSurfaceId::ClaudeSubscriptionCli
-  let fixture = native_assurance_loop_fixture("refused", surface)
+  let fixture = real_exec_integration_assurance_loop_fixture("refused", surface)
   persist_assurance_loop_record(fixture, fixture.assurance)
   let epoch = current_native_goal_fencing_epoch()
   // A Part of some other Goal holds the one configured slot.
@@ -498,7 +498,7 @@ async test "real exec integration: a displaced assurance tick returns its slot" 
     return
   }
   let surface = @control.ProviderSurfaceId::ClaudeSubscriptionCli
-  let fixture = native_assurance_loop_fixture("displaced", surface)
+  let fixture = real_exec_integration_assurance_loop_fixture("displaced", surface)
   // The audit sandbox effect is already planned, so this tick's first act is to
   // ask for the slot that authorizing it needs.
   let planned = match

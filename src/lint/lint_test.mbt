@@ -657,3 +657,49 @@ test "preprocessor masks trait header inside string literal" {
       )
   }
 }
+
+///|
+test "wbtest top-level helpers are subject to test exec capture rules" {
+  let source =
+    #|fn helper() -> Unit {
+    #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
+    #|}
+  match lint_source("src/example/fixture_wbtest.mbt", source) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-exec-capture")
+    }
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "wbtest real exec integration prefixed helpers are exempt" {
+  let source =
+    #|fn real_exec_integration_fixture() -> Unit {
+    #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
+    #|}
+  match lint_source("src/example/fixture_wbtest.mbt", source) {
+    Ok(findings) => assert_eq(findings.length(), 0)
+    Err(e) => fail(e.message())
+  }
+}
+
+///|
+test "wbtest ordinary helpers remain enforced beside real exec fixtures" {
+  let source =
+    #|fn real_exec_integration_fixture() -> Unit {
+    #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
+    #|}
+    #|
+    #|fn ordinary_fixture() -> Unit {
+    #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
+    #|}
+  match lint_source("src/example/fixture_wbtest.mbt", source) {
+    Ok(findings) => {
+      assert_eq(findings.length(), 1)
+      assert_eq(findings[0].rule_id, "test-exec-capture")
+    }
+    Err(e) => fail(e.message())
+  }
+}
