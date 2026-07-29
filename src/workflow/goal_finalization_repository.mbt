@@ -97,6 +97,7 @@ pub fn persist_goal_finalization_record(
         outbox: {
           semantic_key: goal_finalization_event_key(request.record),
           payload_digest: record_digest,
+          owner_goal_id: Some(request.record.goal_id),
         },
         fault_point: request.fault_point,
       },
@@ -217,6 +218,7 @@ fn persist_finalization_authorized_advance(
         outbox: {
           semantic_key: goal_execution_event_key(succeeded),
           payload_digest: digest,
+          owner_goal_id: Some(succeeded.goal.id),
         },
         fault_point: None,
       },

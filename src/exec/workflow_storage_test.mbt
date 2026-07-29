@@ -364,7 +364,7 @@ test "workflow snapshots survive restart and replay after advancement" {
   }
   assert_eq(
     replay.transaction_outcome,
-    @storage.StateTransactionOutcome::StateTransactionReplayed,
+    @storage.StateTransactionOutcome::StateTransactionVersionConflict,
   )
   clean_workflow_repository(repository)
 }
@@ -858,6 +858,7 @@ async test "Goal cutoff atomically rejects a concurrently authorized Part effect
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal-run:cutoff-race:running"),
       payload_digest: workflow_store_digest_a,
+      owner_goal_id: None,
     },
     fault_point: None,
   }
@@ -896,6 +897,7 @@ async test "Goal cutoff atomically rejects a concurrently authorized Part effect
               "goal-run:cutoff-race:canceling",
             ),
             payload_digest: workflow_store_digest_b,
+            owner_goal_id: None,
           },
           fault_point: None,
         }

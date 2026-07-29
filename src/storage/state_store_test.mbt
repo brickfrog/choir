@@ -21,6 +21,7 @@ test "state transaction validator enforces version fence keys and digests" {
     outbox: {
       semantic_key: @storage.SemanticEventKey("goal:g-1:started"),
       payload_digest: digest_b,
+      owner_goal_id: None,
     },
     fault_point: None,
   }

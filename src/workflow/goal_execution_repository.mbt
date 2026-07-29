@@ -122,6 +122,7 @@ pub fn persist_goal_execution_record(
       outbox: {
         semantic_key: goal_execution_event_key(request.record),
         payload_digest: record_digest,
+        owner_goal_id: Some(request.record.goal.id),
       },
       fault_point: request.fault_point,
     }) {

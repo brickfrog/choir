@@ -95,6 +95,7 @@ pub fn persist_goal_publication_record(
         outbox: {
           semantic_key: goal_publication_event_key(request.record),
           payload_digest: record_digest,
+          owner_goal_id: Some(request.record.goal_id),
         },
         fault_point: request.fault_point,
       },

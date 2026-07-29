@@ -146,6 +146,7 @@ test "an archive response names the terminal state the park reads" {
       applied: true,
       refs_removed: 1,
       artifacts_released: 0,
+      outbox_events_released: 0,
     },
     dry_run=false,
   )
@@ -274,6 +275,7 @@ async test "an archived Goal releases only its own expired content" {
     Err(error) => fail("preview: " + error.message())
   }
   assert_false(preview.applied)
+  assert_eq(preview.outbox_events_released, 0)
   guard preview.decision
     is @workflow.GoalArchiveDecision::GoalArchivePlanned(planned) else {
     fail("a succeeded Goal was refused archival")
@@ -298,6 +300,7 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(deleted, [witness])
   assert_eq(applied.refs_removed, 1)
   assert_eq(applied.artifacts_released, 1)
+  assert_true(applied.outbox_events_released > 0)
   assert_false(
     artifact_store_contains(repository.artifact_store, mine).unwrap(),
   )
@@ -341,6 +344,7 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(replanned.retain_artifacts, [shared, permanent])
   assert_eq(again.refs_removed, 0)
   assert_eq(again.artifacts_released, 0)
+  assert_eq(again.outbox_events_released, 0)
   assert_eq(deleted, [witness])
   assert_true(
     artifact_store_contains(repository.artifact_store, shared).unwrap(),
@@ -472,5 +476,6 @@ async test "the dispatcher releases nothing for a dry-run request" {
   assert_eq(applied.get_json("archived"), Some(true.to_json()))
   assert_eq(applied.get_json("refs_removed"), Some((1).to_json()))
   assert_eq(applied.get_json("artifacts_released"), Some((1).to_json()))
+  assert_true(applied.get_json("outbox_events_released") != Some((0).to_json()))
   ignore(@sys.rm_rf(root))
 }

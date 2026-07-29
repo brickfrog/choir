@@ -86,14 +86,17 @@ pub(all) enum ControlStateResetReason {
   /// generations either side so a log says what moved as well as what broke.
   ControlRecordUndecodable(StateRecordKey, String, String)
   /// The store's tables were created by a DDL this build has declared it does
-  /// not write SQL against. Carries the recorded and expected versions.
+  /// not write SQL against and for which no exact migration is declared.
+  /// Carries the recorded and expected versions.
   ///
   /// Unlike a moved generation this is authority on its own, and the asymmetry
   /// is deliberate. A generation is a digest, so "different" is all it can say
   /// and the records are asked what it meant. A DDL version only moves because
   /// somebody edited the `CREATE TABLE` statements and said so in the same
-  /// commit, and no probe can recover from it: the records cannot be read to
-  /// settle the question, because reading them is the query that fails.
+  /// commit, and no generic probe can recover from it: the records cannot be
+  /// read to settle the question, because reading them is the query that
+  /// fails. A specifically declared additive DDL migration is the sole
+  /// exception.
   ControlStoreDdlSuperseded(Int, Int)
   /// No store, but the control root is not empty: a previous reset did not
   /// finish, so what remains belongs to no live generation.
@@ -113,6 +116,10 @@ pub(all) enum ControlStatePlan {
   /// schema that will be, so an adoption is distinguishable from a no-op in a
   /// log.
   ControlStateMigrate(String?, ControlStoreSchema)
+  /// The store uses a specifically supported older table shape. The host may
+  /// apply only the exact migration named by these versions, then record the
+  /// target schema. Every other DDL mismatch remains destructive.
+  ControlStateMigrateDdl(Int, ControlStoreSchema)
   ControlStateAuthorizedReset(ControlStateResetReason)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -124,8 +131,19 @@ pub(all) enum ControlStateDecision {
   /// matters cannot be read off the two strings, so the caller reads the stored
   /// records and returns through `decide_control_state_from_records`. Carries
   /// the recorded and expected generations so the answer can name both.
-  ControlStateProveRecordsDecodable(String, String)
+  ControlStateProveRecordsDecodable(String, String, Int?)
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+/// Declared compatibility policy for table shapes. Version 2 adds only the
+/// nullable outbox owner column; existing idempotency rows remain deliberately
+/// unowned and therefore unprunable.
+fn control_store_ddl_migration_supported(
+  recorded : Int,
+  expected : Int,
+) -> Bool {
+  recorded == 1 && expected == 2
+}
 
 ///|
 /// Decide what to do with the control store, as far as observing it allows.
@@ -160,6 +178,23 @@ pub fn decide_control_state(
   let ddl_stamped = observation.recorded_ddl_version !=
     control_store_unstamped_ddl_version
   if ddl_stamped && observation.recorded_ddl_version != expected.ddl_version {
+    if control_store_ddl_migration_supported(
+        observation.recorded_ddl_version,
+        expected.ddl_version,
+      ) {
+      return match observation.recorded_generation {
+        Some(recorded) if recorded != expected.generation =>
+          ControlStateProveRecordsDecodable(
+            recorded,
+            expected.generation,
+            Some(observation.recorded_ddl_version),
+          )
+        _ =>
+          ControlStatePlanned(
+            ControlStateMigrateDdl(observation.recorded_ddl_version, expected),
+          )
+      }
+    }
     return ControlStatePlanned(
       ControlStateAuthorizedReset(
         ControlStoreDdlSuperseded(
@@ -179,7 +214,7 @@ pub fn decide_control_state(
     Some(recorded) if recorded == expected.generation =>
       ControlStatePlanned(ControlStateMigrate(Some(recorded), expected))
     Some(recorded) =>
-      ControlStateProveRecordsDecodable(recorded, expected.generation)
+      ControlStateProveRecordsDecodable(recorded, expected.generation, None)
     // A readable store that never recorded its generation is this schema by
     // construction: an incompatible one would not have decoded. Adopting it is
     // what stops a lost marker from discarding healthy state.
@@ -208,12 +243,17 @@ pub fn decide_control_state_from_records(
   recorded_generation : String,
   expected : ControlStoreSchema,
   undecodable : StateRecordKey?,
+  ddl_migration_from? : Int? = None,
 ) -> ControlStatePlan {
   match undecodable {
     Some(key) =>
       ControlStateAuthorizedReset(
         ControlRecordUndecodable(key, recorded_generation, expected.generation),
       )
-    None => ControlStateMigrate(Some(recorded_generation), expected)
+    None =>
+      match ddl_migration_from {
+        Some(version) => ControlStateMigrateDdl(version, expected)
+        None => ControlStateMigrate(Some(recorded_generation), expected)
+      }
   }
 }

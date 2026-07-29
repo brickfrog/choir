@@ -159,6 +159,7 @@ fn persist_provider_surface_lease_record(
     outbox: {
       semantic_key: provider_surface_lease_event_key(record),
       payload_digest: record_digest,
+      owner_goal_id: None,
     },
     fault_point: None,
   })

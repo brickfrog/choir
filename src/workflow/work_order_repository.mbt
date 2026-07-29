@@ -75,6 +75,7 @@ pub fn persist_work_order_record(
       outbox: {
         semantic_key: work_order_event_key(request.record),
         payload_digest: digest,
+        owner_goal_id: None,
       },
       fault_point: request.fault_point,
     }) {
