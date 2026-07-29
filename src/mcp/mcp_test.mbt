@@ -94,6 +94,23 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_false(
     pull_request.get("required") == Some(["title", "body", "draft"].to_json()),
   )
+  guard goal_properties.get("parts") is Some(Object(parts_schema)) else {
+    fail("expected Parts schema")
+  }
+  guard parts_schema.get("items") is Some(Object(part_schema)) else {
+    fail("expected Part item schema")
+  }
+  guard part_schema.get("properties") is Some(Object(part_properties)) else {
+    fail("expected Part properties")
+  }
+  guard part_properties.get("verify_timeout_ms") is Some(Object(timeout_schema)) else {
+    fail("expected verification timeout schema")
+  }
+  assert_eq(
+    timeout_schema.get("enum"),
+    Some([60000, 120000, 180000, 300000, 600000].to_json()),
+  )
+  assert_eq(timeout_schema.get("maximum"), Some((600000).to_json()))
   assert_true(goal_submit.get("oneOf") is Some(Array(_)))
   guard goal_status_schema is Some(Object(goal_status)) else {
     fail("expected goal_status schema")

@@ -77,6 +77,25 @@ test "Conductor Part draft defaults an omitted provider to Codex" {
 }
 
 ///|
+test "Conductor verification timeout accepts its ceiling and rejects one hour" {
+  let accepted = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"test: verify timeout","body":"Verifies the bounded timeout."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"test: verify timeout","instruction":"x","repository_wide":true,"moon_args":["test"],"verify_timeout_ms":600000}]}
+    ),
+  ).unwrap()
+  assert_eq(accepted.parts[0].verification.timeout_ms, 600000L)
+  let rejected = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"p","goal_id":"g","pull_request":{"title":"test: verify timeout","body":"Verifies the bounded timeout."},"maximum_parallel_parts":1,"parts":[{"part_id":"a","commit_title":"test: verify timeout","instruction":"x","repository_wide":true,"moon_args":["test"],"verify_timeout_ms":3600000}]}
+    ),
+  )
+  guard rejected is Err(error) else {
+    fail("provider-level one-hour timeout was accepted for verification")
+  }
+  assert_true(error.message().contains("verify_timeout_ms is invalid"))
+}
+
+///|
 test "Conductor draft admits only the failover providers it names" {
   let draft = @workflow.decode_conductor_goal_draft(
     (
