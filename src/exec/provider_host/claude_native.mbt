@@ -320,8 +320,8 @@ async fn preflight_native_claude_mcp(
     config.mcp_executable,
     config.mcp_arguments,
   )
-  abort_if_hermetic_test_exec(
-    command_to_shell_string({
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_to_shell_string({
       program: "/usr/bin/bwrap",
       args: bounded_args,
       workdir: Some(config.sterile_root),
@@ -632,15 +632,15 @@ pub async fn run_native_claude_take(
     traced_program,
     traced_args,
   )
-  abort_if_hermetic_test_exec(
-    command_to_shell_string({
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_to_shell_string({
       program: "/usr/bin/bwrap",
       args: bounded_args,
       workdir: Some(config.sterile_root),
     }),
   )
   let collected = match
-    collect_interruptible_process(
+    @process_host.collect_interruptible_process(
       "/usr/bin/bwrap",
       bounded_args,
       native_claude_environment(
@@ -664,15 +664,17 @@ pub async fn run_native_claude_take(
     Err(error) => return Err(error)
   }
   let (exit_code, data) = match collected {
-    NativeInterruptibleProcessOutcome::NativeProcessCompleted(code, output) =>
-      (code, output)
-    NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessCompleted(
+      code,
+      output
+    ) => (code, output)
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
       return Err(
         @types.ChoirError::canceled(
           "Claude Take interrupted at the Goal cutoff",
         ),
       )
-    NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
       return Err(@types.ChoirError::timeout("Claude Take"))
   }
   let output = data

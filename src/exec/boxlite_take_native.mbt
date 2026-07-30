@@ -588,8 +588,8 @@ pub async fn start_native_boxlite_server(
     "--api-key",
     config.api_key,
   ]
-  abort_if_hermetic_test_exec(
-    command_for_program(config.binary, args, Some(config.root)),
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_for_program(config.binary, args, Some(config.root)),
   )
   let pid = @process.spawn_orphan(
     config.binary,
@@ -648,7 +648,7 @@ pub async fn start_native_boxlite_server(
     if ready.exit_code == 0 &&
       ready.output.contains("\"clone_enabled\":true") &&
       ready.output.contains("\"snapshots_enabled\":true") {
-      let node = match resolve_executable_in_path("node") {
+      let node = match @process_host.resolve_executable_in_path("node") {
         Some(value) => value
         None => {
           stop_and_reap_native_boxlite_child(pid)
@@ -658,7 +658,9 @@ pub async fn start_native_boxlite_server(
         }
       }
       let owner_script = match
-        resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirBoxLiteOwner) {
+        @process_host.resolve_native_runtime_asset(
+          @process_host.ChoirRuntimeAsset::ChoirBoxLiteOwner,
+        ) {
         Some(value) => value
         None => {
           stop_and_reap_native_boxlite_child(pid)
@@ -1341,7 +1343,7 @@ pub async fn prepare_native_boxlite_environment(
         Err(error) => return Err(error)
       }
     }
-    let nfc_library = match native_path_nfc_library_path() {
+    let nfc_library = match @process_host.native_path_nfc_library_path() {
       Some(value) => value
       None =>
         return Err(
@@ -1809,9 +1811,6 @@ pub fn native_boxlite_take_mcp_arguments(
 /// The environment variable the sandbox bridge reads its capability from.
 /// Provider configuration may name it; only the provider process environment
 /// ever holds its value.
-let native_boxlite_execution_token_variable : String = "CHOIR_BOXLITE_EXECUTION_TOKEN"
-
-///|
 /// The capability that authorizes exec inside this box.
 ///
 /// Never placed on a command line. `/proc/<pid>/cmdline` is world-readable

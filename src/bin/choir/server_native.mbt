@@ -625,6 +625,7 @@ async fn conductor_dispatch(
   @exec.dispatch_native_conductor_request(
     state.config.project_dir,
     conductor_authenticated_request(request),
+    capture=@process_host.capture_command_merged,
   ) catch {
     error => {
       @moontrace.error("Conductor adapter error", fields=[
@@ -1639,7 +1640,7 @@ fn conductor_start_goal_worker(
     Err(error) => return Err(error)
   }
   let pid = match
-    @exec.spawn_native_goal_worker(executable, state.config.project_dir) {
+    @process_host.spawn_native_goal_worker(executable, state.config.project_dir) {
     Ok(value) => value
     Err(error) => return Err(error)
   }

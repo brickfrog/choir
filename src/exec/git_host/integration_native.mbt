@@ -12,7 +12,7 @@ fn native_git_commit_date(epoch : Int64) -> String {
 }
 
 ///|
-fn native_git_environment(
+pub fn native_git_environment(
   commit : Bool,
   commit_epoch? : Int64 = 0L,
 ) -> Map[String, String] {
@@ -201,7 +201,7 @@ async fn capture_native_git_process(
   config : @git_integration.NativeGitIntegrationConfig,
   command : @git_integration.NativeGitIntegrationCommand,
 ) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
-  let git = match resolve_executable_in_path("git") {
+  let git = match @process_host.resolve_executable_in_path("git") {
     Some(path) => path
     None =>
       return Err(@types.ChoirError::git_error("git executable is unavailable"))
@@ -222,8 +222,8 @@ async fn capture_native_git_process(
     )
   }
   let spec = native_git_process_spec(config, command)
-  abort_if_hermetic_test_exec(
-    command_to_shell_string({
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_to_shell_string({
       program: git,
       args: spec.arguments,
       workdir: Some(spec.working_directory),
@@ -258,7 +258,9 @@ async fn capture_native_git_process(
     ignore(stdin_write.write(spec.stdin) catch { _ => () })
   }
   stdin_write.close()
-  let (output, _) = drain_process_stdout(stdout_read, capture_max_bytes)
+  let (output, _) = @process_host.drain_process_stdout(
+    stdout_read, @process_host.capture_max_bytes,
+  )
   let exit_code = @process.wait_pid(pid) catch {
     _ => return Err(@types.ChoirError::transport_error("Git wait failed"))
   }
@@ -267,7 +269,10 @@ async fn capture_native_git_process(
 
 ///|
 pub fn native_git_integration_adapters() -> @git_integration.NativeGitIntegrationAdapters {
-  { is_nfc: native_path_is_nfc, capture: capture_native_git_process }
+  {
+    is_nfc: @process_host.native_path_is_nfc,
+    capture: capture_native_git_process,
+  }
 }
 
 ///|

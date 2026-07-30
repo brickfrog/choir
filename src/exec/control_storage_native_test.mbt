@@ -175,7 +175,7 @@ async test "a store from another generation whose records read is adopted" {
       ),
     ),
   )
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(command) {
       reached.push("capture:" + command.args[0])
@@ -239,7 +239,7 @@ async test "a record this build cannot decode authorizes the reset" {
     @workflow.DurableRecordKind::DurableProcessExecution,
   )
   control_probe_record(control_root, prefix + "broken", Some(b"{}"))
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(command) {
       reached.push("beads:" + command.args[0])
@@ -324,7 +324,7 @@ async test "a current stamp with an undecodable record authorizes the reset" {
     @workflow.DurableRecordKind::DurableGoalExecutionRecord,
   )
   control_probe_record(control_root, prefix + "stale", Some(b"{}"))
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(command) {
       reached.push("beads:" + command.args[0])
@@ -394,7 +394,7 @@ async test "a current stamp with a decodable record remains untouched" {
       ),
     ),
   )
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(_) {
       reached.push("claims")
@@ -462,7 +462,7 @@ async test "tables built by a superseded DDL authorize the reset" {
       ),
     ),
   )
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(_) {
       reached.push("capture")
@@ -544,7 +544,7 @@ async test "tables that predate the DDL stamp are stamped, not destroyed" {
       ),
     ),
   )
-  let prepared = prepare_native_goal_control_state(
+  let prepared = prepare_native_goal_control_state_with(
     project_dir,
     capture=fn(_) {
       reached.push("capture")

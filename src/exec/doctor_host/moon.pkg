@@ -1,0 +1,13 @@
+import {
+  "choir/src/command",
+  "choir/src/sys",
+  "choir/src/harness",
+  "choir/src/sandbox",
+  "choir/src/exec/process_host",
+  "moonbitlang/async",
+}
+
+options(
+  "is-main": false,
+  targets: { "doctor_native.mbt": [ "native" ] },
+)

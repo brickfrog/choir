@@ -31,7 +31,7 @@ async fn create_native_goal_assurance_runtime(
         None => return Err(native_goal_execution_error("Moon home is absent"))
       }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => return Err(native_goal_execution_error("Node is absent"))
   }
@@ -276,7 +276,7 @@ async fn native_goal_assurance_post_tree(
     Err(error) => return Err(error)
   }
   let tree = match
-    observe_native_git_result_tree(
+    @git_host.observe_native_git_result_tree(
       runtime.config.git_workspace,
       suffix + "-" + take_id.0,
       seal.head_oid,
@@ -512,7 +512,11 @@ async fn execute_native_goal_audit(
     _ => return Err(native_goal_execution_error("audit outcome is invalid"))
   }
   match
-    native_audit_repair_findings(provider.terminal_response, total, blocking) {
+    @provider_host.native_audit_repair_findings(
+      provider.terminal_response,
+      total,
+      blocking,
+    ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }

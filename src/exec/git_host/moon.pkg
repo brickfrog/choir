@@ -1,0 +1,21 @@
+import {
+  "choir/src/control",
+  "choir/src/sys",
+  "choir/src/exec/git_integration",
+  "choir/src/exec/process_host",
+  "choir/src/storage",
+  "choir/src/types",
+  "moonbitlang/async",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+}
+
+options(
+  "is-main": false,
+  "max-concurrent-tests": 1,
+  targets: {
+    "integration_native.mbt": [ "native" ],
+    "workspace_native.mbt": [ "native" ],
+  },
+)

@@ -92,7 +92,7 @@ async test "delivered round admits one durable successor and replays it" {
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   let bead_json =
     #|[{"id":"choir-native-next","title":"Deliver native planning","description":"Implement the bounded native planned change.","acceptance_criteria":"The native test passes.","status":"open","priority":0,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-28T00:00:00Z"}]
-  let capture : async (Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")

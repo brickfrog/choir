@@ -327,7 +327,7 @@ fn start_conductor_environment(
   config : @types.Config,
   token : String,
   statusline_cache_key : String,
-) -> @exec.ConductorProcessEnvironment {
+) -> @process_host.ConductorProcessEnvironment {
   {
     conductor_token: token,
     statusline_cache_key,
@@ -343,7 +343,7 @@ async fn start_codex_conductor(
   statusline_cache_key : String,
   executable : String,
 ) -> Int {
-  let conductor_config : @exec.NativeCodexConductorConfig = {
+  let conductor_config : @provider_host.NativeCodexConductorConfig = {
     sterile_root: config.project_dir + "/.choir/run/codex-conductor",
     mcp_executable: executable,
     mcp_arguments: [
@@ -380,7 +380,7 @@ async fn start_codex_conductor(
       return 0
     }
     match
-      @exec.run_native_codex_conductor_turn(
+      @provider_host.run_native_codex_conductor_turn(
         conductor_config,
         prompt,
         thread_id~,
@@ -426,7 +426,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match @exec.validate_native_goal_runtime() {
+  match @process_host.validate_native_goal_runtime() {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir start: " + error.message() + "\n")
@@ -444,7 +444,10 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   }
   let statusline_cache_key = "conductor-" + @sys.get_pid().to_string()
   @async.run_async_main(async fn() {
-    match @exec.validate_native_beads_cli() {
+    match
+      @exec.validate_native_beads_cli(
+        capture=@process_host.capture_command_merged,
+      ) {
       Ok(_) => ()
       Err(error) => {
         @sys.write_stderr("choir start: " + error.message() + "\n")
@@ -509,7 +512,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
           executable,
           lean=options.lean,
         )
-        @exec.run_conductor_process(
+        @process_host.run_conductor_process(
           command,
           start_conductor_environment(config, token, statusline_cache_key),
         ) catch {

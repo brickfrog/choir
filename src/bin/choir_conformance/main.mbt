@@ -112,7 +112,7 @@ fn probe_mcp_launch(
   read_result_path? : String = "",
   fail_tool? : Bool = false,
 ) -> Result[(String, Array[String]), @types.ChoirError] {
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(path) => path
     None =>
       return Err(
@@ -264,7 +264,7 @@ async fn run_codex_live_cancellation_case(
   }
   let clock = @ref.new(500L)
   let cancellation_checks = @ref.new(0)
-  let result = @exec.run_native_codex_take(
+  let result = @provider_host.run_native_codex_take(
     {
       sterile_root: root,
       mcp_executable: mcp_command,
@@ -341,7 +341,7 @@ async fn run_codex_live_cancellation_case(
 fn unavailable_sandbox_mcp_launch(
   root : String,
 ) -> Result[(String, Array[String]), @types.ChoirError] {
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(path) => path
     None =>
       return Err(
@@ -531,7 +531,7 @@ async fn run_claude_required_tool_startup() -> Int {
     }
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: root + "/missing-mcp",
@@ -673,7 +673,7 @@ async fn run_claude_live_cancellation_case(
   }
   let clock = @ref.new(500L)
   let cancellation_checks = @ref.new(0)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -990,7 +990,7 @@ async fn run_claude_live_driver_probe(probe : ClaudeLiveDriverProbe) -> Int {
     ignore(@sys.setenv("CHOIR_CREDENTIAL_CANARY", credential_secret))
   }
   let clock = @ref.new(100L)
-  let provider_result = @exec.run_native_claude_take(
+  let provider_result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1189,7 +1189,7 @@ async fn run_claude_capability_death() -> Int {
     }
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1295,7 +1295,7 @@ async fn run_claude_parent_loss_child(root : String) -> Int {
     Err(_) => return 1
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1414,7 +1414,7 @@ async fn run_claude_parent_loss_live() -> Int {
   let provider_stopped = provider_pid > 1 &&
     !@sys.pgid_has_non_zombie_process(provider_pid)
   let reconciled = match
-    @exec.reconcile_native_claude_process_witness(sterile_root) {
+    @provider_host.reconcile_native_claude_process_witness(sterile_root) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -1620,7 +1620,7 @@ async fn run_codex_live_driver_at(
     ignore(@sys.rm_rf(root))
     return 1
   }
-  let provider_result = @exec.run_native_codex_take(
+  let provider_result = @provider_host.run_native_codex_take(
     {
       sterile_root: root,
       mcp_executable: mcp_command,
@@ -1768,7 +1768,7 @@ async fn run_codex_live_driver_at(
     }
   }
   let attestation = match
-    @exec.read_native_codex_initialization_attestation(root) {
+    @provider_host.read_native_codex_initialization_attestation(root) {
     Some(value) => value
     None => {
       @sys.write_stderr("Codex initialization attestation is absent\n")
@@ -1958,7 +1958,7 @@ async fn run_codex_host_boundary() -> Int {
   let root = "/tmp/choir-codex-host-boundary-conformance-" +
     @sys.get_pid().to_string()
   let evidence = match
-    @exec.capture_native_provider_host_boundary(
+    @provider_host.capture_native_provider_host_boundary(
       root,
       @harness.ProviderSurface::CodexCli,
     ) {
@@ -1993,7 +1993,7 @@ async fn run_codex_host_boundary() -> Int {
 async fn run_claude_host_boundary() -> Int {
   let root = "/tmp/choir-claude-host-boundary-" + @sys.get_pid().to_string()
   let evidence = match
-    @exec.capture_native_provider_host_boundary(
+    @provider_host.capture_native_provider_host_boundary(
       root,
       @harness.ProviderSurface::ClaudeCli,
     ) {
@@ -2380,7 +2380,7 @@ async fn codex_recovery_pgid_stopped(pgid : Int) -> Bool {
 
 ///|
 async fn run_codex_recovery_crash_child(root : String, point : String) -> Int {
-  let moon = match @exec.resolve_executable_in_path("moon") {
+  let moon = match @process_host.resolve_executable_in_path("moon") {
     Some(value) => value
     None => return -1
   }
@@ -3092,7 +3092,7 @@ async fn run_conductor_start_live() -> Int {
     @sys.write_stderr("failed to create Conductor start fixture\n")
     return 1
   }
-  let (build_code, build_output) = @exec.capture_command_merged({
+  let (build_code, build_output) = @process_host.capture_command_merged({
     program: "moon",
     args: ["build", "--target", "native", "src/bin/choir"],
     workdir: None,
@@ -3130,7 +3130,7 @@ async fn run_conductor_start_live() -> Int {
     cleanup_conductor_start_probe(root)
     return 1
   }
-  let (chmod_code, chmod_output) = @exec.capture_command_merged({
+  let (chmod_code, chmod_output) = @process_host.capture_command_merged({
     program: "/usr/bin/chmod",
     args: ["0700", fake_conductor],
     workdir: None,
@@ -3141,7 +3141,7 @@ async fn run_conductor_start_live() -> Int {
     return 1
   }
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
-  let (start_code, start_output) = @exec.capture_command_merged({
+  let (start_code, start_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
     args: [
       "PATH=" + root + "/bin:" + inherited_path,
@@ -3163,7 +3163,7 @@ async fn run_conductor_start_live() -> Int {
   let conductor_settings = @sys.read_file(
     root + "/.choir/state/claude-settings.json",
   )
-  let (mode_code, socket_mode) = @exec.capture_command_merged({
+  let (mode_code, socket_mode) = @process_host.capture_command_merged({
     program: "/usr/bin/stat",
     args: ["-c", "%a", socket_path],
     workdir: None,
@@ -3293,7 +3293,7 @@ async fn run_conductor_reconnect_live() -> Int {
     @sys.write_stderr("failed to create Conductor reconnect fixture\n")
     return 1
   }
-  let real_claude = match @exec.resolve_executable_in_path("claude") {
+  let real_claude = match @process_host.resolve_executable_in_path("claude") {
     Some(value) => value
     None => {
       ignore(@sys.rm_rf(root))
@@ -3301,7 +3301,7 @@ async fn run_conductor_reconnect_live() -> Int {
       return 1
     }
   }
-  let (build_code, build_output) = @exec.capture_command_merged({
+  let (build_code, build_output) = @process_host.capture_command_merged({
     program: "moon",
     args: ["build", "--target", "native", "src/bin/choir"],
     workdir: None,
@@ -3341,14 +3341,14 @@ async fn run_conductor_reconnect_live() -> Int {
     @sys.write_stderr("failed to prepare Conductor reconnect launchers\n")
     return 1
   }
-  let (chmod_code, _) = @exec.capture_command_merged({
+  let (chmod_code, _) = @process_host.capture_command_merged({
     program: "/usr/bin/chmod",
     args: ["0700", fake_claude, ambient_choir],
     workdir: None,
   })
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
   let fixture_path = root + "/bin:" + inherited_path
-  let (init_code, init_output) = @exec.capture_command_merged({
+  let (init_code, init_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
     args: ["PATH=" + fixture_path, choir_binary, "init"],
     workdir: Some(root),
@@ -3360,7 +3360,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -3381,7 +3381,13 @@ async fn run_conductor_reconnect_live() -> Int {
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
     #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","pull_request":{"title":"test: reconnect Conductor","body":"Exercises paused Goal visibility across Conductors."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
-  let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
+  let submitted = @exec.submit_native_conductor_goal_draft(
+    root,
+    draft,
+    capture,
+    nfc_available=@process_host.native_path_nfc_available,
+    is_nfc=@process_host.native_path_is_nfc,
+  )
   let paused = match submitted {
     Ok(report) if report.accepted =>
       @exec.steer_native_goal(
@@ -3507,8 +3513,8 @@ async fn exercise_boxlite_take(
   server : @exec.NativeBoxLiteServerHandle,
   active_server : @ref.Ref[@exec.NativeBoxLiteServerHandle],
   moon_home : String,
-  source : @exec.NativeGitWorkspaceSource,
-  git_config : @exec.NativeGitWorkspaceConfig,
+  source : @git_host.NativeGitWorkspaceSource,
+  git_config : @git_host.NativeGitWorkspaceConfig,
 ) -> Result[Map[String, Json], @types.ChoirError] {
   let prepared = match
     @exec.prepare_native_boxlite_environment(
@@ -3584,7 +3590,7 @@ async fn exercise_boxlite_take(
       ),
     )
   }
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None =>
       return Err(
@@ -3680,7 +3686,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let (candidate, path_evidence) = match
-    @exec.normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       git_config,
       "take-live-" + @sys.get_pid().to_string(),
       @control.GoalId("live-goal"),
@@ -3695,7 +3701,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let retried = match
-    @exec.normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       git_config,
       "take-live-" + @sys.get_pid().to_string(),
       @control.GoalId("live-goal"),
@@ -3822,7 +3828,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let assurance_tree = match
-    @exec.observe_native_git_result_tree(
+    @git_host.observe_native_git_result_tree(
       git_config,
       "assurance-live-" + @sys.get_pid().to_string(),
       source.commit_oid,
@@ -3882,7 +3888,7 @@ async fn capture_live_git(
   repository_root : String,
   arguments : Array[String],
 ) -> String {
-  @exec.capture_stdout_with_cwd(
+  @process_host.capture_stdout_with_cwd(
     "/usr/bin/git",
     arguments,
     Some(repository_root),
@@ -3923,7 +3929,7 @@ async fn run_boxlite_take_live() -> Int {
   let source_digest = @storage.artifact_digest(
     @utf8.encode("choir.live-source.v1\u{00}" + head + "\u{00}" + tree),
   )
-  let git_config : @exec.NativeGitWorkspaceConfig = {
+  let git_config : @git_host.NativeGitWorkspaceConfig = {
     repository_root,
     object_directory: capture_live_git(repository_root, [
       "rev-parse", "--path-format=absolute", "--git-path", "objects",
@@ -3933,7 +3939,7 @@ async fn run_boxlite_take_live() -> Int {
     staging_root,
   }
   let source = match
-    @exec.stage_native_git_workspace(
+    @git_host.stage_native_git_workspace(
       git_config,
       "source",
       @control.GitOid(head),
@@ -3947,7 +3953,7 @@ async fn run_boxlite_take_live() -> Int {
       return 1
     }
   }
-  let binary = match @exec.native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -3955,7 +3961,7 @@ async fn run_boxlite_take_live() -> Int {
       return 1
     }
   }
-  let runtime_dir = match @exec.native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -4097,7 +4103,11 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     let draft = @sys.read_file(args[5])
     let submission = match
       @exec.submit_native_conductor_goal_draft(
-        project_dir, draft, @exec.capture_command_merged,
+        project_dir,
+        draft,
+        @process_host.capture_command_merged,
+        nfc_available=@process_host.native_path_nfc_available,
+        is_nfc=@process_host.native_path_is_nfc,
       ) {
       Ok(value) => value
       Err(error) => {
@@ -4408,6 +4418,7 @@ async fn run_goal_tick_command(args : Array[String]) -> Unit {
     @exec.run_native_goal_execution_tick_with_forge(
       project_dir,
       @exec.synthetic_pull_request_forge_adapters(),
+      beads_capture=@process_host.capture_command_merged,
     )
   } else {
     @exec.run_native_goal_execution_tick(project_dir)

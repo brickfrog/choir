@@ -258,7 +258,7 @@ fn NativeConductorTask::to_json(self : NativeConductorTask) -> Json {
 
 ///|
 pub async fn validate_native_beads_cli(
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
   let (exit_code, output) = capture({
     program: "bd",
@@ -339,7 +339,7 @@ async fn native_conductor_capture_beads(
   project_dir : String,
   operation : String,
   arguments : Array[String],
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
   let (exit_code, output) = capture({
     program: "bd",
@@ -367,7 +367,7 @@ async fn native_conductor_capture_beads(
 async fn dispatch_native_task_list(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   // The query, the tracker arguments, the order, and the page are all decided
   // in @command; this boundary only runs the tracker and hands back its text.
@@ -411,7 +411,7 @@ async fn dispatch_native_task_list(
 /// would have shown.
 pub async fn native_conductor_bead_graph(
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[Array[@command.BeadRecord], @types.ChoirError] {
   let arguments = match
     @command.bead_query_arguments(@command.default_bead_query()) {
@@ -443,7 +443,7 @@ pub(all) struct NativeAppliedBeadBatch {
 pub async fn apply_native_bead_batch(
   project_dir : String,
   proposal : @command.BeadBatchProposal,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeAppliedBeadBatch, @types.ChoirError] {
   let graph = match native_conductor_bead_graph(project_dir, capture) {
     Ok(value) => value
@@ -514,7 +514,7 @@ pub async fn apply_native_bead_batch(
 async fn dispatch_native_task_batch(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   let proposal = match @command.bead_batch_from_json(request.args.values) {
     Ok(value) => value
@@ -560,7 +560,7 @@ async fn dispatch_native_task_batch(
 async fn dispatch_native_task_get(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
@@ -633,7 +633,7 @@ fn native_conductor_task_create_arguments(
 async fn dispatch_native_task_create(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   let (id, status, arguments) = match
     native_conductor_task_create_arguments(request) {
@@ -797,7 +797,7 @@ fn native_migration_bead_is_exact(
 pub async fn materialize_native_migration_beads(
   project_dir : String,
   proposals : Array[@migration.MigrationBeadProposal],
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeMigrationBeadMaterialization, @types.ChoirError] {
   let ordered = proposals.copy()
   ordered.sort_by(fn(left, right) { left.id.compare(right.id) })
@@ -954,7 +954,7 @@ pub async fn materialize_native_migration_beads(
 async fn dispatch_native_task_update(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   let id = match native_conductor_required_string(request, "id") {
     Ok(value) => value
@@ -1124,7 +1124,7 @@ test "Beads parser accepts both bd show and bd list dependency shapes" {
 async fn dispatch_native_goal_submit(
   project_dir : String,
   request : @types.Request,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   let token = match @sys.mint_local_token() {
     Some(value) => value
@@ -1135,7 +1135,14 @@ async fn dispatch_native_goal_submit(
     request,
     @control.GoalId("goal-" + token),
   )
-  match submit_native_conductor_goal_draft(project_dir, draft, capture) {
+  match
+    submit_native_conductor_goal_draft(
+      project_dir,
+      draft,
+      capture,
+      nfc_available=@process_host.native_path_nfc_available,
+      is_nfc=@process_host.native_path_is_nfc,
+    ) {
     Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
     Err(error) => @types.Response::err(error)
   }
@@ -1583,7 +1590,7 @@ pub async fn dispatch_native_conductor_request(
   project_dir : String,
   request : @types.Request,
   now? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
   if request.req_method != @types.WireMethod::WireToolsCall {
     return native_conductor_error("authenticated Conductor required")

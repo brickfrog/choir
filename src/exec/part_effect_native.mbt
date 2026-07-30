@@ -25,7 +25,7 @@ pub(all) struct NativePartEffectRuntimeConfig {
   repository : @workflow.PartWorkflowRepository
   repository_adapters : @workflow.PartWorkflowRepositoryAdapters
   server : NativeBoxLiteServerHandle
-  git_workspace : NativeGitWorkspaceConfig
+  git_workspace : @git_host.NativeGitWorkspaceConfig
   git_integration : @git_integration.NativeGitIntegrationConfig
   moon_home : String
   node_executable : String
@@ -539,7 +539,7 @@ async fn prepare_native_source_sandbox(
   }
   let source_digest = native_source_digest(commit_oid, tree_oid)
   let staged = match
-    stage_native_git_workspace(
+    @git_host.stage_native_git_workspace(
       runtime.config.git_workspace,
       lease.generation_id.0 + "-source",
       commit_oid,
@@ -583,12 +583,12 @@ fn native_claude_config(
   runtime : NativePartEffectRuntime,
   session : @control.HarnessSession,
   sandbox : NativeBoxLiteTakeSandbox,
-) -> Result[NativeClaudeDriverConfig, @types.ChoirError] {
+) -> Result[@provider_host.NativeClaudeDriverConfig, @types.ChoirError] {
   let arguments = match
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
-      owner_socket=Some(native_provider_owner_socket_path()),
+      owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -616,13 +616,13 @@ fn native_codex_config(
   runtime : NativePartEffectRuntime,
   session : @control.HarnessSession,
   sandbox : NativeBoxLiteTakeSandbox,
-) -> Result[NativeCodexDriverConfig, @types.ChoirError] {
+) -> Result[@provider_host.NativeCodexDriverConfig, @types.ChoirError] {
   let sterile_root = runtime.config.codex_root + session.id.0
   let arguments = match
     native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
-      owner_socket=Some(native_provider_owner_socket_path()),
+      owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -688,7 +688,7 @@ async fn run_native_part_provider_take(
         NativeAuditTake => @harness.ClaudeTakeRole::ClaudeAuditTake
       }
       let result = match
-        run_native_claude_take(
+        @provider_host.run_native_claude_take(
           config,
           session,
           claude_role,
@@ -732,7 +732,7 @@ async fn run_native_part_provider_take(
         NativeAuditTake => @harness.CodexTakeRole::CodexAuditTake
       }
       let result = match
-        run_native_codex_take(
+        @provider_host.run_native_codex_take(
           config,
           session,
           codex_role,
@@ -936,7 +936,7 @@ async fn normalize_native_implementation(
     return Err(native_part_effect_error("implementation result is misbound"))
   }
   let normalized = match
-    normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       runtime.config.git_workspace,
       "candidate-" + take_id.0,
       snapshot.goal.id,
@@ -1048,7 +1048,7 @@ async fn native_post_take_tree(
     Err(error) => return Err(error)
   }
   let normalized = match
-    normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       runtime.config.git_workspace,
       suffix + "-" + take_id.0,
       snapshot.goal.id,
@@ -1277,10 +1277,15 @@ async fn execute_native_audit(
     _ => return Err(native_part_effect_error("audit outcome is invalid"))
   }
   match
-    native_audit_repair_findings(provider.terminal_response, total, blocking) {
+    @provider_host.native_audit_repair_findings(
+      provider.terminal_response,
+      total,
+      blocking,
+    ) {
     Ok(repair_findings) =>
       for finding in repair_findings {
-        if finding.severity == NativeRepairFindingSeverity::Blocking {
+        if finding.severity ==
+          @provider_host.NativeRepairFindingSeverity::Blocking {
           for raw_path in finding.affected_paths {
             if !@control.mutation_declaration_covers(
                 snapshot.task_contract.mutation_declaration,
@@ -1423,7 +1428,7 @@ async fn execute_native_part_effect(
         runtime.config.git_integration,
         snapshot,
         intent,
-        native_git_integration_adapters(),
+        @git_host.native_git_integration_adapters(),
       )
   }
 }
@@ -1481,7 +1486,7 @@ async fn reconcile_unwitnessed_native_part_effect(
         runtime.config.git_integration,
         snapshot,
         intent,
-        native_git_integration_adapters(),
+        @git_host.native_git_integration_adapters(),
       )
     @workflow.PartEffectKind::PrepareImplementationSandbox(lease)
     | @workflow.PartEffectKind::PrepareVerificationSandbox(lease)
@@ -1550,7 +1555,7 @@ async fn reconcile_unwitnessed_native_part_effect(
       match session.surface {
         @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
           match
-            reconcile_native_claude_process_witness(
+            @provider_host.reconcile_native_claude_process_witness(
               runtime.config.claude_root + session.id.0,
             ) {
             Ok(_) => ()

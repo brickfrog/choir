@@ -1,6 +1,6 @@
 ///|
 async test "native Conductor task dispatch uses typed Beads commands" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "task_create",
@@ -53,7 +53,7 @@ async test "native Conductor pins the Beads CLI contract" {
 
 ///|
 async test "native Conductor maps completed tasks to closed Beads" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "task_update",
@@ -78,7 +78,7 @@ async test "native Conductor maps completed tasks to closed Beads" {
 
 ///|
 async test "native Conductor can normalize a contradictory Bead contract" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "task_update",
@@ -106,7 +106,7 @@ async test "native Conductor can normalize a contradictory Bead contract" {
 
 ///|
 async test "native Conductor exposes blocking Beads dependencies" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "task_get",
@@ -155,7 +155,7 @@ async test "native Conductor exposes blocking Beads dependencies" {
 
 ///|
 async test "native Conductor distinguishes Beads summaries from details" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let list_request : @types.Request = {
     req_method: @types.WireMethod::WireToolsCall,
     name: "task_list",
@@ -294,8 +294,8 @@ fn migration_materialized_task_json(
 async test "migration Beads materialize dependency-first and replay exactly" {
   let proposals = migration_materialization_proposals()
   let created : Array[String] = []
-  let commands : Array[@exec.Command] = []
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let commands : Array[@process_host.Command] = []
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     commands.push(command)
     if command.args[0] == "create" {
       created.push(command.args[3])
@@ -335,7 +335,7 @@ async test "migration Beads materialize dependency-first and replay exactly" {
 ///|
 async test "migration Bead conflict blocks before any mutation" {
   let proposals = migration_materialization_proposals()
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let result = materialize_native_migration_beads("/repo", proposals, capture=fn(
     command,
   ) {
@@ -366,7 +366,7 @@ async test "native Conductor rejects removed dispatch" {
 /// a shape the planner never asked for, so a rejected item must stop the whole
 /// delivery before anything is written.
 async test "a rejected batch item writes nothing at all" {
-  let commands : Array[@exec.Command] = []
+  let commands : Array[@process_host.Command] = []
   let graph =
     #|[{"id":"probe-a","title":"Existing","status":"open","priority":2,"issue_type":"task","updated_at":"2026-07-26T00:00:00Z"}]
   async fn batch(items : String) {
@@ -427,7 +427,7 @@ async test "a rejected batch item writes nothing at all" {
 ///|
 async test "WorkOrder batch delivery rereads exact applied Bead revisions" {
   let graph = @ref.new("[]")
-  let commands : Array[Command] = []
+  let commands : Array[@process_host.Command] = []
   let proposal : @command.BeadBatchProposal = {
     mutations: [
       {

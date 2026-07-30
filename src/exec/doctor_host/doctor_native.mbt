@@ -158,8 +158,8 @@ test "an unspawnable probe reads as absent, a failing one as a diagnosis" {
 ///|
 /// Read-only preflight over the full dependency matrix. Every host read is
 /// injected so the decision path stays testable without touching the host.
-pub async fn run_native_doctor(
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+pub async fn run_native_doctor_with(
+  capture~ : async (@process_host.Command) -> (Int, String),
   path_exists? : (String) -> Bool = @sys.path_entry_exists,
 ) -> @command.DoctorReport {
   let checks : Array[@command.DoctorCheck] = []
@@ -190,9 +190,14 @@ pub async fn run_native_doctor(
 }
 
 ///|
+pub async fn run_native_doctor() -> @command.DoctorReport {
+  run_native_doctor_with(capture=@process_host.capture_command_merged)
+}
+
+///|
 async test "the doctor probes every requirement and reports each host answer" {
   let probed : Array[String] = []
-  let report = run_native_doctor(
+  let report = run_native_doctor_with(
     capture=command => {
       probed.push(command.program)
       match command.program {

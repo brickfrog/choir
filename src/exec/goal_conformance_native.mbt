@@ -238,7 +238,7 @@ pub async fn run_native_goal_conformance_fixture(
     control_root: root + "/integration-control",
     goal_ref: git.goal_ref,
   }
-  let git_adapters = native_git_integration_adapters()
+  let git_adapters = @git_host.native_git_integration_adapters()
   let active = @ref.new(0)
   let maximum_active = @ref.new(0)
   let promotion_oids : Array[@control.GitOid] = []

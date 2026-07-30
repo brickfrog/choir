@@ -1,0 +1,26 @@
+import {
+  "choir/src/control",
+  "choir/src/sys",
+  "choir/src/harness",
+  "choir/src/migration",
+  "choir/src/exec/process_host",
+  "choir/src/storage",
+  "choir/src/types",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+
+options(
+  "is-main": false,
+  "max-concurrent-tests": 1,
+  targets: {
+    "boundary_native.mbt": [ "native" ],
+    "claude_native.mbt": [ "native" ],
+    "codex_native.mbt": [ "native" ],
+    "migration_output.mbt": [ "native" ],
+  },
+)

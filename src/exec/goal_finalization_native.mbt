@@ -51,7 +51,12 @@ async fn reconcile_native_goal_delivery_sources(
   repository : @workflow.PartWorkflowRepository,
   record : @workflow.GoalExecutionRecord,
 ) -> Result[Unit, @types.ChoirError] {
-  reconcile_native_integrated_part_sources(project_dir, repository, record)
+  reconcile_native_integrated_part_sources(
+    project_dir,
+    repository,
+    record,
+    capture=@process_host.capture_command_merged,
+  )
 }
 
 ///|

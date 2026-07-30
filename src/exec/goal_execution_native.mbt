@@ -168,7 +168,7 @@ async fn capture_native_goal_git(
   repository_root : String,
   arguments : Array[String],
 ) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
-  let environment = native_git_environment(false)
+  let environment = @git_host.native_git_environment(false)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
   environment["GIT_ATTR_NOSYSTEM"] = "1"
   environment["XDG_CONFIG_HOME"] = "/nonexistent"
@@ -273,7 +273,7 @@ async fn read_native_goal_initialization_ref(
   config : @git_integration.NativeGitIntegrationConfig,
   reference : String,
 ) -> Result[@control.GitOid?, @types.ChoirError] {
-  let adapters = native_git_integration_adapters()
+  let adapters = @git_host.native_git_integration_adapters()
   let captured = match (adapters.capture)(config, NativeGitReadRef(reference)) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -335,7 +335,7 @@ async fn apply_native_goal_branch_initialization(
   } else {
     @control.GitOid("0000000000000000000000000000000000000000")
   }
-  let adapters = native_git_integration_adapters()
+  let adapters = @git_host.native_git_integration_adapters()
   let applied = match
     (adapters.capture)(
       config,
@@ -592,7 +592,7 @@ fn plan_native_goal_conflict_repair(
         snapshot.identities.audit_session,
       ),
     },
-    native_path_is_nfc,
+    @process_host.native_path_is_nfc,
   )
 }
 
@@ -788,7 +788,7 @@ fn plan_native_audit_repair_attempt(
         snapshot.identities.audit_session,
       ),
     },
-    native_path_is_nfc,
+    @process_host.native_path_is_nfc,
   )
 }
 
@@ -817,7 +817,7 @@ fn plan_native_part_audit_repair(
   }
   let terminal_response = @utf8.decode_lossy(bytes)
   let affected_paths = match
-    native_blocking_audit_repair_paths(
+    @provider_host.native_blocking_audit_repair_paths(
       terminal_response,
       result.total_findings_count,
       result.blocking_findings_count,
@@ -1033,7 +1033,7 @@ fn plan_native_verification_repair_attempt(
         snapshot.identities.audit_session,
       ),
     },
-    native_path_is_nfc,
+    @process_host.native_path_is_nfc,
   )
 }
 
@@ -1345,7 +1345,7 @@ fn plan_native_part_recovery_retry(
           snapshot,
           snapshot.identities.implementation_session.surface,
         ),
-        native_path_is_nfc,
+        @process_host.native_path_is_nfc,
       ) {
       Ok(
         @workflow.PartOwnershipRepairDecision::PartOwnershipRepairPlanned(value)
@@ -1359,7 +1359,7 @@ fn plan_native_part_recovery_retry(
   @workflow.plan_part_recovery_retry(
     snapshot,
     fn(surface) { native_part_retry_identity_plan(snapshot, surface) },
-    native_path_is_nfc,
+    @process_host.native_path_is_nfc,
     now=@env.now().reinterpret_as_int64() / 1000L,
   )
 }
@@ -1491,7 +1491,7 @@ pub fn retry_native_goal_part(
         snapshot,
         snapshot.identities.implementation_session.surface,
       ),
-      native_path_is_nfc,
+      @process_host.native_path_is_nfc,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1984,11 +1984,11 @@ fn native_goal_boxlite_server_config(
     record.repository_id,
     record.goal.id,
   )
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -2022,11 +2022,11 @@ async fn cleanup_native_goal_runtime_identity(
   if !@sys.path_exists(runtime_root) {
     return Ok(())
   }
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -2086,7 +2086,7 @@ async fn capture_native_goal_source_state(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
   claim : @workflow.GoalSourceClaim,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[
   (@workflow.GoalSelectionSourcePart, NativeConductorTask)?,
   @types.ChoirError,
@@ -2133,7 +2133,7 @@ async fn observe_native_goal_source_claim(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
   claim : @workflow.GoalSourceClaim,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
   let (source, task) = match
     capture_native_goal_source_state(project_dir, record, claim, capture) {
@@ -2181,7 +2181,7 @@ async fn observe_native_goal_source_release(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
   claim : @workflow.GoalSourceClaim,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
   let (source, task) = match
     capture_native_goal_source_state(project_dir, record, claim, capture) {
@@ -2211,7 +2211,7 @@ async fn apply_native_goal_source_claim(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
   claim : @workflow.GoalSourceClaim,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
   let initial = match
     observe_native_goal_source_claim(project_dir, record, claim, capture) {
@@ -2246,7 +2246,7 @@ async fn apply_native_goal_source_release(
   project_dir : String,
   record : @workflow.GoalExecutionRecord,
   claim : @workflow.GoalSourceClaim,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GoalSourceClaimObservation, @types.ChoirError] {
   let initial = match
     observe_native_goal_source_release(project_dir, record, claim, capture) {
@@ -2468,7 +2468,7 @@ async fn advance_native_goal_source_claims(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   goal_id : @control.GoalId,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Bool, @types.ChoirError] {
   let stored = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
@@ -2562,7 +2562,7 @@ async fn advance_native_goal_source_releases(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   goal_id : @control.GoalId,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Bool, @types.ChoirError] {
   let stored = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
@@ -2644,7 +2644,9 @@ async fn advance_native_goal_source_releases(
 
 ///|
 pub fn native_goal_mcp_script() -> String? {
-  resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp)
+  @process_host.resolve_native_runtime_asset(
+    @process_host.ChoirRuntimeAsset::ChoirSandboxMcp,
+  )
 }
 
 ///|
@@ -3134,7 +3136,7 @@ async fn execute_native_goal_record(
         None => return Err(native_goal_execution_error("Moon home is absent"))
       }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => return Err(native_goal_execution_error("Node is absent"))
   }
@@ -3324,7 +3326,7 @@ async fn execute_native_goal_record(
     read_goal_head: async fn() {
       @git_integration.read_native_goal_head(
         integration,
-        native_git_integration_adapters(),
+        @git_host.native_git_integration_adapters(),
       )
     },
     release_provider_lease: fn(part_id) {
@@ -3409,7 +3411,7 @@ async fn reconcile_native_completed_bead(
   part_id : @control.PartId,
   source_content_digest : @control.Digest,
   claimant : String,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
   let current_output = match
     native_conductor_capture_beads(
@@ -3511,7 +3513,7 @@ pub async fn reconcile_native_integrated_part_sources(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   record : @workflow.GoalExecutionRecord,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
+  capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   let selection = match
@@ -3613,7 +3615,7 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
     Ok(_) => fail("source fixture was ambiguous")
     Err(error) => fail(error.message())
   }
-  let close_commands : Array[Command] = []
+  let close_commands : Array[@process_host.Command] = []
   let closed = reconcile_native_completed_bead(
     "/repo",
     repository_id,
@@ -3645,7 +3647,7 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
     ["update", "choir-source-sync", "--status", "closed", "--json"],
   ])
 
-  let replay_commands : Array[Command] = []
+  let replay_commands : Array[@process_host.Command] = []
   let replayed = reconcile_native_completed_bead(
     "/repo",
     repository_id,
@@ -3667,7 +3669,7 @@ async test "integrated Part source reconciliation is idempotent and drift safe" 
   assert_true(replayed is Ok(_))
   assert_eq(replay_commands.length(), 1)
 
-  let drift_commands : Array[Command] = []
+  let drift_commands : Array[@process_host.Command] = []
   let drifted = reconcile_native_completed_bead(
     "/repo",
     repository_id,
@@ -3720,7 +3722,7 @@ async fn persist_native_cancellation_observation(
       integration,
       stored.snapshot,
       intent,
-      native_git_integration_adapters(),
+      @git_host.native_git_integration_adapters(),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -4509,7 +4511,7 @@ async fn native_goal_seal_witness(
 }
 
 ///|
-async test "native Goal branch initialization atomically anchors both refs" {
+async test "real exec integration: native Goal branch initialization atomically anchors both refs" {
   if !@test_support.real_exec_integration_enabled() {
     return
   }
@@ -4587,7 +4589,7 @@ async test "native Goal branch initialization atomically anchors both refs" {
 }
 
 ///|
-async test "native Goal purge removes only an exact owned Git ref" {
+async test "real exec integration: native Goal purge removes only an exact owned Git ref" {
   if !@test_support.real_exec_integration_enabled() {
     return
   }
@@ -4646,7 +4648,7 @@ async test "native Goal purge removes only an exact owned Git ref" {
 }
 
 ///|
-async test "native Goal seal witness is exact and idempotent" {
+async test "real exec integration: native Goal seal witness is exact and idempotent" {
   if !@test_support.real_exec_integration_enabled() {
     return
   }
@@ -5064,7 +5066,7 @@ fn plan_and_persist_native_goal_audit_repairs(
   }
   let terminal_response = @utf8.decode_lossy(bytes)
   let affected_paths = match
-    native_blocking_audit_repair_paths(
+    @provider_host.native_blocking_audit_repair_paths(
       terminal_response,
       result.total_findings_count,
       result.blocking_findings_count,
@@ -6137,7 +6139,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
     merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
   },
   provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
-  beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
+  beads_capture~ : async (@process_host.Command) -> (Int, String),
   goal_id? : @control.GoalId? = None,
   executor_slot? : Int = 0,
   observe? : (@workflow.ProviderSurfaceTickReport) -> Unit = fn(_) { () },
@@ -6473,7 +6475,7 @@ pub async fn run_native_goal_execution_job_with_forge(
     merge_method: @types.PullRequestMergeMethod::PullRequestSquashMerge,
   },
   provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
-  beads_capture? : async (Command) -> (Int, String) = capture_command_merged,
+  beads_capture~ : async (@process_host.Command) -> (Int, String),
 ) -> (
   Result[@workflow.GoalExecutionTickResult, @types.ChoirError],
   Array[@workflow.ProviderSurfaceTickReport],
@@ -6541,6 +6543,7 @@ pub async fn run_native_goal_execution_job(
     native_pull_request_forge_adapters(),
     pull_request_delivery~,
     provider_capacity~,
+    beads_capture=@process_host.capture_command_merged,
   )
 }
 
@@ -6614,6 +6617,7 @@ pub async fn run_native_goal_execution_tick(
     native_pull_request_forge_adapters(),
     pull_request_delivery~,
     provider_capacity~,
+    beads_capture=@process_host.capture_command_merged,
   )
 }
 
@@ -6663,7 +6667,7 @@ async fn delete_native_goal_owned_git_ref(
 ///|
 async fn inspect_native_orphaned_goal_source_claims(
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[Array[NativeOrphanedGoalSourceClaim], @types.ChoirError] {
   let output = match
     native_conductor_capture_beads(
@@ -6704,7 +6708,7 @@ async fn inspect_native_orphaned_goal_source_claims(
 async fn release_native_orphaned_goal_source_claims(
   project_dir : String,
   claims : Array[NativeOrphanedGoalSourceClaim],
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[Int, @types.ChoirError] {
   let mut released = 0
   for claim in claims {
@@ -6840,11 +6844,11 @@ async fn cleanup_native_goal_runtime_at_key(
   key : String,
   repository_boxes_may_be_removed : Bool,
 ) -> Result[Unit, @types.ChoirError] {
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -7078,14 +7082,14 @@ pub fn probe_native_durable_record_decoding(
 /// Runtime cleanup and ref purging are injected for the same reason `capture`
 /// is: the branch that reaches them is the one worth driving in a test, and it
 /// otherwise needs a real repository to reach at all.
-pub async fn prepare_native_goal_control_state(
+pub async fn prepare_native_goal_control_state_with(
   project_dir : String,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
-  cleanup_runtime? : async (@workflow.RepositoryId, @control.GoalId) -> Result[
+  capture~ : async (@process_host.Command) -> (Int, String),
+  cleanup_runtime~ : async (@workflow.RepositoryId, @control.GoalId) -> Result[
     Unit,
     @types.ChoirError,
-  ] = cleanup_native_goal_runtime_identity,
-  purge_refs? : async (String) -> Result[Int, @types.ChoirError] = purge_native_goal_owned_git_ref_namespace,
+  ],
+  purge_refs~ : async (String) -> Result[Int, @types.ChoirError],
 ) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
   let control_root = project_dir + "/.choir/state/control"
   let workflow_store_path = control_root + "/workflow.db"
@@ -7177,6 +7181,18 @@ pub async fn prepare_native_goal_control_state(
 }
 
 ///|
+pub async fn prepare_native_goal_control_state(
+  project_dir : String,
+) -> Result[NativeGoalControlStatePreparation, @types.ChoirError] {
+  prepare_native_goal_control_state_with(
+    project_dir,
+    capture=@process_host.capture_command_merged,
+    cleanup_runtime=cleanup_native_goal_runtime_identity,
+    purge_refs=purge_native_goal_owned_git_ref_namespace,
+  )
+}
+
+///|
 /// Create an empty control store and record what schema it holds. The
 /// generation is written into the store rather than beside it, so losing it
 /// separately is not possible.
@@ -7200,7 +7216,7 @@ fn native_goal_control_state_create(
 ///|
 async fn cleanup_native_goal_owned_resources(
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   cleanup_runtime : async (@workflow.RepositoryId, @control.GoalId) -> Result[
     Unit,
     @types.ChoirError,
@@ -7249,7 +7265,7 @@ async fn cleanup_native_goal_owned_resources(
 ///|
 async test "orphaned claim reset releases only Choir-owned in-progress Beads" {
   let calls : Array[Array[String]] = []
-  let capture = async fn(command : Command) {
+  let capture = async fn(command : @process_host.Command) {
     @async.sleep(0)
     calls.push(command.args)
     if command.args[0] == "list" {
@@ -7284,20 +7300,32 @@ async test "orphaned claim reset releases only Choir-owned in-progress Beads" {
 }
 
 ///|
-pub async fn purge_native_goal_resources(
+pub async fn purge_native_goal_resources_with(
   project_dir : String,
-  capture? : async (Command) -> (Int, String) = capture_command_merged,
-  cleanup_runtime? : async (@workflow.RepositoryId, @control.GoalId) -> Result[
+  capture~ : async (@process_host.Command) -> (Int, String),
+  cleanup_runtime~ : async (@workflow.RepositoryId, @control.GoalId) -> Result[
     Unit,
     @types.ChoirError,
-  ] = cleanup_native_goal_runtime_identity,
-  purge_refs? : async (String) -> Result[Int, @types.ChoirError] = purge_native_goal_owned_git_ref_namespace,
+  ],
+  purge_refs~ : async (String) -> Result[Int, @types.ChoirError],
 ) -> Result[NativeGoalPurgeReport, @types.ChoirError] {
   // Purge is the recovery path for incompatible durable state, so it must not
   // decode that state before deleting it. Discover owned live resources from
   // Bead claims and exact Git namespaces instead.
   cleanup_native_goal_owned_resources(
     project_dir, capture, cleanup_runtime, purge_refs,
+  )
+}
+
+///|
+pub async fn purge_native_goal_resources(
+  project_dir : String,
+) -> Result[NativeGoalPurgeReport, @types.ChoirError] {
+  purge_native_goal_resources_with(
+    project_dir,
+    capture=@process_host.capture_command_merged,
+    cleanup_runtime=cleanup_native_goal_runtime_identity,
+    purge_refs=purge_native_goal_owned_git_ref_namespace,
   )
 }
 

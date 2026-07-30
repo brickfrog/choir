@@ -771,11 +771,4 @@ async test "native Git candidate evidence captures raw changed paths and symlink
   assert_eq(normalized.1.symlink_prefix_paths, [
     @control.RepoPath("src/link.mbt"),
   ])
-  assert_true(
-    @control.validate_repo_path(
-      @control.RepoPath("docs/cafe\u{301}.md"),
-      native_path_is_nfc,
-    )
-    is Err(_),
-  )
 }

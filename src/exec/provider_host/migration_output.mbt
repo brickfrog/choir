@@ -1,5 +1,5 @@
 ///|
-enum NativeMigrationFindingClass {
+pub(all) enum NativeMigrationFindingClass {
   RuleViolation
   RuleGap
   JudgeFalsePositive
@@ -13,13 +13,13 @@ enum NativeMigrationFindingClass {
 } derive(Debug, Eq, FromJson)
 
 ///|
-enum NativeMigrationFindingSeverity {
+pub(all) enum NativeMigrationFindingSeverity {
   Advisory
   Blocking
 } derive(Debug, Eq, FromJson)
 
 ///|
-enum NativeMigrationFindingDisposition {
+pub(all) enum NativeMigrationFindingDisposition {
   RepairPart
   ReviseContract
   ReviseJudge
@@ -27,7 +27,7 @@ enum NativeMigrationFindingDisposition {
 } derive(Debug, Eq, FromJson)
 
 ///|
-enum NativeMigrationFindingAnchorKind {
+pub(all) enum NativeMigrationFindingAnchorKind {
   Rule
   JudgeScenario
   InventoryUnit
@@ -38,7 +38,7 @@ enum NativeMigrationFindingAnchorKind {
 } derive(Debug, Eq, FromJson)
 
 ///|
-struct NativeMigrationFindingOutput {
+pub(all) struct NativeMigrationFindingOutput {
   class : NativeMigrationFindingClass
   severity : NativeMigrationFindingSeverity
   anchor_kind : NativeMigrationFindingAnchorKind
@@ -49,13 +49,13 @@ struct NativeMigrationFindingOutput {
 } derive(Debug, Eq, FromJson)
 
 ///|
-enum NativeRepairFindingSeverity {
+pub(all) enum NativeRepairFindingSeverity {
   Advisory
   Blocking
 } derive(Debug, Eq, FromJson)
 
 ///|
-struct NativeRepairFindingOutput {
+pub(all) struct NativeRepairFindingOutput {
   severity : NativeRepairFindingSeverity
   summary : String
   evidence : String
@@ -63,7 +63,7 @@ struct NativeRepairFindingOutput {
 } derive(Debug, Eq, FromJson)
 
 ///|
-struct NativeAuditStructuredOutput {
+pub(all) struct NativeAuditStructuredOutput {
   outcome : String
   total_findings : Int
   blocking_findings : Int
@@ -153,22 +153,24 @@ fn native_migration_audit_output_instruction() -> String {
 }
 
 ///|
-fn native_audit_repair_findings_with_nfc(
+pub fn native_audit_repair_findings_with_nfc(
   terminal_response : String,
   total : Int,
   blocking : Int,
   is_nfc : (String) -> Bool,
 ) -> Result[Array[NativeRepairFindingOutput], @types.ChoirError] {
   let json = @json.parse(terminal_response) catch {
-    _ => return Err(native_part_effect_error("audit output is invalid"))
+    _ => return Err(native_provider_output_error("audit output is invalid"))
   }
   let output : NativeAuditStructuredOutput = @json.from_json(json) catch {
-    _ => return Err(native_part_effect_error("audit output is invalid"))
+    _ => return Err(native_provider_output_error("audit output is invalid"))
   }
   let findings = match output.repair_findings {
     Some(value) => value
     None =>
-      return Err(native_part_effect_error("audit repair findings are missing"))
+      return Err(
+        native_provider_output_error("audit repair findings are missing"),
+      )
   }
   if output.total_findings != total ||
     output.blocking_findings != blocking ||
@@ -178,7 +180,9 @@ fn native_audit_repair_findings_with_nfc(
     } else {
       output.outcome != "findings"
     }) {
-    return Err(native_part_effect_error("audit repair finding counts disagree"))
+    return Err(
+      native_provider_output_error("audit repair finding counts disagree"),
+    )
   }
   let mut observed_blocking = 0
   for finding in findings {
@@ -189,14 +193,14 @@ fn native_audit_repair_findings_with_nfc(
       evidence_bytes.length() == 0 ||
       evidence_bytes.length() > 16384 {
       return Err(
-        native_part_effect_error("audit repair finding text is invalid"),
+        native_provider_output_error("audit repair finding text is invalid"),
       )
     }
     if finding.severity == NativeRepairFindingSeverity::Blocking {
       observed_blocking = observed_blocking + 1
       if finding.affected_paths.length() == 0 {
         return Err(
-          native_part_effect_error(
+          native_provider_output_error(
             "blocking audit repair finding has no affected path",
           ),
         )
@@ -208,32 +212,32 @@ fn native_audit_repair_findings_with_nfc(
         Ok(_) => ()
         Err(_) =>
           return Err(
-            native_part_effect_error("audit repair finding path is invalid"),
+            native_provider_output_error("audit repair finding path is invalid"),
           )
       }
     }
   }
   if observed_blocking != blocking {
     return Err(
-      native_part_effect_error("audit repair blocking count disagrees"),
+      native_provider_output_error("audit repair blocking count disagrees"),
     )
   }
   Ok(findings)
 }
 
 ///|
-fn native_audit_repair_findings(
+pub fn native_audit_repair_findings(
   terminal_response : String,
   total : Int,
   blocking : Int,
 ) -> Result[Array[NativeRepairFindingOutput], @types.ChoirError] {
   native_audit_repair_findings_with_nfc(
-    terminal_response, total, blocking, native_path_is_nfc,
+    terminal_response, total, blocking, @process_host.native_path_is_nfc,
   )
 }
 
 ///|
-fn native_blocking_audit_repair_paths(
+pub fn native_blocking_audit_repair_paths(
   terminal_response : String,
   total : Int,
   blocking : Int,
@@ -256,14 +260,14 @@ fn native_blocking_audit_repair_paths(
   }
   paths.sort()
   if blocking > 0 && paths.length() == 0 {
-    Err(native_part_effect_error("blocking audit has no repair paths"))
+    Err(native_provider_output_error("blocking audit has no repair paths"))
   } else {
     Ok(paths)
   }
 }
 
 ///|
-fn native_migration_finding_class(
+pub fn native_migration_finding_class(
   value : NativeMigrationFindingClass,
 ) -> @migration.MigrationFindingClass {
   match value {
@@ -282,7 +286,7 @@ fn native_migration_finding_class(
 }
 
 ///|
-fn native_migration_finding_severity(
+pub fn native_migration_finding_severity(
   value : NativeMigrationFindingSeverity,
 ) -> @migration.MigrationFindingSeverity {
   match value {
@@ -292,7 +296,7 @@ fn native_migration_finding_severity(
 }
 
 ///|
-fn native_migration_finding_disposition(
+pub fn native_migration_finding_disposition(
   value : NativeMigrationFindingDisposition,
 ) -> @migration.MigrationFindingDisposition {
   match value {
@@ -305,12 +309,14 @@ fn native_migration_finding_disposition(
 }
 
 ///|
-fn native_migration_finding_anchor(
+pub fn native_migration_finding_anchor(
   value : NativeMigrationFindingOutput,
   contract_ref : @control.MigrationContractRef,
 ) -> Result[@migration.MigrationFindingAnchor, @types.ChoirError] {
   if value.anchor_primary == "" || value.anchor_primary.contains("\u{00}") {
-    return Err(native_part_effect_error("migration finding anchor is invalid"))
+    return Err(
+      native_provider_output_error("migration finding anchor is invalid"),
+    )
   }
   match value.anchor_kind {
     Rule if value.anchor_secondary == "" =>
@@ -340,7 +346,8 @@ fn native_migration_finding_anchor(
               @migration.InventoryStableKey(secondary),
             ),
           )
-        _ => Err(native_part_effect_error("dependency anchor is incomplete"))
+        _ =>
+          Err(native_provider_output_error("dependency anchor is incomplete"))
       }
     OwnershipClaim if value.anchor_secondary == "" =>
       Ok(
@@ -357,141 +364,8 @@ fn native_migration_finding_anchor(
     Contract if value.anchor_secondary == "" &&
       value.anchor_primary == contract_ref.contract_id.0 =>
       Ok(@migration.MigrationFindingAnchor::Contract(contract_ref))
-    _ => Err(native_part_effect_error("migration finding anchor is invalid"))
-  }
-}
-
-///|
-fn native_migration_findings_artifact(
-  runtime : NativePartEffectRuntime,
-  snapshot : @workflow.PartWorkflowSnapshot,
-  take_id : @control.TakeId,
-  subject : @control.PartAuditSubject,
-  terminal_response : String,
-  total : Int,
-  blocking : Int,
-) -> Result[@control.ArtifactReference?, @types.ChoirError] {
-  let contract_ref = match snapshot.task_contract.migration_contract_ref {
-    Some(value) => value
-    None =>
-      return Err(native_part_effect_error("migration contract is missing"))
-  }
-  let json = @json.parse(terminal_response) catch {
     _ =>
-      return Err(native_part_effect_error("migration audit output is invalid"))
-  }
-  let output : NativeAuditStructuredOutput = @json.from_json(json) catch {
-    _ =>
-      return Err(native_part_effect_error("migration audit output is invalid"))
-  }
-  let drafts = match output.migration_findings {
-    Some(value) => value
-    None =>
-      return Err(
-        native_part_effect_error("migration audit findings are missing"),
-      )
-  }
-  if output.total_findings != total ||
-    output.blocking_findings != blocking ||
-    drafts.length() != total ||
-    (if total == 0 {
-      output.outcome != "passed"
-    } else {
-      output.outcome != "findings"
-    }) {
-    return Err(native_part_effect_error("migration audit counts disagree"))
-  }
-  let mut observed_blocking = 0
-  for finding in drafts {
-    if finding.severity == NativeMigrationFindingSeverity::Blocking {
-      observed_blocking = observed_blocking + 1
-    }
-  }
-  if observed_blocking != blocking {
-    return Err(native_part_effect_error("migration blocking count disagrees"))
-  }
-  if total == 0 {
-    return Ok(None)
-  }
-  let findings : Array[@migration.MigrationFinding] = []
-  for index, draft in drafts {
-    let evidence_bytes = @utf8.encode(draft.evidence)
-    if evidence_bytes.length() == 0 || evidence_bytes.length() > 16384 {
-      return Err(
-        native_part_effect_error("migration finding evidence is invalid"),
-      )
-    }
-    let evidence = match
-      adopt_native_effect_artifact(
-        runtime,
-        snapshot.goal.id,
-        evidence_bytes,
-        @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
-      ) {
-      Ok(value) => value
-      Err(error) => return Err(error)
-    }
-    let anchor = match native_migration_finding_anchor(draft, contract_ref) {
-      Ok(value) => value
-      Err(error) => return Err(error)
-    }
-    let class = native_migration_finding_class(draft.class)
-    let pattern_key = @migration.migration_finding_pattern_key(1, class, anchor)
-    let identity = @storage.artifact_digest(
-      @utf8.encode(
-        "choir.migration-finding-id.v1\u{00}" +
-        take_id.0 +
-        "\u{00}" +
-        subject.subject_digest.0 +
-        "\u{00}" +
-        index.to_string() +
-        "\u{00}" +
-        pattern_key.0 +
-        "\u{00}" +
-        evidence.digest.0,
-      ),
-    )
-    findings.push({
-      schema_version: 1,
-      id: @migration.MigrationFindingId("finding-" + identity.0),
-      pattern_key,
-      class,
-      severity: native_migration_finding_severity(draft.severity),
-      anchor,
-      audit_take_id: take_id,
-      audit_subject_digest: subject.subject_digest,
-      evidence_digest: evidence.digest,
-      disposition: native_migration_finding_disposition(draft.disposition),
-    })
-  }
-  let artifact : @migration.MigrationFindingsArtifact = {
-    schema_version: 1,
-    findings,
-  }
-  match @migration.validate_migration_findings_artifact(artifact) {
-    Ok(_) => ()
-    Err(error) => return Err(error)
-  }
-  guard json is Object(output_fields) else {
-    return Err(native_part_effect_error("migration audit output is invalid"))
-  }
-  guard artifact.to_json() is Object(migration_fields) else {
-    return Err(
-      native_part_effect_error("migration findings artifact is invalid"),
-    )
-  }
-  for key, value in migration_fields {
-    output_fields[key] = value
-  }
-  match
-    adopt_native_effect_artifact(
-      runtime,
-      snapshot.goal.id,
-      @utf8.encode(output_fields.to_json().stringify(indent=0)),
-      @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
-    ) {
-    Ok(value) => Ok(Some(value))
-    Err(error) => Err(error)
+      Err(native_provider_output_error("migration finding anchor is invalid"))
   }
 }
 
@@ -526,4 +400,87 @@ test "native migration audit output decodes closed finding domains" {
     Ok([{ affected_paths: ["src/example.mbt"], .. }]) => ()
     _ => fail("expected one routable repair finding")
   }
+}
+
+///|
+pub fn native_work_order_planning_output_schema() -> String {
+  let string_array : Json = {
+    "type": "array".to_json(),
+    "items": { "type": "string".to_json() }.to_json(),
+  }.to_json()
+  let nullable_string : Json = { "type": ["string", "null"].to_json() }.to_json()
+  let mutation : Json = {
+    "type": "object".to_json(),
+    "properties": {
+      "id": { "type": "string".to_json() }.to_json(),
+      "intent": {
+        "type": "string".to_json(),
+        "enum": ["BeadCreateIntent", "BeadUpdateIntent"].to_json(),
+      }.to_json(),
+      "title": nullable_string,
+      "description": nullable_string,
+      "acceptance_criteria": nullable_string,
+      "notes": nullable_string,
+      "priority": { "type": ["string", "null"].to_json() }.to_json(),
+      "issue_type": { "type": ["string", "null"].to_json() }.to_json(),
+      "labels": {
+        "anyOf": [string_array, { "type": "null".to_json() }.to_json()].to_json(),
+      }.to_json(),
+      "blocked_by": string_array,
+      "parent": nullable_string,
+      "expected_updated_at": nullable_string,
+    }.to_json(),
+    "required": [
+      "id", "intent", "title", "description", "acceptance_criteria", "notes", "priority",
+      "issue_type", "labels", "blocked_by", "parent", "expected_updated_at",
+    ].to_json(),
+    "additionalProperties": false.to_json(),
+  }.to_json()
+  let schema : Json = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema".to_json(),
+    "type": "object".to_json(),
+    "properties": {
+      "findings": {
+        "type": "array".to_json(),
+        "items": {
+          "type": "object".to_json(),
+          "properties": {
+            "summary": { "type": "string".to_json() }.to_json(),
+            "evidence": { "type": "string".to_json() }.to_json(),
+            "related_bead_ids": string_array,
+          }.to_json(),
+          "required": ["summary", "evidence", "related_bead_ids"].to_json(),
+          "additionalProperties": false.to_json(),
+        }.to_json(),
+      }.to_json(),
+      "eligible_work_observed": { "type": "boolean".to_json() }.to_json(),
+      "bead_mutations": {
+        "type": "object".to_json(),
+        "properties": {
+          "mutations": { "type": "array".to_json(), "items": mutation }.to_json(),
+        }.to_json(),
+        "required": ["mutations"].to_json(),
+        "additionalProperties": false.to_json(),
+      }.to_json(),
+      "primary_target_ids": string_array,
+      "prerequisite_closure_ids": string_array,
+      // Transport the nested draft as JSON text. Strict structured-output
+      // implementations require closed schemas for nested objects; Choir
+      // parses this back before the authoritative workflow decode.
+      "finite_goal": { "type": ["string", "null"].to_json() }.to_json(),
+    }.to_json(),
+    "required": [
+      "findings", "eligible_work_observed", "bead_mutations", "primary_target_ids",
+      "prerequisite_closure_ids", "finite_goal",
+    ].to_json(),
+    "additionalProperties": false.to_json(),
+  }.to_json()
+  schema.stringify(indent=0) + "\n"
+}
+
+///|
+
+///|
+fn native_provider_output_error(message : String) -> @types.ChoirError {
+  @types.ChoirError::workspace_error("native Part effect: " + message)
 }

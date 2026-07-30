@@ -78,82 +78,6 @@ fn native_work_order_planning_error(detail : String) -> @types.ChoirError {
 /// Provider-side shape for the advisory planning proposal. The authoritative
 /// decoder still lives in workflow and rejects every malformed or
 /// authority-expanding value before any tracker or Goal effect is planned.
-fn native_work_order_planning_output_schema() -> String {
-  let string_array : Json = {
-    "type": "array".to_json(),
-    "items": { "type": "string".to_json() }.to_json(),
-  }.to_json()
-  let nullable_string : Json = { "type": ["string", "null"].to_json() }.to_json()
-  let mutation : Json = {
-    "type": "object".to_json(),
-    "properties": {
-      "id": { "type": "string".to_json() }.to_json(),
-      "intent": {
-        "type": "string".to_json(),
-        "enum": ["BeadCreateIntent", "BeadUpdateIntent"].to_json(),
-      }.to_json(),
-      "title": nullable_string,
-      "description": nullable_string,
-      "acceptance_criteria": nullable_string,
-      "notes": nullable_string,
-      "priority": { "type": ["string", "null"].to_json() }.to_json(),
-      "issue_type": { "type": ["string", "null"].to_json() }.to_json(),
-      "labels": {
-        "anyOf": [string_array, { "type": "null".to_json() }.to_json()].to_json(),
-      }.to_json(),
-      "blocked_by": string_array,
-      "parent": nullable_string,
-      "expected_updated_at": nullable_string,
-    }.to_json(),
-    "required": [
-      "id", "intent", "title", "description", "acceptance_criteria", "notes", "priority",
-      "issue_type", "labels", "blocked_by", "parent", "expected_updated_at",
-    ].to_json(),
-    "additionalProperties": false.to_json(),
-  }.to_json()
-  let schema : Json = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema".to_json(),
-    "type": "object".to_json(),
-    "properties": {
-      "findings": {
-        "type": "array".to_json(),
-        "items": {
-          "type": "object".to_json(),
-          "properties": {
-            "summary": { "type": "string".to_json() }.to_json(),
-            "evidence": { "type": "string".to_json() }.to_json(),
-            "related_bead_ids": string_array,
-          }.to_json(),
-          "required": ["summary", "evidence", "related_bead_ids"].to_json(),
-          "additionalProperties": false.to_json(),
-        }.to_json(),
-      }.to_json(),
-      "eligible_work_observed": { "type": "boolean".to_json() }.to_json(),
-      "bead_mutations": {
-        "type": "object".to_json(),
-        "properties": {
-          "mutations": { "type": "array".to_json(), "items": mutation }.to_json(),
-        }.to_json(),
-        "required": ["mutations"].to_json(),
-        "additionalProperties": false.to_json(),
-      }.to_json(),
-      "primary_target_ids": string_array,
-      "prerequisite_closure_ids": string_array,
-      // Transport the nested draft as JSON text. Strict structured-output
-      // implementations require closed schemas for nested objects; Choir
-      // parses this back before the authoritative workflow decode.
-      "finite_goal": { "type": ["string", "null"].to_json() }.to_json(),
-    }.to_json(),
-    "required": [
-      "findings", "eligible_work_observed", "bead_mutations", "primary_target_ids",
-      "prerequisite_closure_ids", "finite_goal",
-    ].to_json(),
-    "additionalProperties": false.to_json(),
-  }.to_json()
-  schema.stringify(indent=0) + "\n"
-}
-
-///|
 fn native_work_order_planner_instruction(
   record : @workflow.WorkOrderRecord,
   round : @workflow.WorkOrderPlanningRound,
@@ -310,11 +234,11 @@ fn native_work_order_planner_server_config(
   executor_slot : Int,
 ) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
   let key = native_work_order_runtime_key(record, round)
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -425,7 +349,7 @@ async fn execute_native_work_order_planner(
   let repository = native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   let instruction = native_work_order_planner_instruction(record, round)
-  let schema = native_work_order_planning_output_schema()
+  let schema = @provider_host.native_work_order_planning_output_schema()
   let instruction_digest = @storage.artifact_digest(@utf8.encode(instruction))
   let schema_digest = @storage.artifact_digest(@utf8.encode(schema))
   let stored = match
@@ -445,7 +369,7 @@ async fn execute_native_work_order_planner(
   }
   let snapshot = match
     capture_native_work_order_planning_snapshot(
-      project_dir, capture_command_merged,
+      project_dir, @process_host.capture_command_merged,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -483,7 +407,7 @@ async fn execute_native_work_order_planner(
     ),
   )
   let staged = match
-    stage_native_git_workspace(
+    @git_host.stage_native_git_workspace(
       {
         repository_root: snapshot.repository_root,
         object_directory: snapshot.object_directory,
@@ -574,7 +498,7 @@ async fn execute_native_work_order_planner(
       return Err(error)
     }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => {
       cleanup_native_work_order_planner_runtime(
@@ -600,7 +524,7 @@ async fn execute_native_work_order_planner(
     native_boxlite_take_mcp_arguments(
       sandbox,
       mcp_script,
-      owner_socket=Some(native_provider_owner_socket_path()),
+      owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
     ) {
     Ok(value) => value
     Err(error) => {
@@ -648,7 +572,7 @@ async fn execute_native_work_order_planner(
     @control.ProviderSurfaceId::ClaudeSubscriptionCli => {
       let tools = @sandbox.boxlite_assurance_mcp_tools()
       match
-        run_native_claude_take(
+        @provider_host.run_native_claude_take(
           {
             sterile_root: server_config.root + "/providers/claude",
             mcp_executable: node,
@@ -684,7 +608,7 @@ async fn execute_native_work_order_planner(
     @control.ProviderSurfaceId::CodexSubscriptionCli => {
       let tools = @sandbox.boxlite_assurance_codex_mcp_tools()
       match
-        run_native_codex_take(
+        @provider_host.run_native_codex_take(
           {
             sterile_root: server_config.root + "/providers/codex",
             mcp_executable: node,
@@ -821,7 +745,7 @@ fn recover_native_work_order_planner(
     @utf8.encode(native_work_order_planner_instruction(record, round)),
   )
   let schema_digest = @storage.artifact_digest(
-    @utf8.encode(native_work_order_planning_output_schema()),
+    @utf8.encode(@provider_host.native_work_order_planning_output_schema()),
   )
   let stored = match
     @workflow.load_work_order_planner_attempt(repository, adapters, round) {
@@ -897,7 +821,7 @@ fn native_work_order_planning_adapters(
   {
     capture_snapshot: async fn() {
       capture_native_work_order_planning_snapshot(
-        project_dir, capture_command_merged,
+        project_dir, @process_host.capture_command_merged,
       )
     },
     execute_planner: async fn(record, round) {
@@ -928,7 +852,7 @@ fn native_work_order_planning_adapters(
     },
     deliver_beads: async fn(round_id, proposal) {
       deliver_native_work_order_beads(
-        project_dir, round_id, proposal, capture_command_merged,
+        project_dir, round_id, proposal, @process_host.capture_command_merged,
       )
     },
     now: fn() { @env.now().reinterpret_as_int64() / 1000L },
@@ -957,7 +881,7 @@ pub async fn run_native_work_order_execution_job(
     async fn(work_order_id) {
       let snapshot = match
         capture_native_work_order_planning_snapshot(
-          project_dir, capture_command_merged,
+          project_dir, @process_host.capture_command_merged,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -966,7 +890,7 @@ pub async fn run_native_work_order_execution_job(
         project_dir,
         work_order_id,
         snapshot,
-        capture_command_merged,
+        @process_host.capture_command_merged,
         lease.fencing_epoch,
       )
     },
@@ -1017,7 +941,7 @@ async fn native_work_order_capture(
   project_dir : String,
   program : String,
   arguments : Array[String],
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[String, @types.ChoirError] {
   let (status, output) = capture({
     program,
@@ -1040,7 +964,7 @@ async fn native_work_order_capture(
 /// is planned against. Later admission compares these digests after delivery.
 pub async fn capture_native_work_order_planning_snapshot(
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeWorkOrderPlanningSnapshot, @types.ChoirError] {
   let root = match
     native_work_order_capture(
@@ -1115,7 +1039,7 @@ pub async fn deliver_native_work_order_beads(
   project_dir : String,
   _round_id : @workflow.WorkOrderPlanningRoundId,
   proposal : @command.BeadBatchProposal,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeWorkOrderBeadDeliveryReceipt, @types.ChoirError] {
   let applied = match apply_native_bead_batch(project_dir, proposal, capture) {
     Ok(value) => value
@@ -1134,7 +1058,7 @@ pub async fn admit_observed_native_work_order_successor(
   project_dir : String,
   work_order_id : @workflow.WorkOrderId,
   snapshot : NativeWorkOrderPlanningSnapshot,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch : @control.FencingEpoch,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let state_root = project_dir + "/.choir/state/control"
@@ -1228,6 +1152,8 @@ pub async fn admit_observed_native_work_order_successor(
       work_order_authority=Some(stored.record),
       work_order_round_id=Some(round.id),
       work_order_primary_targets=Some(proposal.primary_target_ids),
+      nfc_available=@process_host.native_path_nfc_available,
+      is_nfc=@process_host.native_path_is_nfc,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1248,7 +1174,7 @@ pub async fn admit_observed_native_work_order_successor(
 pub async fn admit_native_work_order_successor(
   project_dir : String,
   work_order_id : @workflow.WorkOrderId,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let snapshot = match

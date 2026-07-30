@@ -121,7 +121,7 @@ async test "native Conductor submission captures Beads and persists once" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -490,7 +490,7 @@ async test "native Conductor submission captures Beads and persists once" {
     new="proposal-native-reuse",
   )
   let conflicting_capture_called = @ref.new(false)
-  let conflicting_capture : async (@exec.Command) -> (Int, String) = _ => {
+  let conflicting_capture : async (@process_host.Command) -> (Int, String) = _ => {
     conflicting_capture_called.val = true
     (-1, "identity conflict must short-circuit host capture")
   }
@@ -538,7 +538,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
   let parent_goal_id = @control.GoalId("goal-stack-parent")
   let child_goal_id = @control.GoalId("goal-stack-child")
   let parent_ref = @workflow.goal_execution_ref(parent_goal_id)
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -740,7 +740,7 @@ async test "native Conductor submission rejects a detached checkout" {
   if !@sys.create_dir_all(root) {
     fail("failed to create detached submission root")
   }
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (1, "")
       _ => (-1, "unexpected capture")
@@ -774,7 +774,7 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -915,7 +915,7 @@ async test "module-prefixed mutation paths are rejected before persistence" {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -1022,7 +1022,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   }
   let base_commit = "cccccccccccccccccccccccccccccccccccccccc"
   let base_tree = "dddddddddddddddddddddddddddddddddddddddd"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -1104,7 +1104,7 @@ async test "Goal runtime purge is a no-op without durable state" {
   let root = "/tmp/choir-goal-purge-empty-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   assert_true(@sys.create_dir_all(root))
-  let capture = async fn(_command : Command) {
+  let capture = async fn(_command : @process_host.Command) {
     @async.sleep(0)
     (0, "[]")
   }
@@ -1120,7 +1120,12 @@ async test "Goal runtime purge is a no-op without durable state" {
     Ok(0)
   }
   assert_eq(
-    purge_native_goal_resources(root, capture~, cleanup_runtime~, purge_refs~).unwrap(),
+    purge_native_goal_resources_with(
+      root,
+      capture~,
+      cleanup_runtime~,
+      purge_refs~,
+    ).unwrap(),
     { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
   )
   ignore(@sys.rm_rf(root))
@@ -1137,7 +1142,7 @@ async test "Goal runtime purge does not decode incompatible durable state" {
       "not a compatible workflow database",
     ),
   )
-  let capture = async fn(_command : Command) {
+  let capture = async fn(_command : @process_host.Command) {
     @async.sleep(0)
     (0, "[]")
   }
@@ -1153,7 +1158,12 @@ async test "Goal runtime purge does not decode incompatible durable state" {
     Ok(0)
   }
   assert_eq(
-    purge_native_goal_resources(root, capture~, cleanup_runtime~, purge_refs~).unwrap(),
+    purge_native_goal_resources_with(
+      root,
+      capture~,
+      cleanup_runtime~,
+      purge_refs~,
+    ).unwrap(),
     { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
   )
   assert_true(

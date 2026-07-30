@@ -287,7 +287,7 @@ test "moon.mod parsing uses the declared module identity" {
 
 ///|
 async fn validate_native_goal_mutation_paths(
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   project_dir : String,
   base_tree_oid : @control.GitOid,
   draft : @workflow.ConductorGoalDraft,
@@ -423,7 +423,7 @@ fn native_goal_submission_oid(value : String) -> @control.GitOid? {
 
 ///|
 async fn native_goal_submission_capture(
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   project_dir : String,
   program : String,
   arguments : Array[String],
@@ -450,7 +450,7 @@ async fn native_goal_submission_capture(
 ///|
 async fn capture_native_goal_branch_ref(
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GitRefName, @types.ChoirError] {
   let value = match
     native_goal_submission_capture(
@@ -493,7 +493,7 @@ fn native_goal_submission_source_part(
 async fn capture_native_goal_selection_source(
   draft : @workflow.ConductorGoalDraft,
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeGoalSelectionSourceCapture, @types.ChoirError] {
   let root = match
     native_goal_submission_capture(
@@ -567,7 +567,7 @@ test "an unpushed base is rejected before a Goal can bake it into a PR" {
 /// configured upstream cannot be checked and is reported as zero rather than
 /// blocking submission on a repository that does not track a remote.
 async fn native_goal_base_ahead_of_upstream(
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   project_dir : String,
   base_ref : @workflow.GitRefName,
 ) -> Int {
@@ -601,7 +601,7 @@ async fn capture_native_goal_selection_snapshot(
   source : NativeGoalSelectionSourceCapture,
   base_ref : @workflow.GitRefName,
   project_dir : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[@workflow.GoalSelectionSnapshot, @types.ChoirError] {
   match
     native_goal_unpushed_base_rejection(
@@ -1636,14 +1636,14 @@ fn native_goal_submission_report(
 pub async fn submit_native_conductor_goal_draft(
   project_dir : String,
   draft_json : String,
-  capture : async (Command) -> (Int, String),
+  capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
   migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
   work_order_authority? : @workflow.WorkOrderRecord? = None,
   work_order_round_id? : @workflow.WorkOrderPlanningRoundId? = None,
   work_order_primary_targets? : Array[@control.PartId]? = None,
-  nfc_available? : () -> Bool = fn() { exec_path_nfc_available_ffi() == 1 },
-  is_nfc? : (String) -> Bool = native_path_is_nfc,
+  nfc_available~ : () -> Bool,
+  is_nfc~ : (String) -> Bool,
   dependency_delivery_observer? : async (
     String,
     @workflow.PartWorkflowRepository,
@@ -2020,7 +2020,7 @@ async test "real exec integration: stacked base capture reads parent Goal head" 
     fail("failed to create stacked base capture root")
   }
   let run_git : async (Array[String]) -> String = arguments => {
-    let (status, output) = capture_command_merged({
+    let (status, output) = @process_host.capture_command_merged({
       program: "/usr/bin/git",
       args: arguments,
       workdir: Some(root),
@@ -2069,7 +2069,7 @@ async test "real exec integration: stacked base capture reads parent Goal head" 
       #|{"proposal_id":"proposal-real-stack-child","goal_id":"goal-real-stack-child","pull_request":{"title":"feat: publish real stack child","body":"Publishes the real child change."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-real-child","commit_title":"feat: publish real stack child","instruction":"Change only src/child.mbt.","provider":"codex","exact_paths":["src/child.mbt"],"moon_args":["test","--target","native"]}]}
     ),
   ).unwrap()
-  let capture : async (Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("bd", ["show", "choir-real-child", "--json", "--readonly"]) =>
         (
@@ -2079,7 +2079,10 @@ async test "real exec integration: stacked base capture reads parent Goal head" 
           ),
         )
       ("git", _) =>
-        capture_command_merged({ ..command, program: "/usr/bin/git" })
+        @process_host.capture_command_merged({
+          ..command,
+          program: "/usr/bin/git",
+        })
       _ => (-1, "unexpected stacked base capture")
     }
   }

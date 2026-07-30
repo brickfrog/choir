@@ -795,7 +795,7 @@ fn integration_fault_apply_adapters(
   ambiguous : Bool,
 ) -> @git_integration.NativeGitIntegrationAdapters {
   {
-    is_nfc: native_path_is_nfc,
+    is_nfc: @process_host.native_path_is_nfc,
     capture: (_, command) => {
       match command {
         @git_integration.NativeGitIntegrationCommand::NativeGitApplyRefs(
@@ -842,7 +842,7 @@ async fn observe_native_integration_cutoff(
   if cutoff == IntegrationAfterObjectBeforePrepared {
     let create_count = @ref.new(0)
     let adapters : @git_integration.NativeGitIntegrationAdapters = {
-      is_nfc: native_path_is_nfc,
+      is_nfc: @process_host.native_path_is_nfc,
       capture: (_, command) => {
         Ok(
           match command {

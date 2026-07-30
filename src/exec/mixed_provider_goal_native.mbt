@@ -312,11 +312,11 @@ pub async fn run_native_mixed_provider_goal_fixture(
   }
   let claude_snapshot = { ..claude_snapshot, goal: accepted_goal }
   let codex_snapshot = { ..codex_snapshot, goal: accepted_goal }
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return failed_native_mixed_provider_goal(error.message())
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return failed_native_mixed_provider_goal(error.message())
   }
@@ -329,12 +329,14 @@ pub async fn run_native_mixed_provider_goal_fixture(
           return failed_native_mixed_provider_goal("Moon home is unavailable")
       }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => return failed_native_mixed_provider_goal("Node is unavailable")
   }
   let mcp_script = match
-    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
+    @process_host.resolve_native_runtime_asset(
+      @process_host.ChoirRuntimeAsset::ChoirSandboxMcp,
+    ) {
     Some(value) => value
     None =>
       return failed_native_mixed_provider_goal("sandbox MCP is unavailable")
@@ -483,7 +485,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
         read_goal_head: async fn() {
           @git_integration.read_native_goal_head(
             integration,
-            native_git_integration_adapters(),
+            @git_host.native_git_integration_adapters(),
           )
         },
         promote_part: async fn(record, selection) {
@@ -623,7 +625,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   let head = match
     @git_integration.read_native_goal_head(
       integration,
-      native_git_integration_adapters(),
+      @git_host.native_git_integration_adapters(),
     ) {
     Ok(value) => value
     Err(error) =>

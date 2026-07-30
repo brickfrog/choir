@@ -61,7 +61,7 @@ fn failed_native_part_lifecycle(message : String) -> NativePartLifecycleReport {
 
 ///|
 fn native_part_fixture_git_environment(commit : Bool) -> Map[String, String] {
-  let environment = native_git_environment(commit)
+  let environment = @git_host.native_git_environment(commit)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
   environment["GIT_ATTR_NOSYSTEM"] = "1"
   environment["XDG_CONFIG_HOME"] = "/nonexistent"
@@ -805,7 +805,7 @@ fn native_part_dependencies_with_admission(
     artifact_digest_exists: fn(digest) {
       native_part_digest_exists(repository, digest)
     },
-    is_nfc: native_path_is_nfc,
+    is_nfc: @process_host.native_path_is_nfc,
     audit_receipt_metadata: fn(snapshot) {
       let model_identity = match surface {
         @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
@@ -988,11 +988,11 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
@@ -1004,12 +1004,14 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
         None => return failed_native_part_lifecycle("Moon home is unavailable")
       }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => return failed_native_part_lifecycle("Node is unavailable")
   }
   let mcp_script = match
-    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
+    @process_host.resolve_native_runtime_asset(
+      @process_host.ChoirRuntimeAsset::ChoirSandboxMcp,
+    ) {
     Some(value) => value
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }
@@ -1280,11 +1282,11 @@ async fn run_native_part_cancellation_fixture_for_surface(
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
-  let binary = match native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
-  let runtime_dir = match native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => return failed_native_part_lifecycle(error.message())
   }
@@ -1296,12 +1298,14 @@ async fn run_native_part_cancellation_fixture_for_surface(
         None => return failed_native_part_lifecycle("Moon home is unavailable")
       }
   }
-  let node = match resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None => return failed_native_part_lifecycle("Node is unavailable")
   }
   let mcp_script = match
-    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
+    @process_host.resolve_native_runtime_asset(
+      @process_host.ChoirRuntimeAsset::ChoirSandboxMcp,
+    ) {
     Some(value) => value
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }

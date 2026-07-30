@@ -6,9 +6,9 @@ enum NativeGoalPublicationRemoteIdentity {
 
 ///|
 fn native_goal_remote_git_environment(
+  environment : Map[String, String],
   getenv? : (String) -> String? = @sys.getenv,
 ) -> Map[String, String] {
-  let environment = native_git_environment(false)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
   environment["GIT_ATTR_NOSYSTEM"] = "1"
   environment["XDG_CONFIG_HOME"] = "/nonexistent"
@@ -34,7 +34,9 @@ async fn capture_native_goal_remote_git(
   let captured = @process.collect_output_merged(
     "/usr/bin/git",
     arguments,
-    extra_env=native_goal_remote_git_environment(),
+    extra_env=native_goal_remote_git_environment(
+      @git_host.native_git_environment(false),
+    ),
     inherit_env=false,
     cwd=repository_root,
   ) catch {
@@ -49,14 +51,23 @@ async fn capture_native_goal_remote_git(
 
 ///|
 test "remote Git carries only explicit SSH authentication inputs" {
-  let environment = native_goal_remote_git_environment(getenv=fn(name) {
-    match name {
-      "HOME" => Some("/home/provider")
-      "SSH_AUTH_SOCK" => Some("/run/user/1000/ssh-agent.socket")
-      "GIT_SSH_COMMAND" => Some("untrusted ssh wrapper")
-      _ => None
-    }
-  })
+  let environment = native_goal_remote_git_environment(
+    {
+      "PATH": "/usr/bin:/bin",
+      "HOME": "/nonexistent",
+      "LC_ALL": "C",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "GIT_TERMINAL_PROMPT": "0",
+    },
+    getenv=fn(name) {
+      match name {
+        "HOME" => Some("/home/provider")
+        "SSH_AUTH_SOCK" => Some("/run/user/1000/ssh-agent.socket")
+        "GIT_SSH_COMMAND" => Some("untrusted ssh wrapper")
+        _ => None
+      }
+    },
+  )
   assert_eq(environment["PATH"], "/usr/bin:/bin")
   assert_eq(environment["HOME"], "/home/provider")
   assert_eq(environment["SSH_AUTH_SOCK"], "/run/user/1000/ssh-agent.socket")
@@ -70,13 +81,22 @@ test "remote Git carries only explicit SSH authentication inputs" {
 
 ///|
 test "remote Git remains sterile when SSH inputs are unavailable" {
-  let environment = native_goal_remote_git_environment(getenv=fn(name) {
-    match name {
-      "HOME" => Some("")
-      "SSH_AUTH_SOCK" => Some("/tmp/agent\u{00}ignored")
-      _ => None
-    }
-  })
+  let environment = native_goal_remote_git_environment(
+    {
+      "PATH": "/usr/bin:/bin",
+      "HOME": "/nonexistent",
+      "LC_ALL": "C",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "GIT_TERMINAL_PROMPT": "0",
+    },
+    getenv=fn(name) {
+      match name {
+        "HOME" => Some("")
+        "SSH_AUTH_SOCK" => Some("/tmp/agent\u{00}ignored")
+        _ => None
+      }
+    },
+  )
   assert_eq(environment["HOME"], "/nonexistent")
   assert_false(environment.contains("SSH_AUTH_SOCK"))
 }
@@ -861,7 +881,7 @@ pub async fn advance_native_goal_publication(
 }
 
 ///|
-async test "native Goal publication creates, adopts, and refuses remote drift" {
+async test "real exec integration: native Goal publication creates, adopts, and refuses remote drift" {
   if !@test_support.real_exec_integration_enabled() {
     return
   }

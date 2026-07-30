@@ -22,7 +22,7 @@ pub(all) struct NativeCodexConductorConfig {
   allowed_tools : Array[String]
   developer_instructions : String
   timeout_ms : Int
-  environment : ConductorProcessEnvironment
+  environment : @process_host.ConductorProcessEnvironment
 }
 
 ///|
@@ -1005,7 +1005,9 @@ async fn write_native_codex_app_server(
   ) catch {
     _ => return Err(native_codex_driver_error("app-server request sink failed"))
   }
-  abort_if_hermetic_test_exec("/usr/bin/timeout 5s /usr/bin/tee " + fifo)
+  @process_host.abort_if_hermetic_test_exec(
+    "/usr/bin/timeout 5s /usr/bin/tee " + fifo,
+  )
   let code = @process.run(
     "/usr/bin/timeout",
     ["5s", "/usr/bin/tee", fifo],
@@ -1230,7 +1232,7 @@ async fn spawn_native_codex_app_server(
   ) catch {
     _ => return Err(native_codex_driver_error("app-server sink failed"))
   }
-  abort_if_hermetic_test_exec(
+  @process_host.abort_if_hermetic_test_exec(
     "/usr/bin/setsid /bin/sh -c <bwrap-codex-app-server>",
   )
   let pid = @process.spawn_orphan(
@@ -1867,7 +1869,7 @@ pub async fn run_native_codex_take(
     Some(value) if value.has_prefix("/") => value
     _ => return Err(native_codex_driver_error("provider home is unavailable"))
   }
-  let codex = match resolve_executable_in_path("codex") {
+  let codex = match @process_host.resolve_executable_in_path("codex") {
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
@@ -2314,7 +2316,7 @@ pub async fn run_native_codex_conductor_turn(
       )
     None => ()
   }
-  let codex = match resolve_executable_in_path("codex") {
+  let codex = match @process_host.resolve_executable_in_path("codex") {
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
@@ -2353,15 +2355,15 @@ pub async fn run_native_codex_conductor_turn(
     provider_tool=Some(config.mcp_executable),
     provider_socket=Some(config.environment.listen_uds),
   )
-  abort_if_hermetic_test_exec(
-    command_to_shell_string({
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_to_shell_string({
       program: "/usr/bin/bwrap",
       args: bounded_args,
       workdir: Some(config.sterile_root),
     }),
   )
   let collected = match
-    collect_interruptible_process(
+    @process_host.collect_interruptible_process(
       "/usr/bin/bwrap",
       bounded_args,
       native_codex_conductor_environment(provider_home, config),
@@ -2374,11 +2376,13 @@ pub async fn run_native_codex_conductor_turn(
     Err(error) => return Err(error)
   }
   let (exit_code, output) = match collected {
-    NativeInterruptibleProcessOutcome::NativeProcessCompleted(code, output) =>
-      (code, output)
-    NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessCompleted(
+      code,
+      output
+    ) => (code, output)
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
       return Err(@types.ChoirError::canceled("Codex Conductor interrupted"))
-    NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
+    @process_host.NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
       return Err(@types.ChoirError::timeout("Codex Conductor turn"))
   }
   @harness.evaluate_codex_conductor_capture(
