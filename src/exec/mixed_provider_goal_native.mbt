@@ -333,7 +333,8 @@ pub async fn run_native_mixed_provider_goal_fixture(
     Some(value) => value
     None => return failed_native_mixed_provider_goal("Node is unavailable")
   }
-  let mcp_script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+  let mcp_script = match
+    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
     Some(value) => value
     None =>
       return failed_native_mixed_provider_goal("sandbox MCP is unavailable")

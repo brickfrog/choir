@@ -419,3 +419,23 @@ test "a thread read rejection is classified from a named set of phrasings" {
     @harness.CodexThreadReadDisposition::CodexThreadReadRejected,
   )
 }
+
+///|
+test "a required MCP startup rejection names the exact failed server" {
+  let message = "error creating thread: Fatal error: Failed to initialize session: " +
+    "required MCP servers failed to initialize: choir_sandbox: " +
+    "handshaking with MCP server failed"
+  assert_true(
+    @harness.codex_required_mcp_startup_rejected(
+      -32603, message, "choir_sandbox",
+    ),
+  )
+  assert_false(
+    @harness.codex_required_mcp_startup_rejected(
+      -32600, message, "choir_sandbox",
+    ),
+  )
+  assert_false(
+    @harness.codex_required_mcp_startup_rejected(-32603, message, "choir_probe"),
+  )
+}

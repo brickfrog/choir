@@ -850,3 +850,21 @@ pub fn codex_thread_read_disposition(
 pub fn codex_invalid_request_code() -> Int {
   -32600
 }
+
+///|
+/// Whether app-server rejected thread creation because one exact required MCP
+/// server failed before the model turn began.
+///
+/// This is deliberately narrower than matching arbitrary provider prose. Codex
+/// reports required-server startup failure as a typed JSON-RPC rejection; the
+/// server name keeps an unrelated initialization failure from satisfying the
+/// capability-death probe.
+pub fn codex_required_mcp_startup_rejected(
+  code : Int,
+  message : String,
+  server_name : String,
+) -> Bool {
+  code == -32603 &&
+  message.contains("required MCP servers failed to initialize") &&
+  message.contains(server_name)
+}

@@ -49,7 +49,7 @@ test "Claude declaration fails closed when a required flag disappears" {
 test "Codex declaration records native tool isolation as a typed blocker" {
   let report = @harness.evaluate_surface_declaration({
     surface: @harness.ProviderSurface::CodexCli,
-    version: capture("codex-cli 0.145.0"),
+    version: capture("codex-cli 0.146.0"),
     main_help: capture("exec --sandbox"),
     exec_help: Some(
       capture("--json --ephemeral --ignore-user-config --ignore-rules"),
@@ -171,7 +171,7 @@ test "host surface matrix completes only with all fifteen evidence rows" {
 
 ///|
 /// Production wrote four spellings for the same provider into durable receipts
-/// — codex-cli, codex-subscription-cli, codex-cli-0.145.0 — and hard-coded an
+/// — codex-cli, codex-subscription-cli, codex-cli-0.146.0 — and hard-coded an
 /// exact version that went stale the moment the CLI updated.
 test "a receipt identity is one spelling per provider, carrying the pin" {
   let claude = @harness.provider_receipt_identity(
