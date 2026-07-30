@@ -200,7 +200,7 @@ test "installer layout matches native runtime path contracts" {
 
 ///|
 test "real exec integration: native path NFC oracle accepts composed Unicode and rejects decomposed Unicode" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   assert_true(exec_path_nfc_available_ffi() == 1)
@@ -490,7 +490,7 @@ async fn drain_process_stdout(
     )
   }
   (
-    strip_terminal_responses(
+    @terminal.strip_terminal_responses(
       @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[:total]),
     ),
     total,

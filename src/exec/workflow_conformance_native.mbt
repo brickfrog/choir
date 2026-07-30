@@ -734,7 +734,7 @@ let integration_fault_promotion : @control.GitOid = @control.GitOid(
 )
 
 ///|
-fn integration_fault_config() -> NativeGitIntegrationConfig {
+fn integration_fault_config() -> @git_integration.NativeGitIntegrationConfig {
   {
     repository_root: "/tmp/choir-integration-fault",
     git_directory: "/tmp/choir-integration-fault/.git",
@@ -793,11 +793,17 @@ fn integration_fault_apply_adapters(
   applied : Ref[Bool],
   apply_count : Ref[Int],
   ambiguous : Bool,
-) -> NativeGitIntegrationAdapters {
+) -> @git_integration.NativeGitIntegrationAdapters {
   {
+    is_nfc: native_path_is_nfc,
     capture: (_, command) => {
       match command {
-        NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
+        @git_integration.NativeGitIntegrationCommand::NativeGitApplyRefs(
+          _,
+          _,
+          _,
+          _
+        ) => {
           apply_count.val = apply_count.val + 1
           applied.val = true
           if ambiguous {
@@ -806,7 +812,9 @@ fn integration_fault_apply_adapters(
             Ok({ exit_code: 0, output: "start: ok\ncommit: ok\n" })
           }
         }
-        NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+        @git_integration.NativeGitIntegrationCommand::NativeGitReadRef(
+          reference
+        ) =>
           if reference == integration_fault_config().goal_ref {
             Ok({
               exit_code: 0,
@@ -833,11 +841,14 @@ async fn observe_native_integration_cutoff(
 ) -> IntegrationRecoveryObservation {
   if cutoff == IntegrationAfterObjectBeforePrepared {
     let create_count = @ref.new(0)
-    let adapters : NativeGitIntegrationAdapters = {
+    let adapters : @git_integration.NativeGitIntegrationAdapters = {
+      is_nfc: native_path_is_nfc,
       capture: (_, command) => {
         Ok(
           match command {
-            NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
+            @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitTree(
+              oid
+            ) =>
               if oid == integration_fault_candidate {
                 {
                   exit_code: 0,
@@ -849,16 +860,27 @@ async fn observe_native_integration_cutoff(
                   output: integration_fault_promotion_tree.0 + "\n",
                 }
               }
-            NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+            @git_integration.NativeGitIntegrationCommand::NativeGitMergeTree(
+              _,
+              _
+            ) =>
               {
                 exit_code: 0,
                 output: integration_fault_promotion_tree.0 + "\n",
               }
-            NativeGitIntegrationCommand::NativeGitCreatePromotion(_, _, _, _, _) => {
+            @git_integration.NativeGitIntegrationCommand::NativeGitCreatePromotion(
+              _,
+              _,
+              _,
+              _,
+              _
+            ) => {
               create_count.val = create_count.val + 1
               { exit_code: 0, output: integration_fault_promotion.0 + "\n" }
             }
-            NativeGitIntegrationCommand::NativeGitReadCommitParents(_) =>
+            @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitParents(
+              _
+            ) =>
               {
                 exit_code: 0,
                 output: integration_fault_head.0 +
@@ -871,19 +893,19 @@ async fn observe_native_integration_cutoff(
         )
       },
     }
-    let interrupted = generate_native_promotion(
+    let interrupted = @git_integration.generate_native_promotion(
         integration_fault_config(),
         integration_fault_intent(
           @control.IntegrationIntentLifecycle::IntegrationPlanned,
         ),
         adapters,
         fault=Some(
-          NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
+          @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
         ),
       )
       is Err(_)
     let recovered = match
-      generate_native_promotion(
+      @git_integration.generate_native_promotion(
         integration_fault_config(),
         integration_fault_intent(
           @control.IntegrationIntentLifecycle::IntegrationPlanned,
@@ -918,18 +940,18 @@ async fn observe_native_integration_cutoff(
   let promotion = integration_fault_promotion_commit()
   let interrupted = match cutoff {
     IntegrationAfterAuthorizedBeforeCas =>
-      apply_native_integration(
+      @git_integration.apply_native_integration(
         integration_fault_config(),
         intent,
         promotion,
         adapters,
         fault=Some(
-          NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
+          @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
         ),
       )
       is Err(_)
     IntegrationDuringCasAmbiguous =>
-      apply_native_integration(
+      @git_integration.apply_native_integration(
         integration_fault_config(),
         intent,
         promotion,
@@ -937,13 +959,13 @@ async fn observe_native_integration_cutoff(
       )
       is Err(_)
     IntegrationAfterCasBeforeAck =>
-      apply_native_integration(
+      @git_integration.apply_native_integration(
         integration_fault_config(),
         intent,
         promotion,
         adapters,
         fault=Some(
-          NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
+          @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
         ),
       )
       is Err(_)
@@ -951,7 +973,7 @@ async fn observe_native_integration_cutoff(
   }
   let recovered = if cutoff == IntegrationAfterAuthorizedBeforeCas {
     match
-      apply_native_integration(
+      @git_integration.apply_native_integration(
         integration_fault_config(),
         intent,
         promotion,
@@ -967,7 +989,7 @@ async fn observe_native_integration_cutoff(
     }
   } else {
     match
-      observe_native_integration(
+      @git_integration.observe_native_integration(
         integration_fault_config(),
         intent,
         promotion,

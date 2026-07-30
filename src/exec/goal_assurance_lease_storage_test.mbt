@@ -539,7 +539,7 @@ async test "an assurance tick refused by capacity leaves the Goal assuring" {
   }
   let execute_count = @ref.new(0)
   let reconcile_count = @ref.new(0)
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
     repository_adapters: adapters,
     dependencies: fn(_, admission) {
@@ -586,7 +586,7 @@ async test "an assurance tick refused by capacity leaves the Goal assuring" {
     @workflow.run_goal_parts(
       [scheduling_record],
       1,
-      @exec.goal_part_workflow_adapters(config),
+      @part_adapter.goal_part_workflow_adapters(config),
     ).unwrap().outcome,
     @workflow.GoalRunOutcome::GoalRunSucceeded,
   )

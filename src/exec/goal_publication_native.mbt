@@ -30,7 +30,7 @@ fn native_goal_remote_git_environment(
 async fn capture_native_goal_remote_git(
   repository_root : String,
   arguments : Array[String],
-) -> Result[NativeGitCapture, @types.ChoirError] {
+) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
   let captured = @process.collect_output_merged(
     "/usr/bin/git",
     arguments,
@@ -211,7 +211,7 @@ async fn native_remote_branch_probe_once(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
   capture? : async (String, Array[String]) -> Result[
-    NativeGitCapture,
+    @git_integration.NativeGitCapture,
     @types.ChoirError,
   ] = capture_native_goal_remote_git,
 ) -> NativeRemoteBranchProbe {
@@ -302,7 +302,7 @@ async fn native_remote_branch_probe(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
   capture? : async (String, Array[String]) -> Result[
-    NativeGitCapture,
+    @git_integration.NativeGitCapture,
     @types.ChoirError,
   ] = capture_native_goal_remote_git,
   wait? : async (Int) -> Unit = async fn(milliseconds) {
@@ -862,7 +862,7 @@ pub async fn advance_native_goal_publication(
 
 ///|
 async test "native Goal publication creates, adopts, and refuses remote drift" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let root = "/tmp/choir-goal-publication-" + @sys.get_pid().to_string()
@@ -872,7 +872,9 @@ async test "native Goal publication creates, adopts, and refuses remote drift" {
   if !@sys.create_dir_all(root) || !@sys.create_dir_all(remote) {
     fail("failed to create publication test roots")
   }
-  let local_git = async fn(arguments : Array[String]) -> NativeGitCapture {
+  let local_git = async fn(
+    arguments : Array[String],
+  ) -> @git_integration.NativeGitCapture {
     match capture_native_goal_git(root, arguments) {
       Ok(value) => value
       Err(error) => fail(error.message())
@@ -1781,7 +1783,7 @@ pub async fn run_native_publication_fault_conformance() -> NativePublicationFaul
 
 ///|
 async test "real exec integration: Goal publication recovers across every external-effect boundary" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let report = run_native_publication_fault_conformance()

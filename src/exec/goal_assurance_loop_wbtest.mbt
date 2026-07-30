@@ -50,7 +50,9 @@ async fn real_exec_integration_assurance_loop_fixture(
   if !@sys.create_dir_all(root + "/.choir/state/control") {
     fail("create Goal assurance loop root")
   }
-  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+  let git = async fn(
+    arguments : Array[String],
+  ) -> @git_integration.NativeGitCapture {
     match capture_native_goal_git(root, arguments) {
       Ok(value) => value
       Err(error) => fail(error.message())
@@ -393,7 +395,7 @@ fn assurance_loop_held(
 /// straight on to authorize the sandbox effect and create a box on a surface
 /// that is already serving everything it can.
 async test "real exec integration: a full surface refuses the Goal assurance loop" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let surface = @control.ProviderSurfaceId::ClaudeSubscriptionCli
@@ -494,7 +496,7 @@ async test "real exec integration: a full surface refuses the Goal assurance loo
 /// through this path without releasing would strand the slot until the daemon
 /// restarted.
 async test "real exec integration: a displaced assurance tick returns its slot" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let surface = @control.ProviderSurfaceId::ClaudeSubscriptionCli

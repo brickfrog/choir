@@ -19,6 +19,28 @@ fn assert_has_rule(source : String, rule_id : String) -> Unit raise {
 }
 
 ///|
+fn lint_source_with_manifest(
+  source : String,
+  manifest : String,
+) -> Array[@lint.LintFinding] {
+  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(Map([]))
+  let read_file = fn(path) {
+    if path == "src/example/moon.pkg" {
+      manifest
+    } else {
+      ""
+    }
+  }
+  lint_source(
+    "src/example/package_test.mbt",
+    source,
+    read_file~,
+    path_exists=fn(path) { path == "src/example/moon.pkg" },
+    package_alias_cache=cache,
+  ).unwrap()
+}
+
+///|
 test "flags the deleted shell-backed git fixture shape" {
   let source =
     #|test "bad" {
@@ -304,19 +326,166 @@ test "flags direct non-capture exec calls in tests" {
 }
 
 ///|
-test "allows pure exec hermetic violation formatter in tests" {
+test "exec root formatter is host-dangerous in tests" {
   let source =
     #|test "ok" {
     #|  ignore(@exec.hermetic_exec_violation_message("git status"))
     #|}
   match lint_source("src/workflow/goal_runner_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
+    Ok(findings) => assert_true(findings.length() > 0)
     Err(e) => fail(e.message())
   }
 }
 
 ///|
-test "allows exec APIs whose host effects require injected adapters" {
+test "allows only the four test-safe exec packages through every reference shape" {
+  let source =
+    #|async fn seam(
+    #|  capture? : async (Config) -> Result[Observation, Error] = @git_integration.generate_native_promotion,
+    #|) -> Unit {
+    #|  ignore(capture)
+    #|}
+    #|async test "safe package references" {
+    #|  ignore(@test_support.hermetic_exec_violation_message("git status"))
+    #|  let strip = @terminal.strip_terminal_responses
+    #|  let adapters = { make: @part_adapter.goal_part_workflow_adapters }
+    #|  ignore(@git_integration.generate_native_promotion(config, intent, injected))
+    #|  ignore(strip)
+    #|  ignore(adapters)
+    #|}
+  let manifest =
+    #|import {
+    #|  "choir/src/exec/test_support",
+    #|  "choir/src/exec/terminal",
+    #|  "choir/src/exec/git_integration",
+    #|  "choir/src/exec/part_adapter",
+    #|}
+  assert_eq(lint_source_with_manifest(source, manifest).length(), 0)
+}
+
+///|
+test "resolves explicit aliases for safe and dangerous exec packages" {
+  let safe =
+    #|test "safe" {
+    #|  let strip = @term.strip_terminal_responses
+    #|  ignore(strip)
+    #|}
+  let safe_manifest =
+    #|import {
+    #|  "choir/src/exec/terminal" as term,
+    #|}
+  assert_eq(lint_source_with_manifest(safe, safe_manifest).length(), 0)
+  let dangerous =
+    #|test "bad" {
+    #|  let run = @host.capture_command_stdout
+    #|  ignore(run)
+    #|}
+  let dangerous_manifest =
+    #|import {
+    #|  "choir/src/exec" as host,
+    #|}
+  let findings = lint_source_with_manifest(dangerous, dangerous_manifest)
+  assert_true(
+    findings.any(fn(finding) { finding.rule_id == "test-exec-reference" }),
+  )
+}
+
+///|
+test "rejects the exec root and unknown nested exec packages" {
+  let root =
+    #|test "bad" {
+    #|  ignore(@exec.run_conductor_process(command, environment))
+    #|}
+  assert_true(
+    lint_source_with_manifest(
+      root,
+      (
+        #|import {
+        #|  "choir/src/exec",
+        #|}
+      ),
+    ).length() >
+    0,
+  )
+  let nested =
+    #|test "bad" {
+    #|  let run = @unsafe_child.run
+    #|  ignore(run)
+    #|}
+  assert_true(
+    lint_source_with_manifest(
+      nested,
+      (
+        #|import {
+        #|  "choir/src/exec/unsafe_child",
+        #|}
+      ),
+    ).length() >
+    0,
+  )
+}
+
+///|
+test "ignores suffix and explicit-alias exec lookalikes" {
+  let default_alias =
+    #|test "unrelated" {
+    #|  let helper = @exec.capture_command_stdout
+    #|  ignore(helper)
+    #|}
+  assert_eq(
+    lint_source_with_manifest(
+      default_alias,
+      (
+        #|import {
+        #|  "vendor/tools/exec",
+        #|}
+      ),
+    ).length(),
+    0,
+  )
+  let explicit_alias =
+    #|test "unrelated" {
+    #|  let helper = @git_integration.generate_native_promotion
+    #|  ignore(helper)
+    #|}
+  assert_eq(
+    lint_source_with_manifest(
+      explicit_alias,
+      (
+        #|import {
+        #|  "vendor/simulation" as git_integration,
+        #|}
+      ),
+    ).length(),
+    0,
+  )
+}
+
+///|
+test "test-safe exec manifests reject every host-effect import class" {
+  let violating =
+    #|import {
+    #|  "choir/src/sys",
+    #|  "choir/src/exec",
+    #|  "choir/src/exec/unknown",
+    #|  "moonbitlang/async/process",
+    #|}
+  for
+    directory in [
+      "src/exec/test_support", "src/exec/terminal", "src/exec/git_integration", "src/exec/part_adapter",
+    ] {
+    let findings = lint_package_manifest(directory + "/moon.pkg", violating)
+    assert_eq(findings.length(), 4)
+    assert_true(
+      findings.all(fn(finding) {
+        finding.rule_id == "control-plane-host-import"
+      }),
+    )
+  }
+}
+
+///|
+test "exec root injected APIs are host-dangerous in tests" {
   let source =
     #|async test "injected" {
     #|  ignore(@exec.generate_native_promotion(config, intent, adapters))
@@ -325,7 +494,7 @@ test "allows exec APIs whose host effects require injected adapters" {
     #|  ignore(@exec.goal_part_workflow_adapters(config))
     #|}
   match lint_source("src/exec/injected_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
+    Ok(findings) => assert_true(findings.length() > 0)
     Err(e) => fail(e.message())
   }
 }

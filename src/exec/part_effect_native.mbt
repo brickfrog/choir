@@ -26,7 +26,7 @@ pub(all) struct NativePartEffectRuntimeConfig {
   repository_adapters : @workflow.PartWorkflowRepositoryAdapters
   server : NativeBoxLiteServerHandle
   git_workspace : NativeGitWorkspaceConfig
-  git_integration : NativeGitIntegrationConfig
+  git_integration : @git_integration.NativeGitIntegrationConfig
   moon_home : String
   node_executable : String
   sandbox_mcp_script : String
@@ -1419,7 +1419,7 @@ async fn execute_native_part_effect(
       execute_native_audit(runtime, snapshot, take_id, command, subject)
     @workflow.PartEffectKind::GeneratePromotion(_)
     | @workflow.PartEffectKind::ApplyIntegration(_, _) =>
-      execute_native_git_effect(
+      @git_integration.execute_native_git_effect(
         runtime.config.git_integration,
         snapshot,
         intent,
@@ -1477,7 +1477,7 @@ async fn reconcile_unwitnessed_native_part_effect(
       Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
     @workflow.PartEffectKind::GeneratePromotion(_)
     | @workflow.PartEffectKind::ApplyIntegration(_, _) =>
-      reconcile_native_git_effect(
+      @git_integration.reconcile_native_git_effect(
         runtime.config.git_integration,
         snapshot,
         intent,

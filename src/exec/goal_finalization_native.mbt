@@ -476,7 +476,7 @@ pub async fn run_native_pull_request_remote_state_conformance() -> NativePullReq
 
 ///|
 async test "real exec integration: final PR remote states have exact outcomes" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let report = run_native_pull_request_remote_state_conformance()
@@ -702,7 +702,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
 
 ///|
 async test "real exec integration: final PR readiness and terminal decisions linearize exactly" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let report = run_native_goal_finalization_race_conformance()

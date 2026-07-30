@@ -413,7 +413,7 @@ async test "a deferred Part runs no effect and gives its slot back" {
     workflow_driver_recover_observation,
   )
   let released : Array[@control.PartId] = []
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [
       { scheduling_record: record, initial_snapshot: initial, repository },
     ],
@@ -447,7 +447,8 @@ async test "a deferred Part runs no effect and gives its slot back" {
       Ok(())
     },
   }
-  match (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
+  match
+    (@part_adapter.goal_part_workflow_adapters(config).advance_part)(record) {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }
@@ -532,7 +533,7 @@ async test "a repair refused by a capacity bound is not persisted" {
     part: uncertain.part,
     task_contract: uncertain.task_contract,
   }
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [
       { scheduling_record: record, initial_snapshot: initial, repository },
     ],
@@ -567,7 +568,8 @@ async test "a repair refused by a capacity bound is not persisted" {
     read_goal_head: () => Ok(@control.GitOid("goal-head-repair-deferral")),
     release_provider_lease: fn(_) { Ok(()) },
   }
-  match (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
+  match
+    (@part_adapter.goal_part_workflow_adapters(config).advance_part)(record) {
     Ok(_) => ()
     Err(error) => fail(error.message())
   }

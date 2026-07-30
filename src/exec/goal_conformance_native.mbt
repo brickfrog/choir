@@ -231,7 +231,7 @@ pub async fn run_native_goal_conformance_fixture(
   let candidates = [candidate_a, candidate_b]
   let record_a = native_goal_record(candidate_a, git)
   let record_b = native_goal_record(candidate_b, git)
-  let integration : NativeGitIntegrationConfig = {
+  let integration : @git_integration.NativeGitIntegrationConfig = {
     repository_root: git.root,
     git_directory: git.git_directory,
     object_directory: git.object_directory,
@@ -269,7 +269,7 @@ pub async fn run_native_goal_conformance_fixture(
         })
       },
       read_goal_head: async fn() {
-        read_native_goal_head(integration, git_adapters)
+        @git_integration.read_native_goal_head(integration, git_adapters)
       },
       promote_part: async fn(record, selection) {
         let candidate = match
@@ -298,7 +298,9 @@ pub async fn run_native_goal_conformance_fixture(
           git_witness_ref: "refs/choir/witness/intent-" + record.part.id.0,
         }
         let generated = match
-          generate_native_promotion(integration, intent, git_adapters) {
+          @git_integration.generate_native_promotion(
+            integration, intent, git_adapters,
+          ) {
           Ok(@workflow.PartEffectObservation::PromotionGenerated(value)) =>
             value
           Ok(_) => return Err(native_goal_error("promotion conflicted"))
@@ -311,7 +313,7 @@ pub async fn run_native_goal_conformance_fixture(
           promotion_tree_oid: Some(generated.tree_oid),
         }
         let applied = match
-          apply_native_integration(
+          @git_integration.apply_native_integration(
             integration, authorized, generated, git_adapters,
           ) {
           Ok(value) => value
@@ -385,7 +387,8 @@ pub async fn run_native_goal_conformance_fixture(
     Ok(value) => value
     Err(error) => return failed_native_goal_conformance(error.message())
   }
-  let head = match read_native_goal_head(integration, git_adapters) {
+  let head = match
+    @git_integration.read_native_goal_head(integration, git_adapters) {
     Ok(value) => value
     Err(error) => return failed_native_goal_conformance(error.message())
   }

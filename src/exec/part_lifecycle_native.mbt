@@ -74,7 +74,7 @@ async fn capture_native_part_fixture_git(
   repository_root : String,
   arguments : Array[String],
   commit? : Bool = false,
-) -> Result[NativeGitCapture, @types.ChoirError] {
+) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
   let captured = @process.collect_output_merged(
     "/usr/bin/git",
     arguments,
@@ -188,8 +188,8 @@ async fn create_native_part_fixture_repository_with_sources(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if !valid_hex_oid_text(head) ||
-    !valid_hex_oid_text(tree) ||
+  if !@git_integration.valid_hex_oid_text(head) ||
+    !@git_integration.valid_hex_oid_text(tree) ||
     @sys.realpath_native(git_directory) != Some(git_directory) ||
     @sys.realpath_native(object_directory) != Some(object_directory) {
     return Err(native_part_effect_error("fixture Git identity is invalid"))

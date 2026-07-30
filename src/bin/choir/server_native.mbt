@@ -1736,7 +1736,7 @@ fn goal_worker_run() -> Unit {
   )
   let log_path = config.project_dir + "/.choir/logs/serve.log"
   @moontrace.set_subscriber(fn(event) {
-    let rendered = @exec.strip_terminal_responses(event.format(color=false))
+    let rendered = @terminal.strip_terminal_responses(event.format(color=false))
     conductor_append_log_line(log_path, rendered + "\n")
   })
   @moontrace.set_min_level(conductor_log_level())
@@ -1862,7 +1862,7 @@ fn serve_run() -> Unit {
   @moontrace.set_global_field("run_id", state.run_id.to_json())
   let log_path = config.project_dir + "/.choir/logs/serve.log"
   @moontrace.set_subscriber(fn(event) {
-    let rendered = @exec.strip_terminal_responses(event.format(color=false))
+    let rendered = @terminal.strip_terminal_responses(event.format(color=false))
     conductor_append_log_line(log_path, rendered + "\n")
   })
   @moontrace.set_min_level(conductor_log_level())
