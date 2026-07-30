@@ -576,9 +576,9 @@ test "native Codex verification paths cover npm and standalone releases" {
   )
   assert_eq(
     native_codex_verification_paths(
-      "/home/user/.codex/packages/standalone/releases/0.145.0/bin/codex",
+      "/home/user/.codex/packages/standalone/releases/0.146.0/bin/codex",
     ),
-    (None, "/home/user/.codex/packages/standalone/releases/0.145.0/bin/codex"),
+    (None, "/home/user/.codex/packages/standalone/releases/0.146.0/bin/codex"),
   )
 }
 

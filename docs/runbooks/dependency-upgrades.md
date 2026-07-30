@@ -458,7 +458,7 @@ At minimum, inspect:
 - `src/exec/part_lifecycle_native.mbt` provider identity;
 - conformance fixtures containing the exact version or startup shape;
 - `README.md`;
-- a new dated charter evidence entry, without rewriting old evidence.
+- evidence in the upgrade PR, without rewriting historical evidence.
 
 ## Codex CLI qualification
 
@@ -517,7 +517,7 @@ At minimum, inspect:
 - `src/exec/part_lifecycle_native.mbt` provider identity;
 - Codex startup and protocol conformance fixtures;
 - `README.md`;
-- a new dated charter evidence entry.
+- evidence in the upgrade PR.
 
 ## BoxLite qualification
 
@@ -579,7 +579,7 @@ At minimum, inspect:
 - `docs/boxlite-runtime.md`;
 - `README.md`;
 - release runtime requirements;
-- a new dated charter evidence entry.
+- evidence in the upgrade PR.
 
 Retain the previous CLI and complete runtime directory as the rollback unit.
 Never mix files from two qualified bundles.

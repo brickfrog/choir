@@ -232,18 +232,18 @@ test "the doctor separates required failures from optional warnings" {
 test "a pinned version is checked against what the host actually reported" {
   let matched = evaluate_doctor_probe(
     DoctorCodexCli,
-    DoctorProbeOutput("codex-cli 0.145.0\n"),
-    expected_version=Some("0.145.0"),
+    DoctorProbeOutput("codex-cli 0.146.0\n"),
+    expected_version=Some("0.146.0"),
   )
-  assert_eq(matched.outcome, DoctorPass("codex-cli 0.145.0"))
+  assert_eq(matched.outcome, DoctorPass("codex-cli 0.146.0"))
   let drifted = evaluate_doctor_probe(
     DoctorCodexCli,
     DoctorProbeOutput("codex-cli 0.144.0\n"),
-    expected_version=Some("0.145.0"),
+    expected_version=Some("0.146.0"),
   )
   assert_eq(
     drifted.outcome,
-    DoctorFail("codex must be 0.145.0; observed codex-cli 0.144.0"),
+    DoctorFail("codex must be 0.146.0; observed codex-cli 0.144.0"),
   )
   // An unpinned dependency passes on any version it can report.
   assert_eq(

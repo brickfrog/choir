@@ -278,7 +278,7 @@ pub fn evaluate_host_surface_matrix(
 pub fn expected_surface_version(surface : ProviderSurface) -> String {
   match surface {
     ClaudeCli => "2.1.220"
-    CodexCli => "0.145.0"
+    CodexCli => "0.146.0"
   }
 }
 
@@ -286,7 +286,7 @@ pub fn expected_surface_version(surface : ProviderSurface) -> String {
 pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
 
 ///|
-pub let expected_codex_native_executable_sha256 : String = "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
+pub let expected_codex_native_executable_sha256 : String = "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
 
 ///|
 fn version_matches(surface : ProviderSurface, output : String) -> Bool {
@@ -488,7 +488,7 @@ pub fn evaluate_surface_declaration(
 /// The provider identity recorded on an audit receipt.
 ///
 /// Production wrote at least four spellings for the same provider —
-/// `codex-cli`, `codex-subscription-cli`, `codex-cli-0.145.0` — and two sites
+/// `codex-cli`, `codex-subscription-cli`, `codex-cli-0.146.0` — and two sites
 /// hard-coded an exact version, so a receipt claimed a stale one the moment the
 /// CLI updated. This derives both from the typed surface and the qualified
 /// version, so there is one spelling per provider and the version cannot go

@@ -1008,7 +1008,8 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     Some(value) => value
     None => return failed_native_part_lifecycle("Node is unavailable")
   }
-  let mcp_script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+  let mcp_script = match
+    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
     Some(value) => value
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }
@@ -1175,7 +1176,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   }
   let candidate = resumed.snapshot.candidate
   let promotion = resumed.snapshot.promotion_commit
-  let valid = resumed.snapshot.effect_receipts.length() == 15 &&
+  let valid = resumed.snapshot.effect_receipts.length() == 13 &&
     resumed.snapshot.verification_receipts.length() == 1 &&
     resumed.snapshot.audit_receipt is Some(_) &&
     resumed.snapshot.integration_receipt is Some(_) &&
@@ -1299,7 +1300,8 @@ async fn run_native_part_cancellation_fixture_for_surface(
     Some(value) => value
     None => return failed_native_part_lifecycle("Node is unavailable")
   }
-  let mcp_script = match @sys.realpath_native("scripts/choir_sandbox_mcp.mjs") {
+  let mcp_script = match
+    resolve_native_runtime_asset(ChoirRuntimeAsset::ChoirSandboxMcp) {
     Some(value) => value
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }

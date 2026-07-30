@@ -1680,19 +1680,20 @@ async fn run_codex_live_driver_at(
   let result = match provider_result {
     Ok(value) => value
     Err(error) => {
+      let required_mcp_rejected = match error.provider_rpc_rejection() {
+        Some((code, message)) =>
+          @harness.codex_required_mcp_startup_rejected(
+            code, message, "choir_sandbox",
+          )
+        None => false
+      }
       if capability_death_probe &&
         (
           (
             error.is_validation_error() &&
             error.message().contains("every declared MCP tool call failed")
           ) ||
-          (
-            error.is_transport_error() &&
-            error
-            .message()
-            .contains("required MCP servers failed to initialize") &&
-            error.message().contains("choir_sandbox")
-          )
+          required_mcp_rejected
         ) {
         let evidence = @storage.artifact_digest(
           @utf8.encode(
@@ -3379,7 +3380,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
-    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
+    #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","pull_request":{"title":"test: reconnect Conductor","body":"Exercises paused Goal visibility across Conductors."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
   let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
   let paused = match submitted {
     Ok(report) if report.accepted =>
@@ -3389,6 +3390,12 @@ async fn run_conductor_reconnect_live() -> Int {
         @workflow.GoalPolicyChange::GoalPolicyPause,
       )
       is Ok(_)
+    Err(error) => {
+      @sys.write_stderr(
+        "failed to submit paused reconnect Goal: " + error.message() + "\n",
+      )
+      false
+    }
     _ => false
   }
   if !paused {

@@ -231,7 +231,7 @@ async test "the doctor probes every requirement and reports each host answer" {
   assert_eq(report.failures, 2)
   assert_eq(report.warnings, 1)
   let rendered = @command.render_doctor_report(report)
-  assert_true(rendered.contains("FAIL  codex: codex must be 0.145.0"))
+  assert_true(rendered.contains("FAIL  codex: codex must be 0.146.0"))
   assert_true(rendered.contains("FAIL  libsqlite3: libsqlite3 was not found"))
   assert_true(rendered.contains("warn  gh: gh was not found"))
   assert_true(rendered.contains("ok    /dev/kvm: /dev/kvm is available"))
