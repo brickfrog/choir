@@ -118,7 +118,7 @@ async fn capture_native_git_workspace_process(
   commit? : Bool = false,
   commit_epoch? : Int64 = 0L,
   timeout_ms? : Int = 120000,
-) -> Result[NativeGitCapture, @types.ChoirError] {
+) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
   match ensure_native_git_control(config) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -175,7 +175,7 @@ async fn native_git_workspace_oid(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match parsed_git_oid(capture.output) {
+  match @git_integration.parsed_git_oid(capture.output) {
     Some(value) if capture.exit_code == 0 => Ok(value)
     _ => Err(native_git_workspace_error("Git object identity is invalid"))
   }
@@ -212,9 +212,9 @@ pub async fn stage_native_git_workspace(
 ) -> Result[NativeGitWorkspaceSource, @types.ChoirError] {
   if !valid_native_git_workspace_config(config) ||
     !valid_native_git_workspace_key(key) ||
-    !valid_hex_oid_text(commit_oid.0) ||
-    !valid_hex_oid_text(expected_tree_oid.0) ||
-    !valid_hex_oid_text(source_digest.0) {
+    !@git_integration.valid_hex_oid_text(commit_oid.0) ||
+    !@git_integration.valid_hex_oid_text(expected_tree_oid.0) ||
+    !@git_integration.valid_hex_oid_text(source_digest.0) {
     return Err(
       @types.ChoirError::validation_error(
         "native Git workspace request is invalid",
@@ -327,8 +327,8 @@ async fn prepare_native_git_result_index(
 ) -> Result[String, @types.ChoirError] {
   if !valid_native_git_workspace_config(config) ||
     !valid_native_git_workspace_key(key) ||
-    !valid_hex_oid_text(base_commit_oid.0) ||
-    !valid_hex_oid_text(expected_source_digest.0) ||
+    !@git_integration.valid_hex_oid_text(base_commit_oid.0) ||
+    !@git_integration.valid_hex_oid_text(expected_source_digest.0) ||
     @sys.realpath_native(config.object_directory) !=
     Some(config.object_directory) ||
     @sys.realpath_native(result_root) != Some(result_root) ||

@@ -2011,7 +2011,7 @@ pub async fn submit_native_conductor_goal_draft(
 
 ///|
 async test "real exec integration: stacked base capture reads parent Goal head" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let root = "/tmp/choir-stacked-base-capture-" + @sys.get_pid().to_string()

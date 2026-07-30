@@ -1387,7 +1387,7 @@ async test "Goal adapter accepts the exact stored contract revision" {
     fn(_) { None },
     workflow_driver_recover_observation,
   )
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [
       {
         scheduling_record: initial_record,
@@ -1422,7 +1422,7 @@ async test "Goal adapter accepts the exact stored contract revision" {
     task_contract: revised_contract,
   }
   let observed = match
-    (@exec.goal_part_workflow_adapters(config).advance_part)(record) {
+    (@part_adapter.goal_part_workflow_adapters(config).advance_part)(record) {
     Ok(value) => value
     Err(error) => fail(error.message())
   }
@@ -1499,7 +1499,7 @@ async test "Goal adapter persists a Part that moved to another provider" {
     part: uncertain.part,
     task_contract: uncertain.task_contract,
   }
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [
       { scheduling_record: record, initial_snapshot: initial, repository },
     ],
@@ -1530,7 +1530,7 @@ async test "Goal adapter persists a Part that moved to another provider" {
     release_provider_lease: fn(_) { Ok(()) },
   }
   ignore(
-    (@exec.goal_part_workflow_adapters(config).advance_part)(record).unwrap(),
+    (@part_adapter.goal_part_workflow_adapters(config).advance_part)(record).unwrap(),
   )
   // A failover the control plane decided is applied, not dropped: the stored
   // Part now runs on the admitted surface and says why it moved.
@@ -1763,7 +1763,7 @@ async test "Goal adapter persists an autonomous verification repair revision" {
     fn(_) { None },
     workflow_driver_recover_observation,
   )
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [
       {
         scheduling_record: {
@@ -1809,7 +1809,7 @@ async test "Goal adapter persists an autonomous verification repair revision" {
     release_provider_lease: fn(_) { Ok(()) },
   }
   let observed = match
-    (@exec.goal_part_workflow_adapters(config).advance_part)({
+    (@part_adapter.goal_part_workflow_adapters(config).advance_part)({
       part: blocked.part,
       task_contract: blocked.task_contract,
     }) {
@@ -1844,7 +1844,7 @@ async test "Goal adapter resumes promotion after a durable rollback" {
   let execute_count = @ref.new(0)
   let reconcile_count = @ref.new(0)
   let inject_fault = @ref.new(true)
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
     repository_adapters: workflow_repository_adapters(),
     dependencies: fn(_, admission) {
@@ -1896,7 +1896,7 @@ async test "Goal adapter resumes promotion after a durable rollback" {
     read_goal_head: () => Ok(@control.GitOid("goal-head-store")),
     release_provider_lease: fn(_) { Ok(()) },
   }
-  let adapters = @exec.goal_part_workflow_adapters(config)
+  let adapters = @part_adapter.goal_part_workflow_adapters(config)
   let paused = match
     @workflow.run_goal_parts([scheduling_record], 1, adapters) {
     Ok(value) => value
@@ -1931,7 +1931,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
   }
   let execute_count = @ref.new(0)
   let reconcile_count = @ref.new(0)
-  let config : @exec.GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: [{ scheduling_record, initial_snapshot: snapshot, repository }],
     repository_adapters: adapters,
     dependencies: fn(_, admission) {
@@ -1978,7 +1978,7 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
     @workflow.run_goal_parts(
       [scheduling_record],
       1,
-      @exec.goal_part_workflow_adapters(config),
+      @part_adapter.goal_part_workflow_adapters(config),
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())

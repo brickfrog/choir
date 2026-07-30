@@ -24,7 +24,7 @@ priv struct GitProgramSearch {
 }
 
 ///|
-priv struct ExecPackageRefSearch {
+priv struct ForbiddenExecPackageRefSearch {
   package_aliases : Array[(String, String)]
   mut found : Bool
 }
@@ -105,9 +105,8 @@ fn canonical_file(file : String) -> String {
 
 ///|
 fn package_path_matches_short_name(path : String, short_name : String) -> Bool {
-  path == short_name ||
-  path == "choir/src/" + short_name ||
-  path.has_suffix("/" + short_name)
+  // Resolve only canonical package specs; suffix lookalikes are unrelated.
+  path == short_name || path == "choir/src/" + short_name
 }
 
 ///|
@@ -334,7 +333,16 @@ fn is_exec_package_ref(
 ) -> Bool {
   match expr {
     Group(expr~, ..) => is_exec_package_ref(package_aliases, expr)
-    _ => expr_package_matches(package_aliases, expr, "exec")
+    _ =>
+      match dotted_ident_pkg(expr) {
+        Some(p) => {
+          let s = resolved_package_path(package_aliases, p)
+          s == "exec" ||
+          s == "choir/src/exec" ||
+          s.has_prefix("choir/src/exec/")
+        }
+        None => false
+      }
   }
 }
 
@@ -346,20 +354,15 @@ fn is_allowed_test_exec_package_ref(
   match expr {
     Group(expr~, ..) => is_allowed_test_exec_package_ref(package_aliases, expr)
     _ =>
-      if !expr_package_matches(package_aliases, expr, "exec") {
-        false
-      } else {
-        match dotted_ident_name(expr) {
-          Some(name) =>
-            name == "hermetic_exec_violation_message" ||
-            name == "real_exec_integration_enabled" ||
-            name == "strip_terminal_responses" ||
-            name == "generate_native_promotion" ||
-            name == "apply_native_integration" ||
-            name == "observe_native_integration" ||
-            name == "goal_part_workflow_adapters"
-          None => false
+      match dotted_ident_pkg(expr) {
+        Some(p) => {
+          let s = resolved_package_path(package_aliases, p)
+          s == "choir/src/exec/test_support" ||
+          s == "choir/src/exec/terminal" ||
+          s == "choir/src/exec/git_integration" ||
+          s == "choir/src/exec/part_adapter"
         }
+        None => false
       }
   }
 }
@@ -755,11 +758,14 @@ fn forbidden_helper_info(
 }
 
 ///|
-impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr) {
+impl @syntax.IterVisitor for ForbiddenExecPackageRefSearch with fn visit_Expr(
+  self,
+  expr,
+) {
   if self.found {
     return
   }
-  if is_exec_package_ref(self.package_aliases, expr) {
+  if is_forbidden_test_exec_package_ref(self.package_aliases, expr) {
     self.found = true
     return
   }
@@ -767,11 +773,11 @@ impl @syntax.IterVisitor for ExecPackageRefSearch with fn visit_Expr(self, expr)
 }
 
 ///|
-fn expr_contains_exec_package_ref_with_package_aliases(
+fn expr_contains_forbidden_exec_package_ref(
   package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> Bool {
-  let search = ExecPackageRefSearch::{ package_aliases, found: false }
+  let search = ForbiddenExecPackageRefSearch::{ package_aliases, found: false }
   @syntax.IterVisitor::visit_Expr(search, expr)
   search.found
 }
@@ -1227,10 +1233,7 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   // AUDIT: one-hop wrappers such as capture_command_output escape this static
   // rule; Layer 1 backstops them at runtime, and full wrapper resolution is
   // tracked by choir-lint-multilevel-aliases / choir-lint-package-aliases.
-  if expr_contains_exec_package_ref_with_package_aliases(
-      env.package_aliases,
-      default,
-    ) {
+  if expr_contains_forbidden_exec_package_ref(env.package_aliases, default) {
     emit(
       env,
       "exec-default-parameter",
@@ -1323,14 +1326,23 @@ fn package_alias_from_manifest_line(line : String) -> (String, String)? {
     Some(index) => index
     None => return None
   }
-  let quoted = after_first[:second_quote].to_owned()
-  match package_alias_from_spec(quoted) {
+  let quoted = after_first[:second_quote]
+  match package_alias_from_spec(quoted.to_owned()) {
     Some(entry) => Some(entry)
     None => {
       let tail = after_first[second_quote + 1:].to_owned()
       match alias_from_as_suffix(tail) {
-        Some(alias_name) => Some((alias_name, quoted))
-        None => None
+        Some(alias_name) => Some((alias_name, quoted.to_owned()))
+        None => {
+          let segments = quoted.split("/").to_array()
+          if segments.length() == 0 {
+            None
+          } else {
+            Some(
+              (segments[segments.length() - 1].to_owned(), quoted.to_owned()),
+            )
+          }
+        }
       }
     }
   }
@@ -1339,7 +1351,7 @@ fn package_alias_from_manifest_line(line : String) -> (String, String)? {
 ///|
 fn package_aliases_from_manifest(content : String) -> Array[(String, String)] {
   let aliases = Array::new(capacity=4)
-  for line in content.split("\n") {
+  for line in content.split("\n").to_array() {
     match package_alias_from_manifest_line(line.to_owned()) {
       Some(entry) => aliases.push(entry)
       None => ()
@@ -1366,7 +1378,13 @@ fn host_effect_import(spec : String) -> Bool {
   spec == "choir/src/sys" ||
   spec == "choir/src/exec" ||
   spec.has_prefix("choir/src/sys/") ||
-  spec.has_prefix("choir/src/exec/") ||
+  (
+    spec.has_prefix("choir/src/exec/") &&
+    spec != "choir/src/exec/test_support" &&
+    spec != "choir/src/exec/terminal" &&
+    spec != "choir/src/exec/git_integration" &&
+    spec != "choir/src/exec/part_adapter"
+  ) ||
   spec.has_prefix("moonbitlang/async/")
 }
 
@@ -1493,7 +1511,7 @@ pub fn lint_autonomy_documentation(
     }
     let mut matching_line : String? = None
     let mut line_number = 0
-    for line in content.split("\n") {
+    for line in content.split("\n").to_array() {
       line_number = line_number + 1
       if line.contains(requirement.marker) {
         matching_line = Some(line.to_owned())
@@ -1523,11 +1541,15 @@ pub fn lint_package_manifest(
 ) -> Array[LintFinding] {
   let findings : Array[LintFinding] = []
   let directory = manifest_directory(file)
-  if !control_plane_package_directories().contains(directory) {
+  if !control_plane_package_directories().contains(directory) &&
+    directory != "src/exec/test_support" &&
+    directory != "src/exec/terminal" &&
+    directory != "src/exec/git_integration" &&
+    directory != "src/exec/part_adapter" {
     return findings
   }
   let mut line_number = 0
-  for line in content.split("\n") {
+  for line in content.split("\n").to_array() {
     line_number = line_number + 1
     match manifest_import_spec(line.to_owned()) {
       Some(spec) =>

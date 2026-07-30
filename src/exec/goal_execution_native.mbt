@@ -167,7 +167,7 @@ async fn native_goal_git_value(
 async fn capture_native_goal_git(
   repository_root : String,
   arguments : Array[String],
-) -> Result[NativeGitCapture, @types.ChoirError] {
+) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
   let environment = native_git_environment(false)
   environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
   environment["GIT_ATTR_NOSYSTEM"] = "1"
@@ -257,7 +257,7 @@ async fn discover_native_goal_repository(
 fn native_goal_initialization_git_config(
   repository : NativeGoalRepositoryIdentity,
   record : @workflow.GoalExecutionRecord,
-) -> NativeGitIntegrationConfig {
+) -> @git_integration.NativeGitIntegrationConfig {
   {
     repository_root: repository.root,
     git_directory: repository.git_directory,
@@ -270,7 +270,7 @@ fn native_goal_initialization_git_config(
 
 ///|
 async fn read_native_goal_initialization_ref(
-  config : NativeGitIntegrationConfig,
+  config : @git_integration.NativeGitIntegrationConfig,
   reference : String,
 ) -> Result[@control.GitOid?, @types.ChoirError] {
   let adapters = native_git_integration_adapters()
@@ -292,7 +292,7 @@ async fn read_native_goal_initialization_ref(
 
 ///|
 async fn observe_native_goal_branch_initialization(
-  config : NativeGitIntegrationConfig,
+  config : @git_integration.NativeGitIntegrationConfig,
   initialization : @workflow.GoalBranchInitialization,
 ) -> Result[@workflow.GoalBranchInitObservation, @types.ChoirError] {
   let goal = match
@@ -325,7 +325,7 @@ async fn observe_native_goal_branch_initialization(
 
 ///|
 async fn apply_native_goal_branch_initialization(
-  config : NativeGitIntegrationConfig,
+  config : @git_integration.NativeGitIntegrationConfig,
   initialization : @workflow.GoalBranchInitialization,
 ) -> Result[Unit, @types.ChoirError] {
   let zero = if initialization.captured_base_oid.0.length() == 64 {
@@ -3258,7 +3258,7 @@ async fn execute_native_goal_record(
   for part in parts {
     part.runtime.prepared.val = Some(prepared)
   }
-  let integration : NativeGitIntegrationConfig = {
+  let integration : @git_integration.NativeGitIntegrationConfig = {
     repository_root: git.root,
     git_directory: git.git_directory,
     object_directory: git.object_directory,
@@ -3266,7 +3266,7 @@ async fn execute_native_goal_record(
     goal_ref: record.goal_ref.0,
   }
   let boxlite_effect_lock = @ref.new(false)
-  let config : GoalPartWorkflowAdapterConfig = {
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
     bindings: parts.map(fn(part) {
       {
         scheduling_record: {
@@ -3322,7 +3322,10 @@ async fn execute_native_goal_record(
     },
     plan_recovery_retry: plan_native_part_recovery_retry,
     read_goal_head: async fn() {
-      read_native_goal_head(integration, native_git_integration_adapters())
+      @git_integration.read_native_goal_head(
+        integration,
+        native_git_integration_adapters(),
+      )
     },
     release_provider_lease: fn(part_id) {
       match native_goal_part_runtime(parts, part_id) {
@@ -3335,7 +3338,7 @@ async fn execute_native_goal_record(
   let result = @workflow.run_goal_parts(
     config.bindings.map(fn(binding) { binding.scheduling_record }),
     record.maximum_parallel_parts,
-    goal_part_workflow_adapters(config),
+    @part_adapter.goal_part_workflow_adapters(config),
   )
   // Each Part gives its slot back as its pass returns; this is the sweep for a
   // pass that failed on its way out. Releasing is idempotent, so a slot already
@@ -3699,7 +3702,7 @@ async fn persist_native_cancellation_observation(
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   stored : @workflow.PartStoredSnapshot,
-  integration : NativeGitIntegrationConfig,
+  integration : @git_integration.NativeGitIntegrationConfig,
   observed_at : Int64,
 ) -> Result[@workflow.PartStoredSnapshot, @types.ChoirError] {
   let intent = match stored.snapshot.pending_effect {
@@ -3713,7 +3716,7 @@ async fn persist_native_cancellation_observation(
     _ => return Ok(stored)
   }
   let recovery = match
-    reconcile_native_git_effect(
+    @git_integration.reconcile_native_git_effect(
       integration,
       stored.snapshot,
       intent,
@@ -3761,7 +3764,7 @@ async fn reconcile_native_goal_part_cancellation(
       }
     )
   })
-  let integration = if needs_integration {
+  let integration : @git_integration.NativeGitIntegrationConfig? = if needs_integration {
     let git = match discover_native_goal_repository(project_dir, record) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -4239,7 +4242,7 @@ async fn prove_native_pull_request_neutralization(
 
 ///|
 async test "real exec integration: cancellation strips merge authority before it settles" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let observed = prove_native_pull_request_neutralization(
@@ -4263,7 +4266,7 @@ async test "real exec integration: cancellation strips merge authority before it
 
 ///|
 async test "real exec integration: a merge racing neutralization wins delivery" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let observed = prove_native_pull_request_neutralization(
@@ -4507,7 +4510,7 @@ async fn native_goal_seal_witness(
 
 ///|
 async test "native Goal branch initialization atomically anchors both refs" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let root = "/tmp/choir-goal-branch-init-" + @sys.get_pid().to_string()
@@ -4515,7 +4518,9 @@ async test "native Goal branch initialization atomically anchors both refs" {
   if !@sys.create_dir_all(root) {
     fail("failed to create Goal branch initialization test root")
   }
-  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+  let git = async fn(
+    arguments : Array[String],
+  ) -> @git_integration.NativeGitCapture {
     match capture_native_goal_git(root, arguments) {
       Ok(value) => value
       Err(error) => fail(error.message())
@@ -4547,7 +4552,7 @@ async test "native Goal branch initialization atomically anchors both refs" {
     goal_ref,
     base_oid,
   )
-  let config : NativeGitIntegrationConfig = {
+  let config : @git_integration.NativeGitIntegrationConfig = {
     repository_root: root,
     git_directory: root + "/.git",
     object_directory: root + "/.git/objects",
@@ -4583,7 +4588,7 @@ async test "native Goal branch initialization atomically anchors both refs" {
 
 ///|
 async test "native Goal purge removes only an exact owned Git ref" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let root = "/tmp/choir-goal-ref-purge-" + @sys.get_pid().to_string()
@@ -4591,7 +4596,9 @@ async test "native Goal purge removes only an exact owned Git ref" {
   if !@sys.create_dir_all(root) {
     fail("failed to create Goal ref purge test root")
   }
-  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+  let git = async fn(
+    arguments : Array[String],
+  ) -> @git_integration.NativeGitCapture {
     match capture_native_goal_git(root, arguments) {
       Ok(value) => value
       Err(error) => fail(error.message())
@@ -4640,7 +4647,7 @@ async test "native Goal purge removes only an exact owned Git ref" {
 
 ///|
 async test "native Goal seal witness is exact and idempotent" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let root = "/tmp/choir-goal-seal-witness-" + @sys.get_pid().to_string()
@@ -4648,7 +4655,9 @@ async test "native Goal seal witness is exact and idempotent" {
   if !@sys.create_dir_all(root) {
     fail("failed to create Goal seal test root")
   }
-  let git = async fn(arguments : Array[String]) -> NativeGitCapture {
+  let git = async fn(
+    arguments : Array[String],
+  ) -> @git_integration.NativeGitCapture {
     match capture_native_goal_git(root, arguments) {
       Ok(value) => value
       Err(error) => fail(error.message())
@@ -6610,9 +6619,9 @@ pub async fn run_native_goal_execution_tick(
 
 ///|
 fn native_goal_owned_git_ref_is_valid(reference : String) -> Bool {
-  valid_git_ref(reference, "refs/heads/choir/goals/") ||
-  valid_git_ref(reference, "refs/choir/goals/") ||
-  valid_git_ref(reference, "refs/choir/witness/")
+  @git_integration.valid_git_ref(reference, "refs/heads/choir/goals/") ||
+  @git_integration.valid_git_ref(reference, "refs/choir/goals/") ||
+  @git_integration.valid_git_ref(reference, "refs/choir/witness/")
 }
 
 ///|
@@ -6634,7 +6643,7 @@ async fn delete_native_goal_owned_git_ref(
     return Ok(false)
   }
   let oid = observed.output.trim().to_owned()
-  if observed.exit_code != 0 || !valid_hex_oid_text(oid) {
+  if observed.exit_code != 0 || !@git_integration.valid_hex_oid_text(oid) {
     return Err(native_goal_execution_error("owned Git ref observation failed"))
   }
   let deleted = match

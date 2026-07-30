@@ -417,7 +417,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       surface: accepted_codex.provider_surface,
     },
   ]
-  let integration : NativeGitIntegrationConfig = {
+  let integration : @git_integration.NativeGitIntegrationConfig = {
     repository_root: git.root,
     git_directory: git.git_directory,
     object_directory: git.object_directory,
@@ -481,7 +481,10 @@ pub async fn run_native_mixed_provider_goal_fixture(
           Ok(native_mixed_provider_record(observed.snapshot))
         },
         read_goal_head: async fn() {
-          read_native_goal_head(integration, native_git_integration_adapters())
+          @git_integration.read_native_goal_head(
+            integration,
+            native_git_integration_adapters(),
+          )
         },
         promote_part: async fn(record, selection) {
           let part = match native_mixed_provider_part(parts, record.part.id) {
@@ -618,7 +621,10 @@ pub async fn run_native_mixed_provider_goal_fixture(
     }
   }
   let head = match
-    read_native_goal_head(integration, native_git_integration_adapters()) {
+    @git_integration.read_native_goal_head(
+      integration,
+      native_git_integration_adapters(),
+    ) {
     Ok(value) => value
     Err(error) =>
       return cleanup_failed_native_mixed_provider_goal(

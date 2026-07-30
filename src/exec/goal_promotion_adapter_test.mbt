@@ -266,7 +266,7 @@ fn promotion_harness_repair(
 /// The adapter configuration the Goal worker builds, with only the pieces a
 /// promotion test varies left open.
 fn promotion_harness_config(
-  binding : @exec.GoalPartWorkflowBinding,
+  binding : @part_adapter.GoalPartWorkflowBinding,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
   dependencies : @workflow.PartWorkflowDriverDependencies,
   plan_conflict_repair : (@workflow.PartWorkflowSnapshot) -> Result[
@@ -274,7 +274,7 @@ fn promotion_harness_config(
     @types.ChoirError,
   ],
   released : Array[@control.PartId],
-) -> @exec.GoalPartWorkflowAdapterConfig {
+) -> @part_adapter.GoalPartWorkflowAdapterConfig {
   {
     bindings: [binding],
     repository_adapters: adapters,
@@ -353,7 +353,7 @@ async test "an admitted promotion integrates the Part and returns the integrated
     released,
   )
   let promoted = match
-    (@exec.goal_part_workflow_adapters(config).promote_part)(
+    (@part_adapter.goal_part_workflow_adapters(config).promote_part)(
       record,
       promotion_harness_selection(record),
     ) {
@@ -432,7 +432,7 @@ async test "a promotion repair refused by a capacity bound returns its slot" {
     released,
   )
   let refused = match
-    (@exec.goal_part_workflow_adapters(config).promote_part)(
+    (@part_adapter.goal_part_workflow_adapters(config).promote_part)(
       record,
       promotion_harness_selection(record),
     ) {
@@ -516,7 +516,7 @@ async test "a promotion repair the Goal refuses outright is not persisted" {
     released,
   )
   let refused = match
-    (@exec.goal_part_workflow_adapters(config).promote_part)(
+    (@part_adapter.goal_part_workflow_adapters(config).promote_part)(
       record,
       promotion_harness_selection(record),
     ) {
@@ -582,7 +582,7 @@ async test "an authorized promotion repair is persisted and re-armed under the r
     released,
   )
   let repaired = match
-    (@exec.goal_part_workflow_adapters(config).promote_part)(
+    (@part_adapter.goal_part_workflow_adapters(config).promote_part)(
       record,
       promotion_harness_selection(record),
     ) {
@@ -650,7 +650,7 @@ async test "promotion recovery reconciles an authorized integration instead of r
     part: waiting.part,
     task_contract: waiting.task_contract,
   }
-  let binding : @exec.GoalPartWorkflowBinding = {
+  let binding : @part_adapter.GoalPartWorkflowBinding = {
     scheduling_record: record,
     initial_snapshot: waiting,
     repository,
@@ -668,7 +668,7 @@ async test "promotion recovery reconciles an authorized integration instead of r
     released,
   )
   assert_true(
-    (@exec.goal_part_workflow_adapters(lost).promote_part)(
+    (@part_adapter.goal_part_workflow_adapters(lost).promote_part)(
       record,
       promotion_harness_selection(record),
     )
@@ -697,7 +697,7 @@ async test "promotion recovery reconciles an authorized integration instead of r
   }
   let executed_before_recovery = execute_count.val
   let recovered = match
-    (@exec.goal_part_workflow_adapters({
+    (@part_adapter.goal_part_workflow_adapters({
       ..lost,
       bindings: [{ ..binding, scheduling_record: recovering }],
     }).resume_promotion)(recovering) {
@@ -768,7 +768,7 @@ async test "promotion recovery refuses a record the store disagrees with" {
   )
   let executed_before_recovery = execute_count.val
   assert_true(
-    (@exec.goal_part_workflow_adapters(config).resume_promotion)(stale)
+    (@part_adapter.goal_part_workflow_adapters(config).resume_promotion)(stale)
     is Err(_),
   )
   assert_eq(execute_count.val, executed_before_recovery)

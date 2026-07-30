@@ -54,7 +54,7 @@ fn native_git_test_intent(
 }
 
 ///|
-fn native_git_test_config() -> @exec.NativeGitIntegrationConfig {
+fn native_git_test_config() -> @git_integration.NativeGitIntegrationConfig {
   {
     repository_root: "/tmp/choir-native-git-test",
     git_directory: "/tmp/choir-native-git-test/.git",
@@ -77,12 +77,15 @@ fn native_git_test_promotion() -> @control.PromotionCommit {
 
 ///|
 async test "native Git promotion uses witnessed deterministic parents" {
-  let commands : Array[@exec.NativeGitIntegrationCommand] = []
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let commands : Array[@git_integration.NativeGitIntegrationCommand] = []
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       commands.push(command)
-      let capture : @exec.NativeGitCapture = match command {
-        @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
+      let capture : @git_integration.NativeGitCapture = match command {
+        @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitTree(
+          oid
+        ) =>
           if oid == git_candidate_oid {
             { exit_code: 0, output: git_candidate_tree.0 + "\n" }
           } else if oid == git_promotion_oid {
@@ -90,15 +93,17 @@ async test "native Git promotion uses witnessed deterministic parents" {
           } else {
             { exit_code: 0, output: git_candidate_tree.0 + "\n" }
           }
-        @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+        @git_integration.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
           { exit_code: 0, output: git_promotion_tree.0 + "\n" }
-        @exec.NativeGitIntegrationCommand::NativeGitReadCommitEpoch(oid) =>
+        @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitEpoch(
+          oid
+        ) =>
           if oid == git_head_oid {
             { exit_code: 0, output: "1700000000\n" }
           } else {
             { exit_code: 0, output: "1699999999\n" }
           }
-        @exec.NativeGitIntegrationCommand::NativeGitCreatePromotion(
+        @git_integration.NativeGitIntegrationCommand::NativeGitCreatePromotion(
           tree,
           head,
           candidate,
@@ -115,7 +120,9 @@ async test "native Git promotion uses witnessed deterministic parents" {
           assert_true(message.contains("Intent: intent-1"))
           { exit_code: 0, output: git_promotion_oid.0 + "\n" }
         }
-        @exec.NativeGitIntegrationCommand::NativeGitReadCommitParents(oid) => {
+        @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitParents(
+          oid
+        ) => {
           assert_eq(oid, git_promotion_oid)
           {
             exit_code: 0,
@@ -128,7 +135,7 @@ async test "native Git promotion uses witnessed deterministic parents" {
     },
   }
   let observation = match
-    @exec.generate_native_promotion(
+    @git_integration.generate_native_promotion(
       native_git_test_config(),
       native_git_test_intent(
         @control.IntegrationIntentLifecycle::IntegrationPlanned,
@@ -148,34 +155,37 @@ async test "native Git promotion uses witnessed deterministic parents" {
 
 ///|
 async test "native Git merge conflict produces a durable workflow observation" {
-  let commands : Array[@exec.NativeGitIntegrationCommand] = []
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let commands : Array[@git_integration.NativeGitIntegrationCommand] = []
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       commands.push(command)
       Ok(
         match command {
-          @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(_) =>
-            { exit_code: 0, output: git_candidate_tree.0 + "\n" }
-          @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitTree(
+            _
+          ) => { exit_code: 0, output: git_candidate_tree.0 + "\n" }
+          @git_integration.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
             {
               exit_code: 1,
               output: git_promotion_tree.0 + "\u{00}src/conflict.mbt\u{00}",
             }
-          @exec.NativeGitIntegrationCommand::NativeGitReadMergeBase(_, _) =>
-            { exit_code: 0, output: git_merge_base_oid.0 + "\n" }
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadMergeBase(
+            _,
+            _
+          ) => { exit_code: 0, output: git_merge_base_oid.0 + "\n" }
           _ => { exit_code: 99, output: "unexpected command" }
         },
       )
     },
   }
   let observation = match
-    @exec.generate_native_promotion(
+    @git_integration.generate_native_promotion(
       native_git_test_config(),
       native_git_test_intent(
         @control.IntegrationIntentLifecycle::IntegrationPlanned,
       ),
       adapters,
-      is_nfc=fn(_) { true },
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())
@@ -194,11 +204,12 @@ async test "native Git merge conflict produces a durable workflow observation" {
 ///|
 async test "native Git integration atomically updates and witnesses both refs" {
   let applied = @ref.new(false)
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       Ok(
         match command {
-          @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(
+          @git_integration.NativeGitIntegrationCommand::NativeGitApplyRefs(
             goal_ref,
             witness_ref,
             expected,
@@ -211,7 +222,9 @@ async test "native Git integration atomically updates and witnesses both refs" {
             applied.val = true
             { exit_code: 0, output: "start: ok\ncommit: ok\n" }
           }
-          @exec.NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadRef(
+            reference
+          ) =>
             if reference == "refs/heads/choir/goal-1" {
               {
                 exit_code: 0,
@@ -232,7 +245,7 @@ async test "native Git integration atomically updates and witnesses both refs" {
     },
   }
   let observation = match
-    @exec.apply_native_integration(
+    @git_integration.apply_native_integration(
       native_git_test_config(),
       native_git_test_intent(
         @control.IntegrationIntentLifecycle::IntegrationAuthorized,
@@ -255,11 +268,14 @@ async test "native Git integration atomically updates and witnesses both refs" {
 async test "native Git reconciliation distinguishes unapplied and divergence" {
   let goal = @ref.new(git_head_oid)
   let witness : Ref[@control.GitOid?] = @ref.new(None)
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       Ok(
         match command {
-          @exec.NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadRef(
+            reference
+          ) =>
             if reference == "refs/heads/choir/goal-1" {
               { exit_code: 0, output: goal.val.0 + "\n" }
             } else {
@@ -277,7 +293,7 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
     @control.IntegrationIntentLifecycle::IntegrationAuthorized,
   )
   let promotion = native_git_test_promotion()
-  let first = @exec.observe_native_integration(
+  let first = @git_integration.observe_native_integration(
     native_git_test_config(),
     intent,
     promotion,
@@ -290,7 +306,7 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
     ),
   )
   goal.val = git_candidate_oid
-  let second = @exec.observe_native_integration(
+  let second = @git_integration.observe_native_integration(
     native_git_test_config(),
     intent,
     promotion,
@@ -305,11 +321,14 @@ async test "native Git reconciliation distinguishes unapplied and divergence" {
 ///|
 async test "native Git promotion recovery regenerates the identical object" {
   let create_count = @ref.new(0)
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       Ok(
         match command {
-          @exec.NativeGitIntegrationCommand::NativeGitReadCommitTree(oid) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitTree(
+            oid
+          ) =>
             if oid == git_candidate_oid {
               { exit_code: 0, output: git_candidate_tree.0 + "\n" }
             } else if oid == git_promotion_oid {
@@ -317,9 +336,9 @@ async test "native Git promotion recovery regenerates the identical object" {
             } else {
               { exit_code: 0, output: git_candidate_tree.0 + "\n" }
             }
-          @exec.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitMergeTree(_, _) =>
             { exit_code: 0, output: git_promotion_tree.0 + "\n" }
-          @exec.NativeGitIntegrationCommand::NativeGitCreatePromotion(
+          @git_integration.NativeGitIntegrationCommand::NativeGitCreatePromotion(
             _,
             _,
             _,
@@ -329,7 +348,9 @@ async test "native Git promotion recovery regenerates the identical object" {
             create_count.val = create_count.val + 1
             { exit_code: 0, output: git_promotion_oid.0 + "\n" }
           }
-          @exec.NativeGitIntegrationCommand::NativeGitReadCommitParents(_) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadCommitParents(
+            _
+          ) =>
             {
               exit_code: 0,
               output: git_head_oid.0 + " " + git_candidate_oid.0 + "\n",
@@ -340,19 +361,19 @@ async test "native Git promotion recovery regenerates the identical object" {
     },
   }
   assert_true(
-    @exec.generate_native_promotion(
+    @git_integration.generate_native_promotion(
       native_git_test_config(),
       native_git_test_intent(
         @control.IntegrationIntentLifecycle::IntegrationPlanned,
       ),
       adapters,
       fault=Some(
-        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
+        @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterPromotionObjectBeforePrepared,
       ),
     )
     is Err(_),
   )
-  let recovered = @exec.generate_native_promotion(
+  let recovered = @git_integration.generate_native_promotion(
     native_git_test_config(),
     native_git_test_intent(
       @control.IntegrationIntentLifecycle::IntegrationPlanned,
@@ -371,18 +392,23 @@ async test "native Git promotion recovery regenerates the identical object" {
 ///|
 async test "native Git faults before ref transaction perform no mutation" {
   let apply_count = @ref.new(0)
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       match command {
-        @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) =>
-          apply_count.val = apply_count.val + 1
+        @git_integration.NativeGitIntegrationCommand::NativeGitApplyRefs(
+          _,
+          _,
+          _,
+          _
+        ) => apply_count.val = apply_count.val + 1
         _ => ()
       }
       Ok({ exit_code: 99, output: "unexpected command" })
     },
   }
   assert_true(
-    @exec.apply_native_integration(
+    @git_integration.apply_native_integration(
       native_git_test_config(),
       native_git_test_intent(
         @control.IntegrationIntentLifecycle::IntegrationAuthorized,
@@ -390,7 +416,7 @@ async test "native Git faults before ref transaction perform no mutation" {
       native_git_test_promotion(),
       adapters,
       fault=Some(
-        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
+        @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterAuthorizedBeforeRefTransaction,
       ),
     )
     is Err(_),
@@ -402,16 +428,24 @@ async test "native Git faults before ref transaction perform no mutation" {
 async test "native Git recovers an applied ref transaction after process loss" {
   let applied = @ref.new(false)
   let apply_count = @ref.new(0)
-  let adapters : @exec.NativeGitIntegrationAdapters = {
+  let adapters : @git_integration.NativeGitIntegrationAdapters = {
+    is_nfc: fn(_) { true },
     capture: (_, command) => {
       Ok(
         match command {
-          @exec.NativeGitIntegrationCommand::NativeGitApplyRefs(_, _, _, _) => {
+          @git_integration.NativeGitIntegrationCommand::NativeGitApplyRefs(
+            _,
+            _,
+            _,
+            _
+          ) => {
             apply_count.val = apply_count.val + 1
             applied.val = true
             { exit_code: 0, output: "start: ok\ncommit: ok\n" }
           }
-          @exec.NativeGitIntegrationCommand::NativeGitReadRef(reference) =>
+          @git_integration.NativeGitIntegrationCommand::NativeGitReadRef(
+            reference
+          ) =>
             if reference == "refs/heads/choir/goal-1" {
               {
                 exit_code: 0,
@@ -436,20 +470,20 @@ async test "native Git recovers an applied ref transaction after process loss" {
   )
   let promotion = native_git_test_promotion()
   assert_true(
-    @exec.apply_native_integration(
+    @git_integration.apply_native_integration(
       native_git_test_config(),
       intent,
       promotion,
       adapters,
       fault=Some(
-        @exec.NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
+        @git_integration.NativeGitIntegrationFaultPoint::NativeGitAfterRefTransactionBeforeObservation,
       ),
     )
     is Err(_),
   )
   assert_eq(apply_count.val, 1)
   assert_eq(
-    @exec.observe_native_integration(
+    @git_integration.observe_native_integration(
       native_git_test_config(),
       intent,
       promotion,

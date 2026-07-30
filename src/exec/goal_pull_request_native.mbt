@@ -45,7 +45,7 @@ fn pull_request_short_ref(reference : @workflow.GitRefName) -> String? {
 async fn native_gh_capture(
   repository_root : String,
   arguments : Array[String],
-) -> Result[NativeGitCapture, @types.ChoirError] {
+) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
   let environment : Map[String, String] = {
     "GH_PROMPT_DISABLED": "1",
     "GH_PAGER": "cat",
@@ -1638,7 +1638,7 @@ pub async fn run_native_pull_request_fault_conformance() -> NativePullRequestFau
 
 ///|
 async test "real exec integration: final PR creation recovers without duplicate dispatch" {
-  if !real_exec_integration_enabled() {
+  if !@test_support.real_exec_integration_enabled() {
     return
   }
   let report = run_native_pull_request_fault_conformance()
