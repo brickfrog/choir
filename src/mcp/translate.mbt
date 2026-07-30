@@ -57,10 +57,10 @@ fn conductor_tools() -> Array[CatalogTool] {
       }.to_json(),
     }.to_json(),
     "exact_paths": conductor_string_array_schema(
-      "Exact repository-relative files this Part may mutate; use [] for repository-wide or path-tree scope",
+      "Exact case-sensitive Git paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/lint/lint.mbt, not choir/src/lint/lint.mbt); use [] for repository-wide or path-tree scope",
     ),
     "path_trees": conductor_string_array_schema(
-      "Repository-relative directory trees this Part may mutate; use [] when none",
+      "Case-sensitive Git directory paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/lint, not choir/src/lint); use [] when none",
     ),
     "repository_wide": {
       "type": "boolean".to_json(),

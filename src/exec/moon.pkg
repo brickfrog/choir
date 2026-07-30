@@ -17,6 +17,7 @@ import {
   "moonbitlang/core/ref",
   "moonbitlang/core/string",
   "moonbitlang/core/debug",
+  "moonbitlang/moon_config",
 }
 
 options(

@@ -137,6 +137,8 @@ async test "native Conductor submission captures Beads and persists once" {
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ],
       ) => (0, base_tree + "\n")
+      ("git", ["ls-tree", "--name-only", tree, "--", "moon.mod"]) if tree ==
+        base_tree => (0, "")
       ("bd", ["show", "choir-a", "--json", "--readonly"]) =>
         (
           0,
@@ -556,6 +558,9 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
         } else {
           (-1, "unexpected commit")
         }
+      ("git", ["ls-tree", "--name-only", tree, "--", "moon.mod"]) if tree ==
+        trunk_tree ||
+        tree == parent_tree => (0, "")
       ("bd", ["show", "choir-stack-parent", "--json", "--readonly"]) =>
         (
           0,
@@ -785,6 +790,8 @@ async test "durable Goal cancellation survives replay and starts no provider" {
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ],
       ) => (0, base_tree + "\n")
+      ("git", ["ls-tree", "--name-only", tree, "--", "moon.mod"]) if tree ==
+        base_tree => (0, "")
       ("bd", ["show", "choir-cancel", "--json", "--readonly"]) =>
         (
           0,
@@ -894,6 +901,113 @@ async test "durable Goal cancellation survives replay and starts no provider" {
       )
     ) => assert_eq(state, @workflow.GoalExecutionState::GoalExecutionCanceled)
     Ok(_) => fail("terminal cancellation was not reported")
+    Err(error) => fail(error.message())
+  }
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "module-prefixed mutation paths are rejected before persistence" {
+  let root = "/tmp/choir-module-path-reject-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create module path rejection root")
+  }
+  let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let capture : async (@exec.Command) -> (Int, String) = command => {
+    match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
+      ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
+      ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
+        (0, base_commit + "\n")
+      (
+        "git",
+        [
+          "show",
+          "-s",
+          "--format=%T",
+          "--no-show-signature",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+      ) => (0, base_tree + "\n")
+      ("git", ["ls-tree", "--name-only", tree, "--", "moon.mod"]) if tree ==
+        base_tree => (0, "moon.mod\n")
+      ("git", ["show", tree_and_path]) if tree_and_path ==
+        base_tree + ":moon.mod" =>
+        (0, "name = \"choir\"\nversion = \"0.1.0\"\n")
+      ("git", ["ls-tree", tree, "--", "choir"]) if tree == base_tree => (0, "")
+      ("bd", ["show", "choir-u0t", "--json", "--readonly"]) =>
+        (
+          0,
+          (
+            #|[{"id":"choir-u0t","title":"Reject module paths","description":"Reject package specs used as paths","acceptance_criteria":"Submission fails before persistence","status":"open","priority":0,"issue_type":"bug","dependency_count":0,"updated_at":"2026-07-30T00:00:00Z"}]
+          ),
+        )
+      _ => (-1, "unexpected capture")
+    }
+  }
+  let invalid_draft =
+    #|{"proposal_id":"proposal-module-path-reject","goal_id":"goal-module-path-reject","pull_request":{"title":"fix: reject module paths","body":"Rejects package specs used as repository paths."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-u0t","commit_title":"fix: reject module paths","instruction":"Reject Moon package specs used as repository paths.","provider":"codex","path_trees":["choir/src/exec","choir/src/lint","choir/src/bin/choir"],"moon_args":["test","--target","native"]}]}
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      invalid_draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
+    Err(error) => {
+      assert_eq(error.to_wire_string(), "validation_error")
+      assert_true(error.message().contains("moon.mod module name \"choir\""))
+      assert_true(error.message().contains("use repository path \"src/exec\""))
+      assert_true(error.message().contains("use repository path \"src/lint\""))
+      assert_true(
+        error.message().contains("use repository path \"src/bin/choir\""),
+      )
+    }
+    Ok(_) => fail("module-prefixed mutation paths were accepted")
+  }
+  let repository : @workflow.PartWorkflowRepository = {
+    state_store: { path: root + "/.choir/state/control/workflow.db" },
+    artifact_store: { root: root + "/.choir/state/control/artifacts" },
+    max_snapshot_bytes: 4 * 1024 * 1024,
+  }
+  let adapters = local_part_workflow_repository_adapters()
+  match
+    @workflow.load_goal_selection_decision(
+      repository,
+      adapters,
+      @control.GoalId("goal-module-path-reject"),
+    ) {
+    Ok(None) => ()
+    Ok(Some(_)) => fail("invalid mutation paths persisted a Goal selection")
+    Err(error) => fail(error.message())
+  }
+  match
+    @workflow.load_part_snapshot(
+      repository,
+      adapters,
+      native_goal_part_workflow_id(
+        @control.GoalId("goal-module-path-reject"),
+        @control.PartId("choir-u0t"),
+      ),
+    ) {
+    Ok(None) => ()
+    Ok(Some(_)) => fail("invalid mutation paths initialized a Part workflow")
+    Err(error) => fail(error.message())
+  }
+  let valid_draft =
+    #|{"proposal_id":"proposal-repository-path-accept","goal_id":"goal-repository-path-accept","pull_request":{"title":"fix: accept repository paths","body":"Accepts paths rooted at the Git repository."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-u0t","commit_title":"fix: accept repository paths","instruction":"Use Git paths rooted at the repository.","provider":"codex","path_trees":["src/exec","src/lint","src/bin/choir"],"moon_args":["test","--target","native"]}]}
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      valid_draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
+    Ok(report) => assert_true(report.accepted)
     Err(error) => fail(error.message())
   }
   ignore(@sys.rm_rf(root))

@@ -5,6 +5,7 @@ version = "0.1.0"
 import {
   "moonbitlang/async@0.20.2",
   "moonbitlang/lexer@0.3.10",
+  "moonbitlang/moon_config@0.3.9",
   "moonbitlang/parser@0.3.10",
   "moonbitlang/quickcheck@0.14.0",
   "brickfrog/moontrace@0.13.0",

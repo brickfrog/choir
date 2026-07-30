@@ -103,6 +103,22 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   guard part_schema.get("properties") is Some(Object(part_properties)) else {
     fail("expected Part properties")
   }
+  guard part_properties.get("exact_paths") is Some(Object(exact_paths)) &&
+    exact_paths.get("description") is Some(String(exact_paths_description)) else {
+    fail("expected exact_paths description")
+  }
+  guard part_properties.get("path_trees") is Some(Object(path_trees)) &&
+    path_trees.get("description") is Some(String(path_trees_description)) else {
+    fail("expected path_trees description")
+  }
+  assert_true(
+    exact_paths_description.contains("Git paths from the repository root"),
+  )
+  assert_true(exact_paths_description.contains("not choir/src/lint/lint.mbt"))
+  assert_true(path_trees_description.contains("Git directory paths"))
+  assert_true(
+    path_trees_description.contains("use src/lint, not choir/src/lint"),
+  )
   guard part_properties.get("verify_timeout_ms") is Some(Object(timeout_schema)) else {
     fail("expected verification timeout schema")
   }

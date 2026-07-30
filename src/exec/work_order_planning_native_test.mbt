@@ -110,6 +110,8 @@ async test "delivered round admits one durable successor and replays it" {
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ],
       ) => (0, base_tree + "\n")
+      ("git", ["ls-tree", "--name-only", tree, "--", "moon.mod"]) if tree ==
+        base_tree => (0, "")
       ("bd", arguments) =>
         if arguments[0] == "list" {
           (0, bead_json)

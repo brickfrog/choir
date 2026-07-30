@@ -25,6 +25,346 @@ fn native_goal_submission_error(detail : String) -> @types.ChoirError {
 }
 
 ///|
+priv enum NativeGoalModuleRepositoryPathKind {
+  NativeGoalModulePathAbsent
+  NativeGoalModulePathNonTree
+  NativeGoalModulePathTree
+} derive(Eq)
+
+///|
+priv enum NativeGoalMutationPathField {
+  NativeGoalExactPathsField
+  NativeGoalPathTreesField
+}
+
+///|
+priv enum NativeGoalMutationPathCorrection {
+  NativeGoalRepositoryPathCorrection(@control.RepoPath)
+  NativeGoalRepositoryWideCorrection
+}
+
+///|
+priv struct NativeGoalMutationPathIssue {
+  part_id : @control.PartId
+  field : NativeGoalMutationPathField
+  declared : @control.RepoPath
+  correction : NativeGoalMutationPathCorrection
+}
+
+///|
+fn native_goal_moon_module_name(
+  source : String,
+  is_nfc : (String) -> Bool,
+) -> Result[String, @types.ChoirError] {
+  let (ast, _) = @moon_config.parse_moon_mod(source)
+  guard ast.to_json() is Object(fields) &&
+    fields.get("name") is Some(String(name)) &&
+    name != "" else {
+    return Err(
+      native_goal_submission_error(
+        "selected base moon.mod has no valid module name",
+      ),
+    )
+  }
+  match @control.validate_repo_path(@control.RepoPath(name), is_nfc) {
+    Ok(_) => Ok(name)
+    Err(_) =>
+      Err(
+        native_goal_submission_error(
+          "selected base moon.mod module name cannot identify a repository path prefix",
+        ),
+      )
+  }
+}
+
+///|
+fn native_goal_module_repository_path_kind(
+  output : String,
+  module_name : String,
+) -> Result[NativeGoalModuleRepositoryPathKind, @types.ChoirError] {
+  let trimmed = output.trim().to_owned()
+  if trimmed == "" {
+    return Ok(NativeGoalModulePathAbsent)
+  }
+  let lines = trimmed.split("\n").to_array()
+  if lines.length() != 1 {
+    return Err(
+      native_goal_submission_error(
+        "selected base module path observation is ambiguous",
+      ),
+    )
+  }
+  let line = lines[0].to_owned()
+  if !line.has_suffix("\t" + module_name) {
+    return Err(
+      native_goal_submission_error(
+        "selected base module path observation disagrees with moon.mod",
+      ),
+    )
+  }
+  if line.contains(" tree ") {
+    Ok(NativeGoalModulePathTree)
+  } else {
+    Ok(NativeGoalModulePathNonTree)
+  }
+}
+
+///|
+fn native_goal_mutation_path_issues(
+  draft : @workflow.ConductorGoalDraft,
+  module_name : String,
+  module_path_kind : NativeGoalModuleRepositoryPathKind,
+) -> Array[NativeGoalMutationPathIssue] {
+  if module_path_kind == NativeGoalModulePathTree {
+    return []
+  }
+  let issues : Array[NativeGoalMutationPathIssue] = []
+  let prefix = module_name + "/"
+  for part in draft.parts {
+    if part.repository_wide {
+      continue
+    }
+    for declared in part.exact_paths {
+      if declared.0 == module_name {
+        if module_path_kind == NativeGoalModulePathAbsent {
+          issues.push({
+            part_id: part.part_id,
+            field: NativeGoalExactPathsField,
+            declared,
+            correction: NativeGoalRepositoryWideCorrection,
+          })
+        }
+      } else if declared.0.has_prefix(prefix) {
+        issues.push({
+          part_id: part.part_id,
+          field: NativeGoalExactPathsField,
+          declared,
+          correction: NativeGoalRepositoryPathCorrection(
+            @control.RepoPath(declared.0[prefix.length():].to_owned()),
+          ),
+        })
+      }
+    }
+    for declared in part.path_trees {
+      if declared.0 == module_name {
+        issues.push({
+          part_id: part.part_id,
+          field: NativeGoalPathTreesField,
+          declared,
+          correction: NativeGoalRepositoryWideCorrection,
+        })
+      } else if declared.0.has_prefix(prefix) {
+        issues.push({
+          part_id: part.part_id,
+          field: NativeGoalPathTreesField,
+          declared,
+          correction: NativeGoalRepositoryPathCorrection(
+            @control.RepoPath(declared.0[prefix.length():].to_owned()),
+          ),
+        })
+      }
+    }
+  }
+  issues
+}
+
+///|
+fn native_goal_mutation_path_issue_text(
+  issue : NativeGoalMutationPathIssue,
+) -> String {
+  let field = match issue.field {
+    NativeGoalExactPathsField => "exact_paths"
+    NativeGoalPathTreesField => "path_trees"
+  }
+  let correction = match issue.correction {
+    NativeGoalRepositoryPathCorrection(path) =>
+      "use repository path \"" + path.0 + "\""
+    NativeGoalRepositoryWideCorrection =>
+      "use repository_wide=true for the repository root"
+  }
+  "Part " +
+  issue.part_id.0 +
+  " " +
+  field +
+  " entry \"" +
+  issue.declared.0 +
+  "\": " +
+  correction
+}
+
+///|
+test "module-prefixed mutation paths are corrected without rewriting them" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-module-path","goal_id":"goal-module-path","pull_request":{"title":"fix: reject module paths","body":"Rejects module-prefixed mutation paths."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-u0t","commit_title":"fix: reject module paths","instruction":"Reject module-prefixed paths.","provider":"codex","exact_paths":["choir/src/lint/lint.mbt"],"path_trees":["choir/src/exec","choir/src/lint"],"repository_wide":false,"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+  let issues = native_goal_mutation_path_issues(
+    draft,
+    "choir",
+    NativeGoalModulePathAbsent,
+  )
+  assert_eq(issues.length(), 3)
+  assert_eq(issues.map(native_goal_mutation_path_issue_text), [
+    (
+      #|Part choir-u0t exact_paths entry "choir/src/lint/lint.mbt": use repository path "src/lint/lint.mbt"
+    ),
+    (
+      #|Part choir-u0t path_trees entry "choir/src/exec": use repository path "src/exec"
+    ),
+    (
+      #|Part choir-u0t path_trees entry "choir/src/lint": use repository path "src/lint"
+    ),
+  ])
+  assert_eq(draft.parts[0].exact_paths[0].0, "choir/src/lint/lint.mbt")
+  assert_eq(draft.parts[0].path_trees[0].0, "choir/src/exec")
+}
+
+///|
+test "module path classification preserves literal tracked repository paths" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-literal-module-path","goal_id":"goal-literal-module-path","pull_request":{"title":"test: preserve literal paths","body":"Preserves literal repository paths."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-u0t","commit_title":"test: preserve literal paths","instruction":"Exercise literal repository paths.","provider":"codex","exact_paths":["choir"],"path_trees":["choir/src"],"repository_wide":false,"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+  assert_eq(
+    native_goal_mutation_path_issues(draft, "choir", NativeGoalModulePathTree).length(),
+    0,
+  )
+  let non_tree = native_goal_mutation_path_issues(
+    draft,
+    "choir",
+    NativeGoalModulePathNonTree,
+  )
+  assert_eq(non_tree.length(), 1)
+  assert_true(
+    native_goal_mutation_path_issue_text(non_tree[0]).contains(
+      "path_trees entry \"choir/src\"",
+    ),
+  )
+}
+
+///|
+test "root module claims require repository-wide authority" {
+  let draft = @workflow.decode_conductor_goal_draft(
+    (
+      #|{"proposal_id":"proposal-root-module-path","goal_id":"goal-root-module-path","pull_request":{"title":"test: reject module root","body":"Rejects a module root mutation path."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-u0t","commit_title":"test: reject module root","instruction":"Exercise the module root correction.","provider":"codex","path_trees":["owner/project"],"repository_wide":false,"moon_args":["test","--target","native"]}]}
+    ),
+  ).unwrap()
+  let issues = native_goal_mutation_path_issues(
+    draft,
+    "owner/project",
+    NativeGoalModulePathAbsent,
+  )
+  assert_eq(issues.length(), 1)
+  assert_true(
+    native_goal_mutation_path_issue_text(issues[0]).contains(
+      "use repository_wide=true",
+    ),
+  )
+  assert_true(
+    native_goal_module_repository_path_kind(
+      "040000 tree aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\towner/project", "owner/project",
+    ).unwrap() ==
+    NativeGoalModulePathTree,
+  )
+}
+
+///|
+test "moon.mod parsing uses the declared module identity" {
+  assert_eq(
+    native_goal_moon_module_name(
+      "name = \"owner/project\"\nversion = \"0.1.0\"\n",
+      fn(_) { true },
+    ).unwrap(),
+    "owner/project",
+  )
+  assert_true(
+    native_goal_moon_module_name("version = \"0.1.0\"\n", fn(_) { true })
+    is Err(_),
+  )
+}
+
+///|
+async fn validate_native_goal_mutation_paths(
+  capture : async (Command) -> (Int, String),
+  project_dir : String,
+  base_tree_oid : @control.GitOid,
+  draft : @workflow.ConductorGoalDraft,
+  is_nfc : (String) -> Bool,
+) -> Result[Unit, @types.ChoirError] {
+  if draft.parts.all(fn(part) { part.repository_wide }) {
+    return Ok(())
+  }
+  let manifest_path = match
+    native_goal_submission_capture(
+      capture,
+      project_dir,
+      "git",
+      ["ls-tree", "--name-only", base_tree_oid.0, "--", "moon.mod"],
+      "selected base moon.mod path",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if manifest_path == "" {
+    return Ok(())
+  }
+  if manifest_path != "moon.mod" {
+    return Err(
+      native_goal_submission_error(
+        "selected base moon.mod path observation is invalid",
+      ),
+    )
+  }
+  let manifest = match
+    native_goal_submission_capture(
+      capture,
+      project_dir,
+      "git",
+      ["show", base_tree_oid.0 + ":moon.mod"],
+      "selected base moon.mod",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let module_name = match native_goal_moon_module_name(manifest, is_nfc) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let module_path = match
+    native_goal_submission_capture(
+      capture,
+      project_dir,
+      "git",
+      ["ls-tree", base_tree_oid.0, "--", module_name],
+      "selected base module path",
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let module_path_kind = match
+    native_goal_module_repository_path_kind(module_path, module_name) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let issues = native_goal_mutation_path_issues(
+    draft, module_name, module_path_kind,
+  )
+  if issues.length() == 0 {
+    return Ok(())
+  }
+  Err(
+    native_goal_submission_error(
+      "mutation declaration uses the moon.mod module name \"" +
+      module_name +
+      "\" as a Git path prefix; Git paths are relative to the repository root: " +
+      issues.map(native_goal_mutation_path_issue_text).join("; "),
+    ),
+  )
+}
+
+///|
 fn native_goal_submission_digest(
   domain : String,
   identity : Json,
@@ -1473,6 +1813,17 @@ pub async fn submit_native_conductor_goal_draft(
       Ok(value) => value
       Err(error) => return Err(error)
     }
+  }
+  match
+    validate_native_goal_mutation_paths(
+      capture,
+      project_dir,
+      snapshot.base_tree_oid,
+      draft,
+      is_nfc,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   let snapshot_bytes = @workflow.goal_selection_snapshot_bytes(snapshot)
   let snapshot_artifact = match
