@@ -1,0 +1,21 @@
+import {
+  "choir/src/control",
+  "choir/src/sys",
+  "choir/src/storage",
+  "choir/src/types",
+  "choir/src/workflow",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
+  "moonbitlang/core/string",
+}
+
+options(
+  "is-main": false,
+  "max-concurrent-tests": 1,
+  "native-stub": [ "store.c" ],
+  targets: {
+    "storage_native.mbt": [ "native" ],
+    "storage_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "storage_test.mbt": [ "native" ],
+  },
+)

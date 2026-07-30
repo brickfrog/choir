@@ -94,7 +94,7 @@ async fn real_exec_integration_assurance_loop_fixture(
   }
   let repository_id = @workflow.repository_id(canonical)
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => fail(error.message())

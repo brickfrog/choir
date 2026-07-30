@@ -67,7 +67,7 @@ pub async fn advance_native_goal_finalization_with_adapters(
   ) -> Result[Unit, @types.ChoirError] = reconcile_native_goal_delivery_sources,
 ) -> Result[@workflow.GoalFinalizationTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -403,7 +403,7 @@ async fn observe_pull_request_remote_state(
     Err(error) => fail("remote-state finalization: " + error.message())
   }
   let repository = native_goal_repository(fixture.0)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let decision = @workflow.load_goal_finalization_record(
       repository,
       adapters,
@@ -517,7 +517,7 @@ pub async fn run_native_goal_finalization_race_conformance() -> NativeGoalFinali
     Err(error) => fail("edit before response: " + error.message())
   }
   let before_repository = native_goal_repository(before.0)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let before_goal_state = @workflow.load_goal_execution_record(
       before_repository,
       adapters,

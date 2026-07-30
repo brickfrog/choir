@@ -1177,7 +1177,7 @@ fn native_conductor_resolve_goal_id(
 /// internal id they were never shown.
 fn dispatch_native_goal_list(project_dir : String) -> @types.Response {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return @types.Response::err(error)

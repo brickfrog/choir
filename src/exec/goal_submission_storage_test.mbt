@@ -165,7 +165,7 @@ test "Goal selection decision persists once and reloads after restart" {
     artifact_store: { root: root + "/artifacts" },
     max_snapshot_bytes: 1024 * 1024,
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => fail(error.message())
@@ -231,7 +231,7 @@ test "WorkOrder persistence rolls back or reconciles every crash boundary" {
       artifact_store: { root: root + "/artifacts" },
       max_snapshot_bytes: 1024 * 1024,
     }
-    let adapters = local_part_workflow_repository_adapters()
+    let adapters = @storage_host.local_part_workflow_repository_adapters()
     @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
     let record = work_order_store_record("fault-" + index.to_string())
     let receipt = @workflow.persist_work_order_record(repository, adapters, {

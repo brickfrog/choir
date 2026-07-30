@@ -114,12 +114,12 @@ pub fn mint_native_goal_fencing_epoch(
   project_dir : String,
 ) -> Result[Int64, @types.ChoirError] {
   let store = native_goal_repository(project_dir).state_store
-  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
-  let epoch = state_store_mint_epoch_ffi(path, path_len)
-  if epoch <= 0L {
-    return Err(
-      native_goal_execution_error("fencing generation could not be minted"),
-    )
+  let epoch = match @storage_host.mint_state_store_epoch(store) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(
+        native_goal_execution_error("fencing generation could not be minted"),
+      )
   }
   native_goal_fencing_epoch_state.val = epoch
   Ok(epoch)
@@ -133,14 +133,14 @@ pub fn observe_native_goal_fencing_epoch(
   project_dir : String,
 ) -> Result[Int64, @types.ChoirError] {
   let store = native_goal_repository(project_dir).state_store
-  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
-  let epoch = state_store_read_epoch_ffi(path, path_len)
-  if epoch <= 0L {
-    return Err(
-      native_goal_execution_error(
-        "fencing generation is absent; start the worker through choird",
-      ),
-    )
+  let epoch = match @storage_host.read_state_store_epoch(store) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(
+        native_goal_execution_error(
+          "fencing generation is absent; start the worker through choird",
+        ),
+      )
   }
   native_goal_fencing_epoch_state.val = epoch
   Ok(epoch)
@@ -605,7 +605,7 @@ fn adopt_native_audit_repair_instruction(
   assigned_paths : Array[@control.RepoPath],
   audit_output : String,
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let original = match
     (adapters.artifacts.read)(repository.artifact_store, {
       digest: previous.digest,
@@ -808,7 +808,7 @@ fn plan_native_part_audit_repair(
       return Err(native_goal_execution_error("Part audit findings are absent"))
   }
   let bytes = match
-    (local_part_workflow_repository_adapters().artifacts.read)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
       repository.artifact_store,
       { digest: findings_artifact.digest, max_bytes: 1048576 },
     ) {
@@ -852,7 +852,7 @@ fn adopt_native_verification_repair_instruction(
   previous : @control.ArtifactReference,
   verification_evidence : String,
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let original = match
     (adapters.artifacts.read)(repository.artifact_store, {
       digest: previous.digest,
@@ -1058,7 +1058,7 @@ fn plan_native_part_verification_repair(
       )
   }
   let bytes = match
-    (local_part_workflow_repository_adapters().artifacts.read)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
       repository.artifact_store,
       { digest: receipt.evidence.digest, max_bytes: 4194304 },
     ) {
@@ -1374,7 +1374,7 @@ pub fn retry_native_goal_part(
   part_id : @control.PartId?,
 ) -> Result[@workflow.GoalExecutionRecord, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -2795,7 +2795,7 @@ fn native_provider_lease_admission(
   match
     @workflow.acquire_provider_lease(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       surface,
       request,
       capacity,
@@ -2866,7 +2866,7 @@ pub fn native_goal_effect_authorization(
   now : Int64,
   observe~ : (@workflow.ProviderSurfaceTickReport) -> Unit,
 ) -> Result[@workflow.PartGoalAuthorization, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let current = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value
@@ -3046,7 +3046,7 @@ pub fn finish_native_goal_assurance_leases(
   result : Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError],
   fencing_epoch : @control.FencingEpoch,
 ) -> Result[@workflow.GoalAssuranceTickOutcome, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let mut released : Result[Unit, @types.ChoirError] = Ok(())
   for hold in holds {
     match
@@ -3171,7 +3171,7 @@ async fn execute_native_goal_record(
     native_goal_cancellation_observed(
       @workflow.load_goal_execution_record(
         repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         record.goal.id,
       ),
       fn(current) {
@@ -3277,7 +3277,7 @@ async fn execute_native_goal_record(
         repository,
       }
     }),
-    repository_adapters: local_part_workflow_repository_adapters(),
+    repository_adapters: @storage_host.local_part_workflow_repository_adapters(),
     dependencies: fn(part_id, admission) {
       let part = match native_goal_part_runtime(parts, part_id) {
         Some(value) => value
@@ -3382,7 +3382,7 @@ pub fn release_native_goal_provider_leases(
   repository : @workflow.PartWorkflowRepository,
   snapshots : Array[@workflow.PartWorkflowSnapshot],
 ) -> Result[Unit, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   for snapshot in snapshots {
     let surface = snapshot.identities.implementation_session.surface
     match
@@ -3513,7 +3513,7 @@ pub async fn reconcile_native_integrated_part_sources(
   record : @workflow.GoalExecutionRecord,
   capture? : async (Command) -> (Int, String) = capture_command_merged,
 ) -> Result[Unit, @types.ChoirError] {
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let selection = match
     @workflow.load_goal_selection_decision(repository, adapters, record.goal.id) {
     Ok(Some(value)) => value
@@ -4210,7 +4210,7 @@ async fn prove_native_pull_request_neutralization(
     },
   }
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let execution = @workflow.load_goal_execution_record(
       repository, adapters, goal_id,
     )
@@ -4826,7 +4826,7 @@ fn native_goal_assurance_plan(
     for source_spec in snapshot.task_contract.verification_specs {
       ordinal = ordinal + 1
       let content = match
-        (local_part_workflow_repository_adapters().artifacts.read)(
+        (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
           repository.artifact_store,
           { digest: source_spec.process_spec_digest, max_bytes: 65536 },
         ) {
@@ -6143,7 +6143,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
   observe? : (@workflow.ProviderSurfaceTickReport) -> Unit = fn(_) { () },
 ) -> Result[@workflow.GoalExecutionTickResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   match
     @workflow.initialize_part_workflow_repository(
       repository, repository_adapters,
@@ -6485,7 +6485,7 @@ pub async fn run_native_goal_execution_job_with_forge(
     )
   }
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return (Err(error), [])
@@ -6554,7 +6554,7 @@ pub fn plan_native_goal_executor_dispatches(
     Err(error) => return Err(error)
   }
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -6576,7 +6576,7 @@ pub fn complete_native_goal_executor_dispatch(
 ) -> Result[@workflow.GoalExecutionJob, @types.ChoirError] {
   @workflow.persist_goal_executor_completion(
     native_goal_repository(project_dir),
-    local_part_workflow_repository_adapters(),
+    @storage_host.local_part_workflow_repository_adapters(),
     lease,
     outcome,
     @env.now().reinterpret_as_int64() / 1000L,
@@ -6591,7 +6591,7 @@ pub fn native_goal_executor_provider_reports(
   match
     @workflow.load_goal_execution_job(
       native_goal_repository(project_dir),
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       goal_id,
     ) {
     Ok(Some(job)) => Ok(job.provider_reports)
@@ -6820,7 +6820,7 @@ pub fn list_native_active_goal_ids(
   match
     @workflow.list_goal_execution_records(
       native_goal_repository(project_dir),
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
     ) {
     Ok(records) =>
       for stored in records {
@@ -6888,7 +6888,7 @@ pub async fn reclaim_native_goal_runtime_roots(
   match
     @workflow.list_goal_execution_records(
       native_goal_repository(project_dir),
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
     ) {
     Ok(records) =>
       for stored in records {
@@ -6965,7 +6965,10 @@ fn observe_native_goal_control_state(
   // Both reads fail on a store that is not a database at all, and either one
   // failing is the same answer: nothing recorded in it can be trusted.
   match
-    (read_state_store_generation(store), read_state_store_ddl_version(store)) {
+    (
+      @storage_host.read_state_store_generation(store),
+      @storage_host.read_state_store_ddl_version(store),
+    ) {
     (Ok(recorded_generation), Ok(recorded_ddl_version)) =>
       {
         store_present: true,
@@ -6988,7 +6991,7 @@ fn observe_native_goal_control_state(
 fn native_goal_control_store_schema() -> @storage.ControlStoreSchema {
   {
     generation: @workflow.durable_value_shape_generation(),
-    ddl_version: state_store_ddl_version(),
+    ddl_version: @storage_host.state_store_ddl_version(),
   }
 }
 
@@ -6999,8 +7002,9 @@ fn record_native_goal_control_store_schema(
   store : @storage.SqliteStateStore,
   schema : @storage.ControlStoreSchema,
 ) -> Result[Unit, @types.ChoirError] {
-  match write_state_store_generation(store, schema.generation) {
-    Ok(_) => write_state_store_ddl_version(store, schema.ddl_version)
+  match @storage_host.write_state_store_generation(store, schema.generation) {
+    Ok(_) =>
+      @storage_host.write_state_store_ddl_version(store, schema.ddl_version)
     Err(error) => Err(error)
   }
 }
@@ -7032,18 +7036,22 @@ pub fn probe_native_durable_record_decoding(
   let artifacts : @storage.ArtifactStore = { root: control_root + "/artifacts" }
   for kind in @workflow.durable_record_kinds() {
     let records = match
-      list_state_records(store, @workflow.durable_record_key_prefix(kind)) {
+      @storage_host.list_state_records(
+        store,
+        @workflow.durable_record_key_prefix(kind),
+      ) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
     for record in records {
-      match artifact_store_contains(artifacts, record.value_digest) {
+      match
+        @storage_host.artifact_store_contains(artifacts, record.value_digest) {
         Ok(true) => ()
         Ok(false) => continue
         Err(error) => return Err(error)
       }
       let content = match
-        read_artifact(artifacts, {
+        @storage_host.read_artifact(artifacts, {
           digest: record.value_digest,
           max_bytes: native_goal_max_snapshot_bytes(),
         }) {
@@ -7156,7 +7164,7 @@ pub async fn prepare_native_goal_control_state(
       // The store is about to be replaced at the same path. A pooled
       // connection would survive the unlink and keep serving the deleted
       // inode, so it is dropped before the file goes.
-      forget_state_store({ path: workflow_store_path })
+      @storage_host.forget_state_store({ path: workflow_store_path })
       if !@sys.rm_rf(control_root) {
         return Err(native_goal_execution_error("control state reset failed"))
       }
@@ -7182,7 +7190,7 @@ fn native_goal_control_state_create(
   let store : @storage.SqliteStateStore = {
     path: control_root + "/workflow.db",
   }
-  match initialize_state_store(store) {
+  match @storage_host.initialize_state_store(store) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -7417,7 +7425,7 @@ pub async fn archive_native_goal(
   ] = delete_native_goal_archived_git_refs,
 ) -> Result[NativeGoalArchiveReport, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -7466,7 +7474,7 @@ pub async fn archive_native_goal(
     {
       subject,
       observed_refs,
-      retention_ledger: read_artifact_retention_ledger(
+      retention_ledger: @storage_host.read_artifact_retention_ledger(
         repository.artifact_store,
       ),
       now,
@@ -7496,12 +7504,18 @@ pub async fn archive_native_goal(
     Err(error) => return Err(error)
   }
   let artifacts_released = match
-    collect_artifacts(repository.artifact_store, plan.release_artifacts) {
+    @storage_host.collect_artifacts(
+      repository.artifact_store,
+      plan.release_artifacts,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let outbox_events_released = match
-    prune_completion_outbox_for_goal(repository.state_store, goal_id) {
+    @storage_host.prune_completion_outbox_for_goal(
+      repository.state_store,
+      goal_id,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -7521,7 +7535,7 @@ pub fn cancel_native_goal(
   requested_at : Int64,
 ) -> Result[@workflow.GoalCancellationPersistenceResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -7538,7 +7552,7 @@ pub fn steer_native_goal(
   change : @workflow.GoalPolicyChange,
 ) -> Result[@workflow.GoalSteeringPersistenceResult, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -7610,7 +7624,7 @@ test "verification attach resolves durable process output" {
   let root = "/tmp/choir-verification-attach-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
@@ -7683,7 +7697,7 @@ pub fn attach_native_goal(
   if !@sys.path_entry_exists(repository.state_store.path) {
     return Err(native_goal_execution_error("Take is not registered"))
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let records = match
     @workflow.list_goal_execution_records(repository, adapters) {
     Ok(value) => value
@@ -7775,7 +7789,7 @@ pub fn answer_native_goal_input(
   if !@sys.path_entry_exists(repository.state_store.path) {
     return Err(native_goal_execution_error("input request is not registered"))
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.persist_goal_input_answer(
     repository, adapters, request_id, answer, answered_at,
   )
@@ -7798,7 +7812,7 @@ fn native_provider_capacity_observation(
   match
     @workflow.list_provider_surface_lease_records(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
     ) {
     Ok(lease_records) =>
       Ok({
@@ -7831,7 +7845,7 @@ pub fn inspect_native_goal(
   if !@sys.path_entry_exists(repository.state_store.path) {
     return Err(native_goal_execution_error("Goal is not registered"))
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let record = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value.record
@@ -7912,7 +7926,7 @@ pub fn inspect_native_goal_for_part(
       native_goal_execution_error("no Goal is registered for this Part"),
     )
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let records = match
     @workflow.list_goal_execution_records(repository, adapters) {
     Ok(value) => value

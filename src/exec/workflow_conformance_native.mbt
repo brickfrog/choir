@@ -586,7 +586,7 @@ fn conformance_dependencies(
               match
                 @workflow.record_part_effect_witness(
                   repository,
-                  local_part_workflow_repository_adapters(),
+                  @storage_host.local_part_workflow_repository_adapters(),
                   snapshot,
                   intent,
                   observation,
@@ -673,7 +673,7 @@ fn conformance_dependencies(
     ..dependencies,
     effects: @workflow.witnessed_part_effect_adapters(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       dependencies.effects,
       now,
     ),
@@ -1089,7 +1089,7 @@ async fn observe_durable_integration_cutoff(
   let first = match
     @workflow.run_new_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot,
       dependencies,
     ) {
@@ -1142,7 +1142,7 @@ async fn observe_durable_integration_cutoff(
   let recovered = match
     @workflow.resume_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot.workflow_id,
       dependencies,
     ) {
@@ -1265,7 +1265,7 @@ pub async fn run_part_conformance_fixture(
   let result = match
     @workflow.run_new_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot,
       dependencies,
     ) {
@@ -1283,7 +1283,7 @@ pub async fn run_part_conformance_fixture(
   let resumed = match
     @workflow.resume_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       "workflow-conformance",
       dependencies,
     ) {
@@ -1346,7 +1346,7 @@ pub async fn run_part_conformance_fixture(
     let first = match
       @workflow.run_new_part_workflow(
         fault_repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         snapshot,
         conformance_dependencies(
           fault_repository,
@@ -1389,7 +1389,7 @@ pub async fn run_part_conformance_fixture(
       @workflow.PartPersistenceBoundary::WorkflowAcceptedSnapshot {
       @workflow.run_new_part_workflow(
         fault_repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         snapshot,
         conformance_dependencies(
           fault_repository,
@@ -1401,7 +1401,7 @@ pub async fn run_part_conformance_fixture(
     } else {
       @workflow.resume_part_workflow(
         fault_repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         "workflow-conformance",
         conformance_dependencies(
           fault_repository,
@@ -1460,7 +1460,7 @@ pub async fn run_part_conformance_fixture(
   let conflict_result = match
     @workflow.run_new_part_workflow(
       conflict_repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot,
       conformance_dependencies(
         conflict_repository,
@@ -1484,7 +1484,7 @@ pub async fn run_part_conformance_fixture(
   }
   let first_witness = @workflow.load_part_effect_witness(
     conflict_repository,
-    local_part_workflow_repository_adapters(),
+    @storage_host.local_part_workflow_repository_adapters(),
     conflict_intent,
   )
   let audit_session_violated = conflict_result.snapshot.harness_sessions.any(fn(
@@ -1602,7 +1602,7 @@ fn load_scale_snapshot(
   match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       "workflow-" + part_id.0,
     ) {
     Ok(Some(stored)) => Ok(stored.snapshot)
@@ -2207,7 +2207,7 @@ async fn run_scale_once(
       }
       let observed = @workflow.run_new_part_workflow(
         repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         initial,
         conformance_dependencies(
           repository,
@@ -2239,7 +2239,7 @@ async fn run_scale_once(
       let promoted = match
         @workflow.resume_part_workflow(
           repository,
-          local_part_workflow_repository_adapters(),
+          @storage_host.local_part_workflow_repository_adapters(),
           stored.workflow_id,
           conformance_dependencies(
             repository,
@@ -2276,7 +2276,7 @@ async fn run_scale_once(
       let resumed = match
         @workflow.resume_part_workflow(
           repository,
-          local_part_workflow_repository_adapters(),
+          @storage_host.local_part_workflow_repository_adapters(),
           stored.workflow_id,
           conformance_dependencies(
             repository,

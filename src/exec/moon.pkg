@@ -8,6 +8,7 @@ import {
   "choir/src/exec/test_support",
   "choir/src/exec/terminal",
   "choir/src/exec/part_adapter",
+  "choir/src/exec/storage_host",
   "choir/src/sandbox",
   "choir/src/storage",
   "choir/src/types",
@@ -27,13 +28,11 @@ import {
 options(
   "is-main": false,
   "max-concurrent-tests": 1,
-  "native-stub": [ "stub.c", "store.c" ],
+  "native-stub": [ "stub.c" ],
   targets: {
     "exec_native.mbt": [ "native" ],
     "exec_stub.mbt": [ "js", "wasm", "wasm-gc" ],
-    "storage_native.mbt": [ "native" ],
-    "storage_stub.mbt": [ "js", "wasm", "wasm-gc" ],
-    "storage_test.mbt": [ "native" ],
+    "control_storage_native_test.mbt": [ "native" ],
     "workflow_storage_test.mbt": [ "native" ],
     "workflow_conformance_native.mbt": [ "native" ],
     "workflow_conformance_test.mbt": [ "native" ],

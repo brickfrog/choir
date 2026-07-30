@@ -665,7 +665,7 @@ async test "process execution state persists and recovers every start boundary" 
   }
   ignore(@sys.rm_rf(root))
   guard @sys.create_dir_all(root) else { fail("create process state root") }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   guard @workflow.initialize_part_workflow_repository(repository, adapters)
     is Ok(_) else {
     fail("initialize process state repository")

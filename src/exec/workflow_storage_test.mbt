@@ -289,7 +289,7 @@ fn clean_workflow_repository(
 
 ///|
 fn workflow_repository_adapters() -> @workflow.PartWorkflowRepositoryAdapters {
-  local_part_workflow_repository_adapters()
+  @storage_host.local_part_workflow_repository_adapters()
 }
 
 ///|

@@ -6,6 +6,20 @@ pub fn initialize_state_store(
 }
 
 ///|
+pub fn mint_state_store_epoch(
+  _store : @storage.SqliteStateStore,
+) -> Result[Int64, @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
+}
+
+///|
+pub fn read_state_store_epoch(
+  _store : @storage.SqliteStateStore,
+) -> Result[Int64, @types.ChoirError] {
+  Err(@types.ChoirError::workspace_error("SQLite state store is native-only"))
+}
+
+///|
 pub fn commit_state_transaction(
   _store : @storage.SqliteStateStore,
   _request : @storage.StateTransactionRequest,

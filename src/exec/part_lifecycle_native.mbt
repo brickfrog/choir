@@ -234,7 +234,7 @@ fn adopt_native_part_fixture_artifact(
   goal_id : @control.GoalId,
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
   let digest = @storage.artifact_digest(content)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let receipt = match
     (adapters.artifacts.adopt)(repository.artifact_store, {
       content,
@@ -655,7 +655,7 @@ fn native_part_artifact_exists(
   reference : @control.ArtifactReference,
 ) -> Bool {
   match
-    (local_part_workflow_repository_adapters().artifacts.contains)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.contains)(
       repository.artifact_store,
       reference.digest,
     ) {
@@ -683,7 +683,7 @@ fn native_part_verification_debug(
   }
   let receipt = snapshot.verification_receipts[0]
   let evidence = match
-    (local_part_workflow_repository_adapters().artifacts.read)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
       repository.artifact_store,
       { digest: receipt.evidence.digest, max_bytes: 131072 },
     ) {
@@ -721,7 +721,7 @@ fn native_part_audit_debug(
   let findings = match snapshot.audit_result {
     Some({ findings_artifact: Some(reference), .. }) =>
       match
-        (local_part_workflow_repository_adapters().artifacts.read)(
+        (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
           repository.artifact_store,
           { digest: reference.digest, max_bytes: 131072 },
         ) {
@@ -795,7 +795,7 @@ fn native_part_dependencies_with_admission(
     persistence_fault: fault,
     effects: @workflow.witnessed_part_effect_adapters(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       effects,
       now,
     ),
@@ -917,7 +917,7 @@ fn native_part_runtime_config_for_paths(
 ) -> NativePartEffectRuntimeConfig {
   {
     repository,
-    repository_adapters: local_part_workflow_repository_adapters(),
+    repository_adapters: @storage_host.local_part_workflow_repository_adapters(),
     server,
     git_workspace: {
       repository_root,
@@ -1049,7 +1049,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   let first = match
     @workflow.run_new_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot,
       native_part_dependencies(
         repository,
@@ -1120,7 +1120,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   let resumed = match
     @workflow.resume_part_workflow(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot.workflow_id,
       native_part_dependencies(
         repository,
@@ -1353,7 +1353,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
   }
   let execution = @workflow.run_new_part_workflow(
     repository,
-    local_part_workflow_repository_adapters(),
+    @storage_host.local_part_workflow_repository_adapters(),
     snapshot,
     native_part_dependencies(
       repository,
@@ -1381,7 +1381,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
   let stored = match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       snapshot.workflow_id,
     ) {
     Ok(Some(value)) => value
@@ -1408,7 +1408,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
   let canceled = match
     @workflow.persist_part_goal_cancellation(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       stored,
     ) {
     Ok(value) => value

@@ -28,7 +28,7 @@ fn archive_native_repository(
   ignore(@sys.rm_rf(root))
   assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => fail(error.message())
@@ -117,7 +117,7 @@ fn archive_native_adopt(
   retention : @storage.ArtifactRetention,
 ) -> @control.Digest {
   let bytes = @utf8.encode(content)
-  adopt_artifact(repository.artifact_store, {
+  @storage_host.adopt_artifact(repository.artifact_store, {
     content: bytes,
     expected_digest: @storage.artifact_digest(bytes),
     provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
@@ -286,7 +286,9 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(planned.retain_artifacts, [shared, permanent])
   // A dry run reports and stops.
   assert_eq(deleted, [])
-  assert_true(artifact_store_contains(repository.artifact_store, mine).unwrap())
+  assert_true(
+    @storage_host.artifact_store_contains(repository.artifact_store, mine).unwrap(),
+  )
   let applied = archive_native_goal(
     root,
     goal_id,
@@ -302,13 +304,13 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(applied.artifacts_released, 1)
   assert_true(applied.outbox_events_released > 0)
   assert_false(
-    artifact_store_contains(repository.artifact_store, mine).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, mine).unwrap(),
   )
   assert_true(
-    artifact_store_contains(repository.artifact_store, shared).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, shared).unwrap(),
   )
   assert_true(
-    artifact_store_contains(repository.artifact_store, permanent).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, permanent).unwrap(),
   )
   // Archiving is not deleting: the durable record still loads, which is what
   // makes the Goal's outcome readable after its working storage is gone.
@@ -347,7 +349,7 @@ async test "an archived Goal releases only its own expired content" {
   assert_eq(again.outbox_events_released, 0)
   assert_eq(deleted, [witness])
   assert_true(
-    artifact_store_contains(repository.artifact_store, shared).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, shared).unwrap(),
   )
   ignore(@sys.rm_rf(root))
 }
@@ -397,7 +399,7 @@ async test "a refused archive touches nothing" {
   assert_false(report.applied)
   assert_eq(deleted, [])
   assert_true(
-    artifact_store_contains(repository.artifact_store, digest).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, digest).unwrap(),
   )
   ignore(@sys.rm_rf(root))
 }
@@ -457,7 +459,7 @@ async test "the dispatcher releases nothing for a dry-run request" {
   // dry run stops holding the release back.
   assert_eq(deleted, [])
   assert_true(
-    artifact_store_contains(repository.artifact_store, digest).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, digest).unwrap(),
   )
   assert_eq(preview.get_json("dry_run"), Some(true.to_json()))
   assert_eq(preview.get_json("archived"), Some(false.to_json()))
@@ -470,7 +472,7 @@ async test "the dispatcher releases nothing for a dry-run request" {
   let applied = archive(false).ok_payload().unwrap()
   assert_eq(deleted, [witness])
   assert_false(
-    artifact_store_contains(repository.artifact_store, digest).unwrap(),
+    @storage_host.artifact_store_contains(repository.artifact_store, digest).unwrap(),
   )
   assert_eq(applied.get_json("dry_run"), Some(false.to_json()))
   assert_eq(applied.get_json("archived"), Some(true.to_json()))

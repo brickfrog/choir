@@ -843,7 +843,7 @@ pub async fn advance_native_goal_pull_request_with_adapters(
   fault? : @workflow.GoalPullRequestFaultPoint? = None,
 ) -> Result[@workflow.GoalPullRequestTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   match
     @workflow.initialize_part_workflow_repository(
       repository, repository_adapters,
@@ -1480,7 +1480,7 @@ async fn prove_pull_request_fault_recovery(
     is Err(_),
   )
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let interrupted = @workflow.load_goal_pull_request_record(
       repository, adapters, goal_id,
     )

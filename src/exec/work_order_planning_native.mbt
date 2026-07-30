@@ -423,7 +423,7 @@ async fn execute_native_work_order_planner(
   round : @workflow.WorkOrderPlanningRound,
 ) -> Result[Bytes, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let instruction = native_work_order_planner_instruction(record, round)
   let schema = native_work_order_planning_output_schema()
   let instruction_digest = @storage.artifact_digest(@utf8.encode(instruction))
@@ -816,7 +816,7 @@ fn recover_native_work_order_planner(
   round : @workflow.WorkOrderPlanningRound,
 ) -> Result[NativeWorkOrderPlannerRecovery, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let instruction_digest = @storage.artifact_digest(
     @utf8.encode(native_work_order_planner_instruction(record, round)),
   )
@@ -983,7 +983,7 @@ pub fn plan_native_work_order_executor_dispatches(
     Err(error) => return Err(error)
   }
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -1005,7 +1005,7 @@ pub fn complete_native_work_order_executor_dispatch(
 ) -> Result[@workflow.WorkOrderExecutionJob, @types.ChoirError] {
   @workflow.persist_work_order_executor_completion(
     native_goal_repository(project_dir),
-    local_part_workflow_repository_adapters(),
+    @storage_host.local_part_workflow_repository_adapters(),
     lease,
     outcome,
     @env.now().reinterpret_as_int64() / 1000L,
@@ -1143,7 +1143,7 @@ pub async fn admit_observed_native_work_order_successor(
     artifact_store: { root: state_root + "/artifacts" },
     max_snapshot_bytes: 4 * 1024 * 1024,
   }
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   let stored = match
     @workflow.load_work_order_record(
       repository, repository_adapters, work_order_id,
@@ -1271,7 +1271,7 @@ pub fn reconcile_native_work_order_child(
   now? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() / 1000L },
 ) -> Result[@workflow.WorkOrderRecord?, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let execution = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value.record
@@ -1352,7 +1352,7 @@ pub async fn run_native_work_order_execution_job_with_adapters(
     )
   }
   let repository = native_goal_repository(project_dir)
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   match
     @workflow.work_order_executor_lease_is_authorized(
       repository, repository_adapters, lease,
@@ -1497,7 +1497,7 @@ pub fn authorize_native_work_order_planner(
   match
     @workflow.acquire_provider_lease(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       round.planner_surface,
       native_work_order_planner_lease_request(record, round, fencing_epoch),
       capacity,
@@ -1528,7 +1528,7 @@ pub fn release_native_work_order_planner(
   match
     @workflow.release_provider_lease(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       round.planner_surface,
       request.lease_id,
       fencing_epoch,

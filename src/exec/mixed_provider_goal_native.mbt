@@ -86,7 +86,7 @@ fn native_mixed_provider_stored_snapshot(
   match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       workflow_id,
     ) {
     Ok(Some(value)) => Ok(value.snapshot)
@@ -134,7 +134,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   match
     @workflow.initialize_part_workflow_repository(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
     ) {
     Ok(_) => ()
     Err(error) => return failed_native_mixed_provider_goal(error.message())
@@ -262,7 +262,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   let selection_receipt = match
     @workflow.persist_goal_selection_decision(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       { decision: selection, fault_point: None },
     ) {
     Ok(value) => value
@@ -277,7 +277,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   let stored_selection = match
     @workflow.load_goal_selection_decision(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       goal_id,
     ) {
     Ok(Some(value)) => value
@@ -443,7 +443,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
           }
           let run = @workflow.run_new_part_workflow(
             repository,
-            local_part_workflow_repository_adapters(),
+            @storage_host.local_part_workflow_repository_adapters(),
             part.snapshot,
             native_part_dependencies(
               repository,
@@ -515,7 +515,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
           let promoted = match
             @workflow.resume_part_workflow(
               repository,
-              local_part_workflow_repository_adapters(),
+              @storage_host.local_part_workflow_repository_adapters(),
               part.snapshot.workflow_id,
               native_part_dependencies(
                 repository,
@@ -547,7 +547,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
           let resumed = match
             @workflow.resume_part_workflow(
               repository,
-              local_part_workflow_repository_adapters(),
+              @storage_host.local_part_workflow_repository_adapters(),
               part.snapshot.workflow_id,
               native_part_dependencies(
                 repository,

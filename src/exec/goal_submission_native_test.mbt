@@ -28,7 +28,7 @@ fn persist_native_submission_test_goal_transition(
   match
     @workflow.persist_goal_execution_transition(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       previous,
       next,
     ) {
@@ -43,7 +43,7 @@ fn mark_native_submission_test_goal_succeeded(
   goal_id : @control.GoalId,
 ) -> @workflow.GoalExecutionRecord raise {
   let repository = native_submission_test_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   let mut current = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
     Ok(Some(value)) => value
@@ -207,7 +207,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let owner = match
     @workflow.load_work_order_record(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       work_order_id,
     ) {
     Ok(Some(value)) => value
@@ -227,7 +227,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let stored = match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       native_goal_part_workflow_id(
         @control.GoalId("goal-native-submit"),
         @control.PartId("choir-a"),
@@ -253,7 +253,7 @@ async test "native Conductor submission captures Beads and persists once" {
   ])
   assert_eq(stored.task_contract.base_commit_oid, @control.GitOid(base_commit))
   let process_content = match
-    (local_part_workflow_repository_adapters().artifacts.read)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.read)(
       repository.artifact_store,
       {
         digest: stored.task_contract.verification_specs[0].process_spec_digest,
@@ -287,7 +287,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let execution = match
     @workflow.load_goal_execution_record(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       @control.GoalId("goal-native-submit"),
     ) {
     Ok(Some(value)) => value.record
@@ -311,7 +311,7 @@ async test "native Conductor submission captures Beads and persists once" {
   match
     @workflow.list_goal_execution_records(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
     ) {
     Ok([listed]) => assert_eq(listed.record, execution)
     Ok(_) => fail("runnable Goal discovery cardinality is wrong")
@@ -321,7 +321,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let tick = match
     @workflow.run_next_goal_execution_tick(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       {
         initialize: _ => Ok(true),
         execute: (record, snapshots) => {
@@ -394,7 +394,7 @@ async test "native Conductor submission captures Beads and persists once" {
   match
     @workflow.run_next_goal_execution_tick(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       {
         initialize: _ => Ok(true),
         execute: (_, _) => {
@@ -416,7 +416,7 @@ async test "native Conductor submission captures Beads and persists once" {
   let current = match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       stored.workflow_id,
     ) {
     Ok(Some(value)) => value
@@ -436,7 +436,7 @@ async test "native Conductor submission captures Beads and persists once" {
   match
     @workflow.persist_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       {
         snapshot: progressed,
         expected_store_version: Some(current.state_record.version),
@@ -514,7 +514,7 @@ async test "native Conductor submission captures Beads and persists once" {
   match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       stored.workflow_id,
     ) {
     Ok(Some(value)) => assert_eq(value.snapshot, progressed)
@@ -639,7 +639,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
   let child = match
     @workflow.load_goal_execution_record(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       child_goal_id,
     ) {
     Ok(Some(value)) => value.record
@@ -723,7 +723,7 @@ async test "native Conductor submission stacks a dependent Goal on its open pare
   match
     @workflow.load_goal_selection_decision(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       multi_goal_id,
     ) {
     Ok(None) => ()
@@ -973,7 +973,7 @@ async test "module-prefixed mutation paths are rejected before persistence" {
     artifact_store: { root: root + "/.choir/state/control/artifacts" },
     max_snapshot_bytes: 4 * 1024 * 1024,
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match
     @workflow.load_goal_selection_decision(
       repository,
@@ -1072,7 +1072,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   match
     @workflow.load_part_snapshot(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       native_goal_part_workflow_id(
         @control.GoalId("goal-native-reject"),
         @control.PartId("choir-closed"),
@@ -1085,7 +1085,7 @@ async test "rejected Conductor submission initializes no Part workflow" {
   match
     @workflow.load_goal_execution_record(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       @control.GoalId("goal-native-reject"),
     ) {
     Ok(None) => ()

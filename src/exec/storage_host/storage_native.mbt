@@ -1,4 +1,219 @@
 ///|
+fn exec_string_to_null_terminated_bytes(s : String) -> (Bytes, Int) {
+  let encoded = @utf8.encode(s)
+  let len = encoded.length()
+  let result = FixedArray::make(len + 1, (0 : Byte))
+  for i = 0; i < len; i = i + 1 {
+    result[i] = encoded[i]
+  }
+  result[len] = (0 : Byte)
+  (result.unsafe_reinterpret_as_bytes(), len)
+}
+
+///|
+#borrow(path)
+extern "C" fn state_store_init_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_init"
+
+///|
+#borrow(path)
+extern "C" fn state_store_forget_ffi(path : Bytes, path_len : Int) -> Int = "choir_state_store_forget"
+
+///|
+#borrow(root)
+extern "C" fn state_store_cache_lease_probe_ffi(
+  root : Bytes,
+  root_len : Int,
+) -> Int = "choir_state_store_cache_lease_probe"
+
+///|
+#borrow(path, buf)
+extern "C" fn state_store_read_generation_ffi(
+  path : Bytes,
+  path_len : Int,
+  buf : Bytes,
+  max_size : Int,
+) -> Int = "choir_state_store_read_generation"
+
+///|
+#borrow(path, generation)
+extern "C" fn state_store_write_generation_ffi(
+  path : Bytes,
+  path_len : Int,
+  generation : Bytes,
+) -> Int = "choir_state_store_write_generation"
+
+///|
+extern "C" fn state_store_ddl_version_ffi() -> Int = "choir_state_store_ddl_version"
+
+///|
+#borrow(buf)
+extern "C" fn state_store_ddl_text_ffi(buf : Bytes, max_size : Int) -> Int = "choir_state_store_ddl_text"
+
+///|
+#borrow(path)
+extern "C" fn state_store_read_ddl_version_ffi(
+  path : Bytes,
+  path_len : Int,
+) -> Int = "choir_state_store_read_ddl_version"
+
+///|
+#borrow(path)
+extern "C" fn state_store_write_ddl_version_ffi(
+  path : Bytes,
+  path_len : Int,
+  version : Int,
+) -> Int = "choir_state_store_write_ddl_version"
+
+///|
+#borrow(path)
+extern "C" fn state_store_mint_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_mint_epoch"
+
+///|
+#borrow(path)
+extern "C" fn state_store_read_epoch_ffi(path : Bytes, path_len : Int) -> Int64 = "choir_state_store_read_epoch"
+
+///|
+#borrow(path, record_key, value_digest, semantic_key, payload_digest, owner_goal_id, precondition_key, precondition_digest)
+extern "C" fn state_store_commit_ffi(
+  path : Bytes,
+  path_len : Int,
+  record_key : Bytes,
+  record_key_len : Int,
+  has_expected_version : Int,
+  expected_version : Int,
+  next_version : Int,
+  fencing_epoch : Int64,
+  schedule_class : Int,
+  value_digest : Bytes,
+  value_digest_len : Int,
+  semantic_key : Bytes,
+  semantic_key_len : Int,
+  payload_digest : Bytes,
+  payload_digest_len : Int,
+  owner_goal_id : Bytes,
+  owner_goal_id_len : Int,
+  fault_point : Int,
+  has_precondition : Int,
+  precondition_key : Bytes,
+  precondition_key_len : Int,
+  precondition_version : Int,
+  precondition_fencing_epoch : Int64,
+  precondition_schedule_class : Int,
+  precondition_digest : Bytes,
+  precondition_digest_len : Int,
+) -> Int = "choir_state_store_commit"
+
+///|
+#borrow(path, goal_id)
+extern "C" fn state_store_prune_goal_outbox_ffi(
+  path : Bytes,
+  path_len : Int,
+  goal_id : Bytes,
+  goal_id_len : Int,
+) -> Int = "choir_state_store_prune_goal_outbox"
+
+///|
+#borrow(path, record_key, output)
+extern "C" fn state_store_read_state_ffi(
+  path : Bytes,
+  path_len : Int,
+  record_key : Bytes,
+  record_key_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_read_state"
+
+///|
+#borrow(path, prefix, output)
+extern "C" fn state_store_list_state_ffi(
+  path : Bytes,
+  path_len : Int,
+  prefix : Bytes,
+  prefix_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_list_state"
+
+///|
+#borrow(path, prefix, output)
+extern "C" fn state_store_list_state_by_schedule_class_ffi(
+  path : Bytes,
+  path_len : Int,
+  prefix : Bytes,
+  prefix_len : Int,
+  schedule_class : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_list_state_by_schedule_class"
+
+///|
+#borrow(path)
+extern "C" fn state_store_schedule_query_uses_index_ffi(
+  path : Bytes,
+  path_len : Int,
+) -> Int = "choir_state_store_schedule_query_uses_index"
+
+///|
+#borrow(path, semantic_key, output)
+extern "C" fn state_store_read_outbox_ffi(
+  path : Bytes,
+  path_len : Int,
+  semantic_key : Bytes,
+  semantic_key_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_state_store_read_outbox"
+
+///|
+#borrow(root, digest)
+extern "C" fn artifact_store_remove_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_remove"
+
+///|
+#borrow(root, digest, content)
+extern "C" fn artifact_store_adopt_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_artifact_store_adopt"
+
+///|
+#borrow(root, digest)
+extern "C" fn artifact_store_contains_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_contains"
+
+///|
+#borrow(root, digest)
+extern "C" fn artifact_store_size_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+) -> Int = "choir_artifact_store_size"
+
+///|
+#borrow(root, digest, output)
+extern "C" fn artifact_store_read_ffi(
+  root : Bytes,
+  root_len : Int,
+  digest : Bytes,
+  digest_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_artifact_store_read"
+
+///|
 fn validate_store_path(path : String) -> Result[Unit, @types.ChoirError] {
   if !path.has_prefix("/") || path.contains("\u{00}") {
     Err(
@@ -217,6 +432,42 @@ pub fn write_state_store_generation(
     Ok(())
   } else {
     Err(state_store_failure("generation write"))
+  }
+}
+
+///|
+/// Mint the next durable fencing epoch for a daemon generation.
+pub fn mint_state_store_epoch(
+  store : @storage.SqliteStateStore,
+) -> Result[Int64, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let epoch = state_store_mint_epoch_ffi(path, path_len)
+  if epoch > 0L {
+    Ok(epoch)
+  } else {
+    Err(state_store_failure("epoch mint"))
+  }
+}
+
+///|
+/// Read the fencing epoch minted by the current daemon generation.
+pub fn read_state_store_epoch(
+  store : @storage.SqliteStateStore,
+) -> Result[Int64, @types.ChoirError] {
+  match validate_store_path(store.path) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let (path, path_len) = exec_string_to_null_terminated_bytes(store.path)
+  let epoch = state_store_read_epoch_ffi(path, path_len)
+  if epoch > 0L {
+    Ok(epoch)
+  } else {
+    Err(state_store_failure("epoch read"))
   }
 }
 

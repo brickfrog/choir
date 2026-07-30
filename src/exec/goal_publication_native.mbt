@@ -554,7 +554,7 @@ pub async fn advance_native_goal_publication(
   fault? : @workflow.GoalPublicationFaultPoint? = None,
 ) -> Result[@workflow.GoalPublicationTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -1617,7 +1617,7 @@ async fn prove_publication_fault_recovery(
   )
   assert_true(@sys.create_dir_all(root + "/.choir/state/control/artifacts"))
   let repository = native_goal_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => fail(label + ": " + error.message())

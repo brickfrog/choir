@@ -128,7 +128,7 @@ async test "delivered round admits one durable successor and replays it" {
     artifact_store: { root: root + "/.choir/state/control/artifacts" },
     max_snapshot_bytes: 4 * 1024 * 1024,
   }
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
   let successor_epoch = @control.FencingEpoch(37L)
   let beads = @command.bead_records_from_json(@json.parse(bead_json)).unwrap()
@@ -273,7 +273,7 @@ async test "native planning reconciles provider and Bead effects by durable phas
     fail("failed to create native planning root")
   }
   let repository = native_planning_repository(root)
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
   let owner = native_planning_work_order()
   ignore(
@@ -366,7 +366,7 @@ async test "a crashed Bead delivery reuses the exact round and batch" {
     fail("failed to create native delivery root")
   }
   let repository = native_planning_repository(root)
-  let repository_adapters = local_part_workflow_repository_adapters()
+  let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, repository_adapters).unwrap()
   let owner = native_planning_work_order()
   ignore(
@@ -451,7 +451,7 @@ test "WorkOrder executor leases persist, release fairly, and fence on restart" {
     fail("failed to create WorkOrder executor store")
   }
   let repository = native_planning_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
   let first = {
     ..native_planning_work_order(),
@@ -536,7 +536,7 @@ test "planner attempt recovery distinguishes planned, issued, and completed" {
     fail("failed to create planner attempt store")
   }
   let repository = native_planning_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
   let digest = @storage.artifact_digest(@utf8.encode("attempt"))
   let owner = @workflow.dispatch_work_order_planning_round(
@@ -624,7 +624,7 @@ async test "a delivered child leaves GoalReady and starts the next round" {
     fail("failed to create next-round store")
   }
   let repository = native_planning_repository(root)
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   @workflow.initialize_part_workflow_repository(repository, adapters).unwrap()
   let digest = @storage.artifact_digest(@utf8.encode("next-round"))
   let proposal = native_planning_proposal()

@@ -74,7 +74,7 @@ fn provider_lease_release(
   match
     @workflow.release_provider_lease(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       provider_lease_surface,
       @workflow.provider_lease_id(
         record.goal.id,
@@ -95,7 +95,7 @@ fn provider_lease_held(
   match
     @workflow.load_provider_surface_lease_record(
       repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       provider_lease_surface,
     ) {
     Ok(Some(stored)) => stored.record.held.length()

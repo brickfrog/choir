@@ -833,7 +833,7 @@ fn native_goal_submission_adopt(
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
   let digest = @storage.artifact_digest(content)
   let receipt = match
-    (local_part_workflow_repository_adapters().artifacts.adopt)(
+    (@storage_host.local_part_workflow_repository_adapters().artifacts.adopt)(
       repository.artifact_store,
       { content, expected_digest: digest, provenance, retention },
     ) {
@@ -1687,7 +1687,7 @@ pub async fn submit_native_conductor_goal_draft(
     artifact_store: { root: state_root + "/artifacts" },
     max_snapshot_bytes: 4 * 1024 * 1024,
   }
-  let adapters = local_part_workflow_repository_adapters()
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
     Err(error) => return Err(error)

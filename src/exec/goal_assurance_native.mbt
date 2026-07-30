@@ -52,7 +52,7 @@ async fn create_native_goal_assurance_runtime(
     native_goal_cancellation_observed(
       @workflow.load_goal_execution_record(
         repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         execution.goal.id,
       ),
       fn(current) {
@@ -193,7 +193,7 @@ fn native_goal_assurance_task_summary(
   let stored_execution = match
     @workflow.load_goal_execution_record(
       runtime.config.repository,
-      local_part_workflow_repository_adapters(),
+      @storage_host.local_part_workflow_repository_adapters(),
       record.goal_id,
     ) {
     Ok(Some(value)) => value.record
@@ -208,7 +208,7 @@ fn native_goal_assurance_task_summary(
     let snapshot = match
       @workflow.load_part_snapshot(
         runtime.config.repository,
-        local_part_workflow_repository_adapters(),
+        @storage_host.local_part_workflow_repository_adapters(),
         workflow_id,
       ) {
       Ok(Some(value)) => value.snapshot
