@@ -249,6 +249,29 @@ fn NativeConductorTask::to_json(self : NativeConductorTask) -> Json {
 }
 
 ///|
+fn native_beads_cli_version_is_admitted(output : String) -> Bool {
+  let observed = output.trim()
+  let prefix = "bd version 1.1.0 ("
+  if !observed.has_prefix(prefix) || !observed.has_suffix(")") {
+    return false
+  }
+  let identity = observed[prefix.length():observed.length() - 1]
+  if identity == "v1.1.0" {
+    return true
+  }
+  if identity.length() < 7 || identity.length() > 64 {
+    return false
+  }
+  for index = 0; index < identity.length(); index = index + 1 {
+    let unit = identity.code_unit_at(index)
+    if !((unit >= 48 && unit <= 57) || (unit >= 97 && unit <= 102)) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 pub async fn validate_native_beads_cli(
   capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
@@ -264,7 +287,7 @@ pub async fn validate_native_beads_cli(
       ),
     )
   }
-  if output.trim() != "bd version 1.1.0 (v1.1.0)" {
+  if !native_beads_cli_version_is_admitted(output) {
     return Err(
       @types.ChoirError::validation_error(
         "Beads 1.1.0 is required; observed " + output.trim().to_owned(),

@@ -40,15 +40,29 @@ async test "native Conductor task dispatch uses typed Beads commands" {
 
 ///|
 async test "native Conductor pins the Beads CLI contract" {
-  let admitted = @beads_host.validate_native_beads_cli(capture=command => {
+  let tagged = @beads_host.validate_native_beads_cli(capture=command => {
     @debug.assert_eq(command.args, ["--version"])
     (0, "bd version 1.1.0 (v1.1.0)\n")
   })
-  assert_true(admitted is Ok(_))
+  assert_true(tagged is Ok(_))
+  let official_build = @beads_host.validate_native_beads_cli(capture=_ => {
+    (0, "bd version 1.1.0 (8e4e59d39)\n")
+  })
+  assert_true(official_build is Ok(_))
   let drifted = @beads_host.validate_native_beads_cli(capture=_ => {
-    (0, "bd version 1.2.0 (v1.2.0)\n")
+    (0, "bd version 1.2.0 (8e4e59d39)\n")
   })
   assert_true(drifted is Err(_))
+  for
+    malformed in [
+      "bd version 1.1.0 ()", "bd version 1.1.0 (not-a-revision)", "bd version 1.1.0 (ABCDEF0)",
+      "bd version 1.1.0 (8e4e59d39)\nextra",
+    ] {
+    let rejected = @beads_host.validate_native_beads_cli(capture=_ => {
+      (0, malformed)
+    })
+    assert_true(rejected is Err(_))
+  }
 }
 
 ///|
