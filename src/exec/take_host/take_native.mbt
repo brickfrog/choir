@@ -909,12 +909,57 @@ async test "runtime root cleanup authorizes only the exact configured root" {
 }
 
 ///|
+pub async fn cleanup_native_boxlite_fixture_home(
+  config : NativeBoxLiteServerConfig,
+  path_exists? : (String) -> Bool = @sys.path_exists,
+  make_writable? : async (String) -> Bool = make_native_boxlite_runtime_root_writable,
+  remove? : (String) -> Bool = @sys.rm_rf,
+) -> Result[Unit, @types.ChoirError] {
+  match validate_native_boxlite_server_config(config) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  if !config.home.has_prefix("/tmp/choir-boxlite-") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "native BoxLite fixture cleanup requires a disposable home",
+      ),
+    )
+  }
+  if !path_exists(config.home) {
+    return Ok(())
+  }
+  if !make_writable(config.home) {
+    return Err(native_boxlite_take_error("fixture home cleanup failed"))
+  }
+  ignore(remove(config.home))
+  if path_exists(config.home) {
+    Err(native_boxlite_take_error("fixture home cleanup failed"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
 pub async fn cleanup_native_boxlite_server(
   server : NativeBoxLiteServerHandle,
 ) -> Result[Unit, @types.ChoirError] {
   stop_native_boxlite_server(server)
   @async.sleep(400)
   cleanup_native_boxlite_runtime(server.config)
+}
+
+///|
+pub async fn cleanup_native_boxlite_fixture_server(
+  server : NativeBoxLiteServerHandle,
+) -> Result[Unit, @types.ChoirError] {
+  match cleanup_native_boxlite_server(server) {
+    Ok(_) => cleanup_native_boxlite_fixture_home(server.config)
+    Err(error) => {
+      ignore(cleanup_native_boxlite_fixture_home(server.config))
+      Err(error)
+    }
+  }
 }
 
 ///|

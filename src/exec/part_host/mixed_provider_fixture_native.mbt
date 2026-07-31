@@ -135,7 +135,7 @@ async fn cleanup_failed_native_mixed_provider_goal(
   server : @take_host.NativeBoxLiteServerHandle,
   message : String,
 ) -> NativeMixedProviderGoalReport {
-  ignore(@take_host.cleanup_native_boxlite_server(server))
+  ignore(@take_host.cleanup_native_boxlite_fixture_server(server))
   failed_native_mixed_provider_goal(message)
 }
 
@@ -665,7 +665,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
     codex_counts.implementation.val == 1 &&
     codex_counts.verification.val == 1 &&
     codex_counts.audit.val == 1
-  ignore(@take_host.cleanup_native_boxlite_server(active_server))
+  ignore(@take_host.cleanup_native_boxlite_fixture_server(active_server))
   if !combined_tree_valid || !counts_valid {
     return failed_native_mixed_provider_goal(
       "combined tree or durable receipt cardinality was invalid: combined_tree=" +

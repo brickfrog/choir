@@ -88,3 +88,56 @@ test "native BoxLite MCP launch binds one fixed box" {
   assert_true(args.contains("mutable"))
   assert_false(args.contains("base-1"))
 }
+
+///|
+async test "fixture home cleanup authorizes only the disposable configured home" {
+  let home = "/tmp/choir-boxlite-fixture-cleanup"
+  let calls : Array[String] = []
+  let existence_checks = @ref.new(0)
+  @take_host.cleanup_native_boxlite_fixture_home(
+    {
+      binary: "/unused/boxlite",
+      runtime_dir: "/unused/runtime",
+      root: "/tmp/choir-take-fixture-cleanup",
+      home,
+      port: 22000,
+      api_key: "fixture-cleanup",
+    },
+    path_exists=fn(path) {
+      calls.push("exists:" + path)
+      existence_checks.val = existence_checks.val + 1
+      existence_checks.val == 1
+    },
+    make_writable=async fn(path) {
+      @async.sleep(0)
+      calls.push("writable:" + path)
+      true
+    },
+    remove=fn(path) {
+      calls.push("remove:" + path)
+      true
+    },
+  ).unwrap()
+  assert_eq(calls, [
+    "exists:" + home,
+    "writable:" + home,
+    "remove:" + home,
+    "exists:" + home,
+  ])
+}
+
+///|
+async test "fixture home cleanup rejects repository scoped homes" {
+  let result = @take_host.cleanup_native_boxlite_fixture_home(
+    {
+      binary: "/unused/boxlite",
+      runtime_dir: "/unused/runtime",
+      root: "/tmp/choir-take-fixture-cleanup",
+      home: "/home/user/.local/share/choir/boxlite/repository-abc123",
+      port: 22000,
+      api_key: "fixture-cleanup",
+    },
+    path_exists=fn(_) { true },
+  )
+  assert_true(result is Err(_))
+}

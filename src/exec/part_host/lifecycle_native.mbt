@@ -960,7 +960,7 @@ async fn fail_native_part_runtime(
   runtime : NativePartEffectRuntime,
   message : String,
 ) -> NativePartLifecycleReport {
-  ignore(cleanup_native_part_effect_runtime(runtime))
+  ignore(@take_host.cleanup_native_boxlite_fixture_server(runtime.server.val))
   failed_native_part_lifecycle(message)
 }
 
@@ -1038,7 +1038,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   let first_runtime = match create_native_part_effect_runtime(first_config) {
     Ok(value) => value
     Err(error) => {
-      ignore(@take_host.cleanup_native_boxlite_server(server))
+      ignore(@take_host.cleanup_native_boxlite_fixture_server(server))
       return failed_native_part_lifecycle(error.message())
     }
   }
@@ -1190,7 +1190,9 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     promotion is Some({ commit_oid, .. }) &&
     commit_oid == branch_head &&
     integrated_source.contains("answer() -> Int { 2 }")
-  let cleanup = cleanup_native_part_effect_runtime(restarted_runtime)
+  let cleanup = @take_host.cleanup_native_boxlite_fixture_server(
+    restarted_runtime.server.val,
+  )
   match cleanup {
     Err(error) => return failed_native_part_lifecycle(error.message())
     Ok(_) => ()
@@ -1346,7 +1348,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
   let runtime = match create_native_part_effect_runtime(config) {
     Ok(value) => value
     Err(error) => {
-      ignore(@take_host.cleanup_native_boxlite_server(server))
+      ignore(@take_host.cleanup_native_boxlite_fixture_server(server))
       return failed_native_part_lifecycle(error.message())
     }
   }
@@ -1437,7 +1439,9 @@ async fn run_native_part_cancellation_fixture_for_surface(
       session.lifecycle ==
       @control.HarnessSessionLifecycle::HarnessSessionRecoveryUncertain
     })
-  let cleanup = cleanup_native_part_effect_runtime(runtime)
+  let cleanup = @take_host.cleanup_native_boxlite_fixture_server(
+    runtime.server.val,
+  )
   match cleanup {
     Err(error) => return failed_native_part_lifecycle(error.message())
     Ok(_) => ()
