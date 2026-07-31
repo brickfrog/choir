@@ -249,6 +249,20 @@ fn NativeConductorTask::to_json(self : NativeConductorTask) -> Json {
 }
 
 ///|
+fn native_beads_revision_is_admitted(revision : StringView) -> Bool {
+  if revision.length() < 7 || revision.length() > 64 {
+    return false
+  }
+  for index = 0; index < revision.length(); index = index + 1 {
+    let unit = revision.code_unit_at(index)
+    if !((unit >= 48 && unit <= 57) || (unit >= 97 && unit <= 102)) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 fn native_beads_cli_version_is_admitted(output : String) -> Bool {
   let observed = output.trim()
   let prefix = "bd version 1.1.0 ("
@@ -259,16 +273,15 @@ fn native_beads_cli_version_is_admitted(output : String) -> Bool {
   if identity == "v1.1.0" {
     return true
   }
-  if identity.length() < 7 || identity.length() > 64 {
-    return false
+  let release_identity = identity.split(": HEAD@").to_array()
+  match release_identity {
+    [revision] => native_beads_revision_is_admitted(revision)
+    [revision, full_revision] =>
+      native_beads_revision_is_admitted(revision) &&
+      native_beads_revision_is_admitted(full_revision) &&
+      full_revision.has_prefix(revision)
+    _ => false
   }
-  for index = 0; index < identity.length(); index = index + 1 {
-    let unit = identity.code_unit_at(index)
-    if !((unit >= 48 && unit <= 57) || (unit >= 97 && unit <= 102)) {
-      return false
-    }
-  }
-  true
 }
 
 ///|
