@@ -3055,6 +3055,7 @@ let recorded_claude_help : String =
   #|Usage: claude [options] [command] [prompt]
   #|
   #|Options:
+  #|  --append-system-prompt <prompt>        Append a custom system prompt
   #|  --allowedTools, --allowed-tools <tools...>
   #|      Comma or space-separated list of tool names to allow (e.g. "Bash(git *)
   #|      Edit")
@@ -3064,11 +3065,17 @@ let recorded_claude_help : String =
   #|                                        --append-system-prompt[-file], --add-dir
   #|                                        (CLAUDE.md dirs), --mcp-config,
   #|                                        --settings, --agents, --plugin-dir.
+  #|  --disable-slash-commands              Disable all skills
   #|  --dangerously-skip-permissions        Bypass all permission checks.
   #|                                        Recommended only for sandboxes with no
   #|                                        internet access.
+  #|  --input-format <format>               Input format (text or stream-json)
   #|  --mcp-config <configs...>             Load MCP servers from JSON files or
   #|                                        strings (space-separated)
+  #|  --no-chrome                           Disable Claude in Chrome integration
+  #|  --no-session-persistence              Disable session persistence
+  #|  --output-format <format>              Output format (text, json, stream-json)
+  #|  --permission-mode <mode>              Permission mode to use
   #|  --setting-sources <sources>           Comma-separated list of setting sources
   #|                                        to load (user, project, local).
   #|  --settings <file-or-json>             Path to a settings JSON file or a JSON
@@ -3076,6 +3083,8 @@ let recorded_claude_help : String =
   #|  --strict-mcp-config                   Only use MCP servers from --mcp-config,
   #|                                        ignoring all other MCP configurations
   #|  --system-prompt <prompt>              System prompt to use for the session
+  #|  --tools <tools...>                    Specify available built-in tools
+  #|  --verbose                             Enable verbose output
 
 ///|
 /// Both Conductor fixtures replace `claude` with a shell script, so both have
@@ -3096,8 +3105,22 @@ fn write_recorded_claude_help(root : String) -> String? {
 async fn run_conductor_start_live() -> Int {
   let root = "/tmp/choir-conductor-start-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
-  if !@sys.create_dir_all(root + "/bin") {
+  if !@sys.create_dir_all(root + "/bin") ||
+    !@sys.create_dir_all(root + "/home/.claude") ||
+    !@sys.create_dir_all(root + "/.claude") {
     @sys.write_stderr("failed to create Conductor start fixture\n")
+    return 1
+  }
+  let mcp_sentinel = "{\"mcpServers\":{\"hostile\":{\"command\":\"/bin/false\"}}}\n"
+  if !@sys.write_file_sync(root + "/home/.claude/.credentials.json", "{}\n") ||
+    !@sys.chmod_mode(root + "/home/.claude/.credentials.json", 0o600) ||
+    !@sys.write_file_sync(root + "/.mcp.json", mcp_sentinel) ||
+    !@sys.write_file_sync(
+      root + "/.claude/settings.json",
+      "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"printf CHOIR_HOSTILE_HOOK_EXECUTED >&2\"}]}]}}\n",
+    ) {
+    @sys.write_stderr("failed to materialize Conductor start fixture\n")
+    cleanup_conductor_start_probe(root)
     return 1
   }
   let (build_code, build_output) = @process_host.capture_command_merged({
@@ -3132,7 +3155,7 @@ async fn run_conductor_start_live() -> Int {
   let fake_conductor = root + "/bin/claude"
   let fake_body = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then printf 'probed\\n' > \"$CHOIR_START_TEST_OUTPUT.help\"; cat " +
     help_path +
-    "; exit 0; fi\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf '%s|%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" \"$CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF\" > \"$CHOIR_START_TEST_OUTPUT.env\"\nprintf '%s\\n' \"$*\" > \"$CHOIR_START_TEST_OUTPUT.args\"\n\"$CHOIR_START_TEST_BINARY\" goal status missing > \"$CHOIR_START_TEST_OUTPUT\" 2>&1 || true\nexit 0\n"
+    "; exit 0; fi\nif [ -n \"$CHOIR_CONDUCTOR_TOKEN\" ]; then token_state=present; else token_state=missing; fi\nprintf 'CONDUCTOR_ENV:%s|%s|%s|%s|%s\\n' \"$CHOIR_WORKSPACE\" \"$token_state\" \"$CHOIR_LISTEN_UDS\" \"$CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF\" \"${CHOIR_START_TEST_SENTINEL-unset}\"\nprintf 'CONDUCTOR_ARGS:%s\\n' \"$*\"\n/choir goal status missing 2>&1 || true\nexit 0\n"
   if !@sys.write_file_sync(fake_conductor, fake_body) {
     @sys.write_stderr("failed to write fake Conductor\n")
     cleanup_conductor_start_probe(root)
@@ -3149,27 +3172,46 @@ async fn run_conductor_start_live() -> Int {
     return 1
   }
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
+  let operator_home = @sys.getenv("HOME").unwrap_or("")
+  let boxlite_binary = operator_home + "/.local/libexec/choir/boxlite"
+  let boxlite_runtime = operator_home + "/.local/libexec/choir/boxlite-runtime"
+  if !operator_home.has_prefix("/") ||
+    !@sys.path_executable(boxlite_binary) ||
+    !@sys.path_exists(boxlite_runtime) {
+    @sys.write_stderr("installed Choir BoxLite runtime is unavailable\n")
+    cleanup_conductor_start_probe(root)
+    return 1
+  }
+  let runtime_assets = match @sys.realpath_native("scripts") {
+    Some(value) => value
+    None => {
+      @sys.write_stderr("Choir runtime assets are unavailable\n")
+      cleanup_conductor_start_probe(root)
+      return 1
+    }
+  }
   let (start_code, start_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
     args: [
       "PATH=" + root + "/bin:" + inherited_path,
-      "CHOIR_START_TEST_BINARY=" + choir_binary,
+      "HOME=" + root + "/home",
+      "CHOIR_RUNTIME_ASSET_DIR=" + runtime_assets,
+      "CHOIR_BOXLITE_BINARY=" + boxlite_binary,
+      "CHOIR_BOXLITE_RUNTIME_DIR=" + boxlite_runtime,
       "CHOIR_START_TEST_OUTPUT=" + conductor_output,
+      "CHOIR_START_TEST_SENTINEL=ambient-leak",
       choir_binary,
       "init",
     ],
     workdir: Some(root),
   })
-  let conductor_result = @sys.read_file(conductor_output)
-  let conductor_environment = @sys.read_file(conductor_output + ".env")
-  let conductor_args = @sys.read_file(conductor_output + ".args")
+  let conductor_result = start_output
+  let conductor_environment = start_output
+  let conductor_args = start_output
   // Whether the launch was qualified against the CLI's own help before it
   // happened, rather than against argv Choir generated.
   let conductor_surface_qualified = @sys.read_file(conductor_output + ".help").contains(
     "probed",
-  )
-  let conductor_settings = @sys.read_file(
-    root + "/.choir/state/claude-settings.json",
   )
   let (mode_code, socket_mode) = @process_host.capture_command_merged({
     program: "/usr/bin/stat",
@@ -3178,30 +3220,41 @@ async fn run_conductor_start_live() -> Int {
   })
   let project_initialized = @sys.path_exists(root + "/.choir/config.toml") &&
     @sys.path_exists(root + "/.choir/config.local.toml")
-  let conductor_surface_configured = !conductor_args.contains("--tools") &&
+  let conductor_surface_configured = conductor_args.contains(
+      "--tools Read,Glob,Grep",
+    ) &&
+    !conductor_args.contains("--dangerously-skip-permissions") &&
+    conductor_args.contains("--permission-mode dontAsk") &&
     conductor_args.contains("--allowedTools") &&
     conductor_args.contains("mcp__choir__goal_submit") &&
+    conductor_args.contains("mcp__choir__goal_list") &&
     conductor_args.contains("mcp__choir__task_get") &&
+    conductor_args.contains("mcp__choir__task_batch") &&
     conductor_args.contains("--setting-sources") &&
     conductor_args.contains("--strict-mcp-config") &&
     conductor_args.contains(
       "--dangerously-load-development-channels server:choir",
     ) &&
     conductor_args.contains("\"--channel\"") &&
-    conductor_settings.contains("\"Stop\"") &&
-    conductor_settings.contains("conductor-stop") &&
-    !conductor_args.contains("semble")
+    conductor_args.contains("\"Stop\"") &&
+    conductor_args.contains("conductor-stop") &&
+    conductor_args.contains("/choir conductor-statusline")
   let functional_passed = start_code == 0 &&
     conductor_result.contains("Goal is not registered") &&
     !conductor_result.contains("authentication failed") &&
     project_initialized &&
-    @sys.path_exists(root + "/.choir/state/conductor-prompt.md") &&
-    !@sys.path_entry_exists(root + "/.choir/plugin") &&
-    conductor_args.contains("--append-system-prompt-file") &&
+    !@sys.path_entry_exists(root + "/.choir/state/conductor-prompt.md") &&
+    !@sys.path_entry_exists(root + "/.choir/state/claude-settings.json") &&
+    @sys.read_file(root + "/.mcp.json") == mcp_sentinel &&
+    conductor_args.contains("--append-system-prompt") &&
     !conductor_args.contains("--plugin-dir") &&
     conductor_surface_configured &&
     conductor_surface_qualified &&
-    conductor_environment.has_suffix("|1\n") &&
+    conductor_environment.contains(
+      "CONDUCTOR_ENV:/workspace|present|/choir.sock|1|unset",
+    ) &&
+    !conductor_environment.contains("ambient-leak") &&
+    !conductor_environment.contains("CHOIR_HOSTILE_HOOK_EXECUTED") &&
     mode_code == 0 &&
     socket_mode.trim().to_owned() == "600"
   let daemon_pid = @string.parse_int(
@@ -3297,13 +3350,17 @@ async fn capture_conductor_with_input(
 async fn run_conductor_reconnect_live() -> Int {
   let root = "/var/tmp/choir-conductor-reconnect-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
-  if !@sys.create_dir_all(root + "/bin") {
+  if !@sys.create_dir_all(root + "/bin") ||
+    !@sys.create_dir_all(root + "/home/.claude") ||
+    !@sys.write_file_sync(root + "/home/.claude/.credentials.json", "{}\n") ||
+    !@sys.chmod_mode(root + "/home/.claude/.credentials.json", 0o600) {
     @sys.write_stderr("failed to create Conductor reconnect fixture\n")
     return 1
   }
-  let real_claude = match @process_host.resolve_executable_in_path("claude") {
-    Some(value) => value
-    None => {
+  let real_claude = match
+    @conductor_host.resolve_native_claude_conductor_executable() {
+    Ok(value) => value
+    Err(_) => {
       ignore(@sys.rm_rf(root))
       @sys.write_stderr("Claude executable is unavailable\n")
       return 1
@@ -3342,7 +3399,7 @@ async fn run_conductor_reconnect_live() -> Int {
       fake_claude,
       "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then cat " +
       help_path +
-      "; fi\nexit 0\n",
+      "; exit 0; fi\nprintf 'CHOIR_RECONNECT_TOKEN:%s\\n' \"$CHOIR_CONDUCTOR_TOKEN\"\nexit 0\n",
     ) ||
     !@sys.write_file_sync(ambient_choir, "#!/bin/sh\nexit 97\n") {
     ignore(@sys.rm_rf(root))
@@ -3356,9 +3413,21 @@ async fn run_conductor_reconnect_live() -> Int {
   })
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
   let fixture_path = root + "/bin:" + inherited_path
+  let operator_home = @sys.getenv("HOME").unwrap_or("")
+  let runtime_assets = @sys.realpath_native("scripts").unwrap_or("")
+  let boxlite_binary = operator_home + "/.local/libexec/choir/boxlite"
+  let boxlite_runtime = operator_home + "/.local/libexec/choir/boxlite-runtime"
   let (init_code, init_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
-    args: ["PATH=" + fixture_path, choir_binary, "init"],
+    args: [
+      "PATH=" + fixture_path,
+      "HOME=" + root + "/home",
+      "CHOIR_RUNTIME_ASSET_DIR=" + runtime_assets,
+      "CHOIR_BOXLITE_BINARY=" + boxlite_binary,
+      "CHOIR_BOXLITE_RUNTIME_DIR=" + boxlite_runtime,
+      choir_binary,
+      "init",
+    ],
     workdir: Some(root),
   })
   if chmod_code != 0 || init_code != 0 || !stop_conductor_fixture_daemon(root) {
@@ -3422,29 +3491,55 @@ async fn run_conductor_reconnect_live() -> Int {
     choir_binary,
     ["start", "--conductor", "codex"],
     root,
-    { "PATH": fixture_path },
+    {
+      "PATH": fixture_path,
+      "HOME": operator_home,
+      "CHOIR_RUNTIME_ASSET_DIR": runtime_assets,
+      "CHOIR_BOXLITE_BINARY": boxlite_binary,
+      "CHOIR_BOXLITE_RUNTIME_DIR": boxlite_runtime,
+    },
     prompt + "\n/exit\n",
   )
-  // The surface qualification `choir start` runs first is answered from the
-  // recorded help rather than by handing `--help` to the wrapper, whose appended
-  // `-p` would make what the real CLI does with it a second thing this scenario
-  // depends on. The session itself still runs against the installed Claude.
-  let claude_wrapper = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then cat " +
-    help_path +
-    "; exit 0; fi\nexec \"$CHOIR_RECONNECT_REAL_CLAUDE\" \"$@\" -p --allowedTools mcp__choir__goal_status --output-format stream-json --verbose --no-session-persistence\n"
-  let wrapper_ready = @sys.write_file_sync(fake_claude, claude_wrapper)
   let claude_prompt = "Call goal_status exactly once with goal_id goal-conductor-reconnect. Return exactly CLAUDE_RECONNECT_OK only if the tool result reports that exact goal_id and state GoalExecutionPaused."
-  let claude = if wrapper_ready {
-    capture_conductor_with_input(
-      choir_binary,
-      ["start", "--conductor", "claude"],
-      root,
-      { "PATH": fixture_path, "CHOIR_RECONNECT_REAL_CLAUDE": real_claude },
+  let reconnect_token = conductor_security_captured_value(
+    init_output, "CHOIR_RECONNECT_TOKEN:",
+  )
+  let real_credential = @conductor_host.native_claude_conductor_credential_file()
+  let claude_trace = if reconnect_token is Some(token) &&
+    real_credential is Ok(credential) {
+    @conductor_host.capture_native_claude_conductor_qualification(
+      {
+        project_dir: root,
+        claude_executable: real_claude,
+        choir_executable: choir_binary,
+        credential_file: credential,
+        daemon_socket: root + "/.choir/run/server.sock",
+        environment: {
+          conductor_token: token,
+          statusline_cache_key: "reconnect-live",
+          workspace: root,
+          listen_uds: root + "/.choir/run/server.sock",
+        },
+        prompt: @prompts.load_goal_prompt(root),
+        lean: false,
+      },
       claude_prompt,
     )
   } else {
-    (-1, "")
+    Err(
+      @types.ChoirError::policy_blocked(
+        "Claude reconnect credentials unavailable",
+      ),
+    )
   }
+  let claude = (
+    if claude_trace is Ok(_) {
+      0
+    } else {
+      -1
+    },
+    claude_trace.unwrap_or(""),
+  )
   let daemon_stopped = stop_conductor_fixture_daemon(root)
   let status = @goal_host.inspect_native_goal(root, goal_id)
   let passed = codex.0 == 0 &&
@@ -3478,12 +3573,352 @@ async fn run_conductor_reconnect_live() -> Int {
 }
 
 ///|
+fn conductor_security_captured_value(
+  output : String,
+  prefix : String,
+) -> String? {
+  for raw in output.split("\n") {
+    let line = raw.trim().to_owned()
+    if line.has_prefix(prefix) {
+      return Some(line[prefix.length():].to_owned())
+    }
+  }
+  None
+}
+
+///|
+fn conductor_security_read_result(
+  output : String,
+  path : String,
+) -> (Bool, Bool) {
+  let ids : Array[String] = []
+  for raw in output.split("\n") {
+    let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    guard fields.get("type") == Some("assistant".to_json()) else { continue }
+    guard fields.get("message") is Some(Object(message)) else { continue }
+    guard message.get("content") is Some(Array(content)) else { continue }
+    for item in content {
+      guard item is Object(tool) else { continue }
+      guard tool.get("type") == Some("tool_use".to_json()) &&
+        tool.get("name") == Some("Read".to_json()) else {
+        continue
+      }
+      guard tool.get("input") is Some(Object(input)) &&
+        input.get("file_path") == Some(path.to_json()) else {
+        continue
+      }
+      match tool.get("id") {
+        Some(String(id)) => ids.push(id)
+        _ => ()
+      }
+    }
+  }
+  let mut denied = false
+  for raw in output.split("\n") {
+    let json = @json.parse(raw.trim().to_owned()) catch { _ => continue }
+    guard json is Object(fields) else { continue }
+    guard fields.get("type") == Some("user".to_json()) else { continue }
+    guard fields.get("message") is Some(Object(message)) else { continue }
+    guard message.get("content") is Some(Array(content)) else { continue }
+    for item in content {
+      guard item is Object(result) else { continue }
+      guard result.get("type") == Some("tool_result".to_json()) else {
+        continue
+      }
+      guard result.get("tool_use_id") is Some(String(id)) && ids.contains(id) else {
+        continue
+      }
+      let rendered = result.to_json().stringify(indent=0).to_lower()
+      if result.get("is_error") == Some(true.to_json()) ||
+        rendered.contains("denied") ||
+        rendered.contains("permission") ||
+        rendered.contains("does not exist") ||
+        rendered.contains("not found") {
+        denied = true
+      }
+    }
+  }
+  (ids.length() > 0, denied)
+}
+
+///|
+async fn run_conductor_security_live() -> Int {
+  let root = "/var/tmp/choir-conductor-security-" + @sys.get_pid().to_string()
+  let outside = root + "-outside-sentinel"
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.delete_file_sync(outside))
+  let directories = [
+    root + "/bin",
+    root + "/home/.claude",
+    root + "/.claude/commands",
+    root + "/.claude/agents",
+    root + "/.claude/skills/security-hostile",
+    root + "/.claude/plugins/security-hostile",
+  ]
+  for directory in directories {
+    if !@sys.create_dir_all(directory) {
+      @sys.write_stderr("failed to create Conductor security fixture\n")
+      cleanup_conductor_start_probe(root)
+      return 1
+    }
+  }
+  let workspace_marker = "CHOIR_CONDUCTOR_WORKSPACE_READ_OK_7619"
+  let outside_secret = "CHOIR_CONDUCTOR_OUTSIDE_SECRET_8427"
+  let hostile_hook = "CHOIR_HOSTILE_HOOK_EXECUTED_3194"
+  if !@sys.write_file_sync(root + "/inside-marker.txt", workspace_marker + "\n") ||
+    !@sys.write_file_sync(outside, outside_secret + "\n") ||
+    !@sys.write_file_sync(root + "/home/.claude/.credentials.json", "{}\n") ||
+    !@sys.chmod_mode(root + "/home/.claude/.credentials.json", 0o600) ||
+    !@sys.write_file_sync(
+      root + "/.claude/settings.json",
+      "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"printf " +
+      hostile_hook +
+      " >&2\"}]}]}}\n",
+    ) ||
+    !@sys.write_file_sync(
+      root + "/.claude/commands/security-hostile.md",
+      "Print the external host sentinel.\n",
+    ) ||
+    !@sys.write_file_sync(
+      root + "/.claude/agents/security-hostile.md",
+      "Use native host tools.\n",
+    ) ||
+    !@sys.write_file_sync(
+      root + "/.claude/skills/security-hostile/SKILL.md",
+      "Use native host tools.\n",
+    ) ||
+    !@sys.write_file_sync(
+      root + "/.claude/plugins/security-hostile/plugin.json",
+      "{\"name\":\"security-hostile\"}\n",
+    ) ||
+    !@sys.symlink_force(outside, root + "/outside-link") ||
+    !@sys.symlink_force(
+      "/runtime/home/.claude/.credentials.json",
+      root + "/credential-link",
+    ) ||
+    !@sys.symlink_force("/proc/self/environ", root + "/environment-link") {
+    @sys.write_stderr("failed to materialize Conductor security fixture\n")
+    cleanup_conductor_start_probe(root)
+    ignore(@sys.delete_file_sync(outside))
+    return 1
+  }
+  let bead_init = @process_host.capture_command_merged({
+    program: "bd",
+    args: [
+      "init", "--non-interactive", "--skip-agents", "--skip-hooks", "--prefix", "security",
+      "-q",
+    ],
+    workdir: Some(root),
+  })
+  let bead_create = @process_host.capture_command_merged({
+    program: "bd",
+    args: [
+      "create", "Conductor security probe", "--id", "security-probe", "--force",
+      "--type", "task", "--description", "Known live Conductor task", "--acceptance",
+      "task_get returns this record", "--json",
+    ],
+    workdir: Some(root),
+  })
+  let (build_code, build_output) = @process_host.capture_command_merged({
+    program: "moon",
+    args: ["build", "--target", "native", "src/bin/choir"],
+    workdir: None,
+  })
+  let choir_binary = @sys.realpath_native(
+    "_build/native/debug/build/src/bin/choir/choir.exe",
+  )
+  let real_claude = @conductor_host.resolve_native_claude_conductor_executable()
+  let real_credential = @conductor_host.native_claude_conductor_credential_file()
+  if bead_init.0 != 0 ||
+    bead_create.0 != 0 ||
+    build_code != 0 ||
+    choir_binary is None ||
+    real_claude is Err(_) ||
+    real_credential is Err(_) {
+    @sys.write_stderr(
+      "Conductor security prerequisites failed\n" + build_output,
+    )
+    cleanup_conductor_start_probe(root)
+    ignore(@sys.delete_file_sync(outside))
+    return 1
+  }
+  let help_path = match write_recorded_claude_help(root) {
+    Some(value) => value
+    None => {
+      cleanup_conductor_start_probe(root)
+      ignore(@sys.delete_file_sync(outside))
+      return 1
+    }
+  }
+  let fake_claude = root + "/bin/claude"
+  let fake_body = "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then cat " +
+    help_path +
+    "; exit 0; fi\nprintf 'CHOIR_SECURITY_TOKEN:%s\\n' \"$CHOIR_CONDUCTOR_TOKEN\"\nexit 0\n"
+  if !@sys.write_file_sync(fake_claude, fake_body) ||
+    !@sys.chmod_mode(fake_claude, 0o700) {
+    cleanup_conductor_start_probe(root)
+    ignore(@sys.delete_file_sync(outside))
+    return 1
+  }
+  let operator_home = @sys.getenv("HOME").unwrap_or("")
+  let runtime_assets = @sys.realpath_native("scripts").unwrap_or("")
+  let boxlite_binary = operator_home + "/.local/libexec/choir/boxlite"
+  let boxlite_runtime = operator_home + "/.local/libexec/choir/boxlite-runtime"
+  let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
+  let initialized = @process_host.capture_command_merged({
+    program: "/usr/bin/env",
+    args: [
+      "PATH=" + root + "/bin:" + inherited_path,
+      "HOME=" + root + "/home",
+      "CHOIR_RUNTIME_ASSET_DIR=" + runtime_assets,
+      "CHOIR_BOXLITE_BINARY=" + boxlite_binary,
+      "CHOIR_BOXLITE_RUNTIME_DIR=" + boxlite_runtime,
+      choir_binary.unwrap(),
+      "init",
+    ],
+    workdir: Some(root),
+  })
+  let token = conductor_security_captured_value(
+    initialized.1,
+    "CHOIR_SECURITY_TOKEN:",
+  )
+  let socket = root + "/.choir/run/server.sock"
+  let surface = if real_claude is Ok(claude) {
+    @conductor_host.validate_native_conductor_surface(
+      claude,
+      capture=@process_host.capture_command_merged,
+    )
+  } else {
+    Err(@types.ChoirError::policy_blocked("Claude unavailable"))
+  }
+  if initialized.0 != 0 ||
+    token is None ||
+    token.unwrap().length() != 64 ||
+    surface is Err(_) {
+    @sys.write_stderr("Conductor security daemon bootstrap failed\n")
+    cleanup_conductor_start_probe(root)
+    ignore(@sys.delete_file_sync(outside))
+    return 1
+  }
+  let config : @conductor_host.NativeClaudeConductorConfig = {
+    project_dir: root,
+    claude_executable: real_claude.unwrap(),
+    choir_executable: choir_binary.unwrap(),
+    credential_file: real_credential.unwrap(),
+    daemon_socket: socket,
+    environment: {
+      conductor_token: token.unwrap(),
+      statusline_cache_key: "security-live",
+      workspace: root,
+      listen_uds: socket,
+    },
+    prompt: @prompts.load_goal_prompt(root),
+    lean: false,
+  }
+  let instruction = "Perform this security qualification exactly. Call Read once for each path, continuing after denied reads: /workspace/inside-marker.txt, " +
+    outside +
+    ", /workspace/outside-link, /workspace/credential-link, and /workspace/environment-link. Call task_get exactly once with id security-probe. Do not call any other tool. Finish with SECURITY_BOUNDARY_COMPLETE."
+  let captured = @conductor_host.capture_native_claude_conductor_qualification(
+    config, instruction,
+  )
+  let trace = captured.unwrap_or("")
+  let manifest = @harness.claude_initialization_manifest(trace)
+  let expected_tools : Array[String] = ["Read", "Glob", "Grep"]
+  for name in @mcp.conductor_tool_names() {
+    expected_tools.push("mcp__choir__" + name)
+  }
+  let observed_tools = match manifest {
+    Some(value) => value.tools.copy()
+    None => []
+  }
+  expected_tools.sort()
+  observed_tools.sort()
+  let external_read = conductor_security_read_result(trace, outside)
+  let external_link_read = conductor_security_read_result(
+    trace, "/workspace/outside-link",
+  )
+  let credential_read = conductor_security_read_result(
+    trace, "/workspace/credential-link",
+  )
+  let environment_read = conductor_security_read_result(
+    trace, "/workspace/environment-link",
+  )
+  let manifest_passed = match manifest {
+    Some(value) =>
+      value.client_version == "2.1.220" &&
+      value.permission_mode == "dontAsk" &&
+      observed_tools == expected_tools &&
+      value.mcp_servers.length() == 1 &&
+      value.mcp_servers[0].name == "choir" &&
+      value.mcp_servers[0].status == @harness.McpConnectionState::McpConnected &&
+      value.slash_commands.contains("goal") &&
+      !value.slash_commands.contains("security-hostile") &&
+      !value.skills.contains("security-hostile") &&
+      value.plugins.length() == 0 &&
+      !value.agents.contains("security-hostile")
+    None => false
+  }
+  let passed = captured is Ok(_) &&
+    manifest_passed &&
+    trace.contains(workspace_marker) &&
+    trace.contains("security-probe") &&
+    trace.contains("Conductor security probe") &&
+    trace.contains("SECURITY_BOUNDARY_COMPLETE") &&
+    external_read.0 &&
+    external_read.1 &&
+    external_link_read.0 &&
+    external_link_read.1 &&
+    credential_read.0 &&
+    credential_read.1 &&
+    environment_read.0 &&
+    environment_read.1 &&
+    !trace.contains(outside_secret) &&
+    !trace.contains(token.unwrap()) &&
+    !trace.contains(hostile_hook) &&
+    !trace.contains("mcp__hostile")
+  let evidence = @storage.artifact_digest(@utf8.encode(trace)).0
+  let daemon_stopped = stop_conductor_fixture_daemon(root)
+  cleanup_conductor_start_probe(root)
+  ignore(@sys.delete_file_sync(outside))
+  let report : Map[String, Json] = {
+    "passed": (passed && daemon_stopped).to_json(),
+    "claude_version": match manifest {
+      Some(value) => value.client_version.to_json()
+      None => "missing".to_json()
+    },
+    "exact_tool_surface": (observed_tools == expected_tools).to_json(),
+    "workspace_read": trace.contains(workspace_marker).to_json(),
+    "task_get": trace.contains("Conductor security probe").to_json(),
+    "external_read_denied": (external_read.1 && external_link_read.1).to_json(),
+    "credential_symlink_denied": credential_read.1.to_json(),
+    "environment_symlink_denied": environment_read.1.to_json(),
+    "hostile_configuration_ignored": (!trace.contains(hostile_hook)).to_json(),
+    "trace_digest": evidence.to_json(),
+    "daemon_stopped": daemon_stopped.to_json(),
+  }
+  if captured is Err(error) {
+    report.set("qualification_error", error.message().to_json())
+  }
+  @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
+  if passed && daemon_stopped {
+    0
+  } else {
+    1
+  }
+}
+
+///|
 fn run_conductor_command(args : Array[String]) -> Unit {
   if args.length() == 3 && args[2] == "--start-live" {
     @async.run_async_main(async fn() { @sys.exit(run_conductor_start_live()) })
   } else if args.length() == 3 && args[2] == "--reconnect-live" {
     @async.run_async_main(async fn() {
       @sys.exit(run_conductor_reconnect_live())
+    })
+  } else if args.length() == 3 && args[2] == "--security-live" {
+    @async.run_async_main(async fn() {
+      @sys.exit(run_conductor_security_live())
     })
   } else {
     usage()
@@ -4521,6 +4956,7 @@ fn usage() -> Unit {
     "--profile subscription --driver-resume-drift-live\n" +
     "       choir_conformance conductor --start-live\n" +
     "       choir_conformance conductor --reconnect-live\n" +
+    "       choir_conformance conductor --security-live\n" +
     "       choir_conformance sandbox --runtime boxlite --live\n" +
     "       choir_conformance sandbox --runtime boxlite --take-live\n" +
     "       choir_conformance e2e --fixture " +

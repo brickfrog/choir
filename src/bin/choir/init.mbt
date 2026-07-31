@@ -77,34 +77,6 @@ fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
 }
 
 ///|
-fn init_materialize_conductor_files(
-  project_dir : String,
-  choir_executable : String,
-) -> Result[Unit, String] {
-  ignore(@sys.rm_rf(project_dir + "/.choir/plugin"))
-  let mcp_config = match
-    @conductor_host.conductor_claude_project_mcp_config_json(
-      @sys.read_file(project_dir + "/.mcp.json"),
-      choir_executable,
-    ) {
-    Ok(value) => value
-    Err(error) => return Err(error.message())
-  }
-  if !@sys.write_file_sync(
-      project_dir + "/.choir/state/claude-settings.json",
-      @conductor_host.conductor_claude_settings_json(choir_executable),
-    ) ||
-    !@sys.write_file_sync(project_dir + "/.mcp.json", mcp_config) ||
-    !@sys.write_file_sync(
-      project_dir + "/.choir/state/conductor-prompt.md",
-      @prompts.load_goal_prompt(project_dir),
-    ) {
-    return Err("failed to write Conductor launch files")
-  }
-  Ok(())
-}
-
-///|
 fn init_run() -> Unit {
   let args = @env.args()
   let options = match init_parse_options(args) {

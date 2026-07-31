@@ -519,23 +519,18 @@ async test "the Conductor launch is qualified against the installed CLI's help" 
       is @harness.ConductorFlagVisibility::ConductorFlagDocumented
     })
     .map(fn(flag) { flag.name })
-  let probed : Array[@harness.HarnessProbeProcess] = []
-  let qualified = validate_native_conductor_surface(probe=spec => {
-    probed.push(spec)
-    Ok({ exit_code: 0, output: conductor_help_output(documented) })
+  let probed : Array[@process_host.Command] = []
+  let qualified = validate_native_conductor_surface("/opt/claude/claude", capture=command => {
+    probed.push(command)
+    (0, conductor_help_output(documented))
   })
   assert_true(qualified is Ok(_))
-  // The fixed declaration probe, so no argv or executable is caller-supplied.
   @debug.assert_eq(probed, [
-    {
-      surface: @harness.ProviderSurface::ClaudeCli,
-      command: @harness.HarnessProbeCommand::ProbeMainHelp,
-    },
+    { program: "/opt/claude/claude", args: ["--help"], workdir: Some("/tmp") },
   ])
-  // The failure this exists to catch.
   let dropped = documented.filter(fn(name) { name != "--strict-mcp-config" })
-  let refused = validate_native_conductor_surface(probe=_ => {
-    Ok({ exit_code: 0, output: conductor_help_output(dropped) })
+  let refused = validate_native_conductor_surface("/opt/claude/claude", capture=_ => {
+    (0, conductor_help_output(dropped))
   })
   match refused {
     Err(error) => {
@@ -544,23 +539,92 @@ async test "the Conductor launch is qualified against the installed CLI's help" 
     }
     Ok(_) => fail("launched against a CLI missing a declared flag")
   }
-  // Help that could not be read is not a qualification even when the text that
-  // came back would have satisfied every flag, and neither is a CLI that is
-  // not installed at all.
   assert_true(
-    validate_native_conductor_surface(probe=_ => {
-      Ok({ exit_code: 1, output: conductor_help_output(documented) })
+    validate_native_conductor_surface("/opt/claude/claude", capture=_ => {
+      (1, conductor_help_output(documented))
     })
     is Err(_),
   )
   assert_true(
-    validate_native_conductor_surface(probe=_ => {
-      Err(
-        @types.ChoirError::transport_error(
-          "provider probe executable unavailable",
-        ),
-      )
+    validate_native_conductor_surface("claude", capture=_ => {
+      (0, conductor_help_output(documented))
     })
+    is Err(_),
+  )
+}
+
+///|
+test "native Claude Conductor source validation fails closed" {
+  let canonicalize = fn(path : String) { Some(path) }
+  let executable = fn(_ : String) { true }
+  let file_mode = fn(path : String) {
+    if path.has_suffix("server.sock") || path.has_suffix("credentials.json") {
+      0o600
+    } else {
+      -1
+    }
+  }
+  let config : NativeClaudeConductorConfig = {
+    project_dir: "/repo",
+    claude_executable: "/opt/claude/claude",
+    choir_executable: "/opt/choir/choir",
+    credential_file: "/home/provider/.claude/.credentials.json",
+    daemon_socket: "/repo/.choir/run/server.sock",
+    environment: {
+      conductor_token: "token",
+      statusline_cache_key: "conductor-42",
+      workspace: "/repo",
+      listen_uds: "/repo/.choir/run/server.sock",
+    },
+    prompt: "Use Choir.",
+    lean: false,
+  }
+  assert_true(
+    validate_native_claude_conductor_config(
+      config,
+      canonicalize~,
+      executable~,
+      file_mode~,
+    )
+    is Ok(_),
+  )
+  assert_true(
+    validate_native_claude_conductor_config(
+      { ..config, credential_file: "/home/provider/credential-link" },
+      canonicalize=fn(path) {
+        if path == "/home/provider/credential-link" {
+          Some("/real/credential")
+        } else {
+          Some(path)
+        }
+      },
+      executable~,
+      file_mode=fn(_) { 0o600 },
+    )
+    is Err(_),
+  )
+  assert_true(
+    validate_native_claude_conductor_config(
+      config,
+      canonicalize~,
+      executable~,
+      file_mode=fn(path) {
+        if path.has_suffix("credentials.json") {
+          0o644
+        } else {
+          0o600
+        }
+      },
+    )
+    is Err(_),
+  )
+  assert_true(
+    validate_native_claude_conductor_config(
+      { ..config, environment: { ..config.environment, workspace: "/other" } },
+      canonicalize~,
+      executable~,
+      file_mode~,
+    )
     is Err(_),
   )
 }
