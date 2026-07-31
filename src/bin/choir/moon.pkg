@@ -7,7 +7,7 @@ import {
   "choir/src/sys",
   "choir/src/uds",
   "choir/src/exec/terminal",
-  "choir/src/exec",
+  "choir/src/exec/conformance_host",
   "choir/src/exec/beads_host",
   "choir/src/exec/goal_host",
   "choir/src/exec/process_host",

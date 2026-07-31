@@ -16,7 +16,7 @@ pub(all) struct NativeMixedProviderGoalReport {
 ///|
 priv struct NativeMixedProviderPart {
   snapshot : @workflow.PartWorkflowSnapshot
-  runtime : NativePartEffectRuntime
+  runtime : @part_host.NativePartEffectRuntime
   counts : NativePartDispatchCounts
   surface : @control.ProviderSurfaceId
 }
@@ -403,7 +403,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   }
   let active_server = prepared.server
   let claude_runtime = match
-    create_native_part_effect_runtime(
+    @part_host.create_native_part_effect_runtime(
       native_part_runtime_config(
         repository, active_server, git, moon_home, node, mcp_script, now,
       ),
@@ -416,7 +416,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       )
   }
   let codex_runtime = match
-    create_native_part_effect_runtime(
+    @part_host.create_native_part_effect_runtime(
       native_part_runtime_config(
         repository, active_server, git, moon_home, node, mcp_script, now,
       ),

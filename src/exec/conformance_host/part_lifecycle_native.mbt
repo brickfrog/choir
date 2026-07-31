@@ -25,10 +25,15 @@ priv struct NativePartFixtureRepository {
 }
 
 ///|
-pub(all) struct NativePartDispatchCounts {
+priv struct NativePartDispatchCounts {
   implementation : Ref[Int]
   verification : Ref[Int]
   audit : Ref[Int]
+}
+
+///|
+fn native_part_effect_error(message : String) -> @types.ChoirError {
+  @types.ChoirError::workspace_error("native Part effect: " + message)
 }
 
 ///|
@@ -650,7 +655,7 @@ fn serialized_native_part_boxlite_effects(
 }
 
 ///|
-pub fn native_part_artifact_exists(
+fn native_part_artifact_exists(
   repository : @workflow.PartWorkflowRepository,
   reference : @control.ArtifactReference,
 ) -> Bool {
@@ -743,7 +748,7 @@ fn native_part_audit_debug(
 ///|
 fn native_part_dependencies(
   repository : @workflow.PartWorkflowRepository,
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   clock : Ref[Int64],
   counts : NativePartDispatchCounts,
   surface : @control.ProviderSurfaceId,
@@ -766,9 +771,9 @@ fn native_part_dependencies(
 }
 
 ///|
-pub fn native_part_dependencies_with_admission(
+fn native_part_dependencies_with_admission(
   repository : @workflow.PartWorkflowRepository,
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   clock : Ref[Int64],
   counts : NativePartDispatchCounts,
   surface : @control.ProviderSurfaceId,
@@ -784,7 +789,7 @@ pub fn native_part_dependencies_with_admission(
   }
   let effects = counted_native_part_effects(
     serialized_native_part_boxlite_effects(
-      native_part_effect_adapters(runtime),
+      @part_host.native_part_effect_adapters(runtime),
       sandbox_prepare_lock,
     ),
     counts,
@@ -863,7 +868,7 @@ pub fn native_part_dependencies_with_admission(
       }
     },
     verification_environment_digest: fn(_) {
-      native_prepared_environment_digest({
+      @part_host.native_prepared_environment_digest({
         server: runtime.server.val,
         base_box_id: "digest-only",
         image_digest: @sandbox.boxlite_take_image_digest,
@@ -886,7 +891,7 @@ fn native_part_runtime_config(
   node : String,
   mcp_script : String,
   now : () -> Int64,
-) -> NativePartEffectRuntimeConfig {
+) -> @part_host.NativePartEffectRuntimeConfig {
   native_part_runtime_config_for_paths(
     repository,
     server,
@@ -902,7 +907,7 @@ fn native_part_runtime_config(
 }
 
 ///|
-pub fn native_part_runtime_config_for_paths(
+fn native_part_runtime_config_for_paths(
   repository : @workflow.PartWorkflowRepository,
   server : @take_host.NativeBoxLiteServerHandle,
   repository_root : String,
@@ -914,7 +919,7 @@ pub fn native_part_runtime_config_for_paths(
   mcp_script : String,
   now : () -> Int64,
   goal_cancellation_requested? : () -> Bool = fn() { false },
-) -> NativePartEffectRuntimeConfig {
+) -> @part_host.NativePartEffectRuntimeConfig {
   {
     repository,
     repository_adapters: @storage_host.local_part_workflow_repository_adapters(),
@@ -957,7 +962,7 @@ pub fn native_part_runtime_config_for_paths(
 
 ///|
 async fn fail_native_part_runtime(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   message : String,
 ) -> NativePartLifecycleReport {
   ignore(@take_host.cleanup_native_boxlite_fixture_server(runtime.server.val))
@@ -1035,7 +1040,8 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   let first_config = native_part_runtime_config(
     repository, server, git, moon_home, node, mcp_script, now,
   )
-  let first_runtime = match create_native_part_effect_runtime(first_config) {
+  let first_runtime = match
+    @part_host.create_native_part_effect_runtime(first_config) {
     Ok(value) => value
     Err(error) => {
       ignore(@take_host.cleanup_native_boxlite_fixture_server(server))
@@ -1108,7 +1114,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     now,
   )
   let restarted_runtime = match
-    create_native_part_effect_runtime(restarted_config) {
+    @part_host.create_native_part_effect_runtime(restarted_config) {
     Ok(value) => value
     Err(error) =>
       return fail_native_part_runtime(first_runtime, error.message())
@@ -1345,7 +1351,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
       cancellation_probes.val >= 5
     },
   )
-  let runtime = match create_native_part_effect_runtime(config) {
+  let runtime = match @part_host.create_native_part_effect_runtime(config) {
     Ok(value) => value
     Err(error) => {
       ignore(@take_host.cleanup_native_boxlite_fixture_server(server))

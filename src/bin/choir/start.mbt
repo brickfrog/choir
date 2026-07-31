@@ -463,7 +463,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     if options.conductor == StartClaudeConductor {
       match
         @conductor_host.validate_native_conductor_surface(
-          probe=@exec.capture_harness_probe,
+          probe=@conformance_host.capture_harness_probe,
         ) {
         Ok(_) => ()
         Err(error) => {

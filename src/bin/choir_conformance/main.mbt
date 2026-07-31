@@ -376,7 +376,7 @@ async fn capture_surface_command(
   surface : @harness.ProviderSurface,
   command : @harness.HarnessProbeCommand,
 ) -> @harness.HarnessProbeCapture {
-  match @exec.capture_harness_probe({ surface, command }) {
+  match @conformance_host.capture_harness_probe({ surface, command }) {
     Ok(capture) => capture
     Err(error) => { exit_code: -1, output: error.message() }
   }
@@ -432,7 +432,9 @@ async fn run_claude_synthetic_startup() -> Int {
     }
   }
   let capture = match
-    @exec.capture_claude_synthetic_startup(root, mcp_command, mcp_args) {
+    @conformance_host.capture_claude_synthetic_startup(
+      root, mcp_command, mcp_args,
+    ) {
     Ok(capture) => capture
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -465,7 +467,7 @@ async fn run_claude_live_startup() -> Int {
     }
   }
   let capture = match
-    @exec.capture_claude_live_startup(root, mcp_command, mcp_args) {
+    @conformance_host.capture_claude_live_startup(root, mcp_command, mcp_args) {
     Ok(capture) => capture
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -776,7 +778,7 @@ async fn run_claude_live_cancellation() -> Int {
     }
   }
   let workflow_root = "/tmp/choir-take-claude-cancel-matrix-" + discriminator
-  let workflow = @part_host.run_native_claude_cancellation_fixture(
+  let workflow = @conformance_host.run_native_claude_cancellation_fixture(
     workflow_root,
   )
   ignore(@sys.rm_rf(workflow_root))
@@ -1494,7 +1496,9 @@ async fn run_codex_live_startup() -> Int {
     }
   }
   let evidence = match
-    @exec.capture_codex_live_startup(root, mcp_command, mcp_args, read_canary) {
+    @conformance_host.capture_codex_live_startup(
+      root, mcp_command, mcp_args, read_canary,
+    ) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -2197,7 +2201,9 @@ async fn run_codex_live_cancellation() -> Int {
     }
   }
   let boxlite_root = "/tmp/choir-take-cancel-matrix-" + discriminator
-  let boxlite = @part_host.run_native_codex_cancellation_fixture(boxlite_root)
+  let boxlite = @conformance_host.run_native_codex_cancellation_fixture(
+    boxlite_root,
+  )
   ignore(@sys.rm_rf(boxlite_root))
   let disabled = @harness.codex_take_disabled_features()
   disabled.sort()
@@ -3492,7 +3498,7 @@ async fn run_boxlite_live() -> Int {
     @sys.write_stderr("failed to create dedicated BoxLite probe root\n")
     return 1
   }
-  let evidence = match @exec.capture_boxlite_live_evidence(root) {
+  let evidence = match @conformance_host.capture_boxlite_live_evidence(root) {
     Ok(evidence) => evidence
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -4164,14 +4170,14 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
         @sys.write_stderr("failed to create Part conformance root\n")
         @sys.exit(1)
       }
-      let report = @goal_host.run_part_conformance_fixture(root)
+      let report = @conformance_host.run_part_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "native-part-lifecycle" => {
       let root = "/tmp/choir-take-native-part-" + @sys.get_pid().to_string()
-      let report = @part_host.run_native_part_lifecycle_fixture(root)
+      let report = @conformance_host.run_native_part_lifecycle_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4179,7 +4185,9 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-part-lifecycle" => {
       let root = "/tmp/choir-take-native-codex-part-" +
         @sys.get_pid().to_string()
-      let report = @part_host.run_native_codex_part_lifecycle_fixture(root)
+      let report = @conformance_host.run_native_codex_part_lifecycle_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4187,7 +4195,9 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-claude-cancellation" => {
       let root = "/tmp/choir-take-native-claude-cancel-" +
         @sys.get_pid().to_string()
-      let report = @part_host.run_native_claude_cancellation_fixture(root)
+      let report = @conformance_host.run_native_claude_cancellation_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4195,28 +4205,30 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-cancellation" => {
       let root = "/tmp/choir-take-native-codex-cancel-" +
         @sys.get_pid().to_string()
-      let report = @part_host.run_native_codex_cancellation_fixture(root)
+      let report = @conformance_host.run_native_codex_cancellation_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "mixed-provider-goal" => {
       let root = "/tmp/choir-take-mixed-provider-" + @sys.get_pid().to_string()
-      let report = @part_host.run_native_mixed_provider_goal_fixture(root)
+      let report = @conformance_host.run_native_mixed_provider_goal_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "parallel-promotion" => {
       let root = "/tmp/choir-goal-conformance-" + @sys.get_pid().to_string()
-      let report = @part_host.run_native_goal_conformance_fixture(root)
+      let report = @conformance_host.run_native_goal_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "scale-mixed" => {
       let root = "/tmp/choir-scale-mixed-" + @sys.get_pid().to_string()
-      let report = @goal_host.run_scale_mixed_conformance_fixture(root)
+      let report = @conformance_host.run_scale_mixed_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4537,32 +4549,32 @@ fn main {
       let root = "/tmp/choir-integration-fault-report-" +
         @sys.get_pid().to_string()
       ignore(@sys.rm_rf(root))
-      let report = @goal_host.run_integration_fault_conformance(root)
+      let report = @conformance_host.run_integration_fault_conformance(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "finalization-races" {
     @async.run_async_main(async fn() {
-      let report = @goal_host.run_native_goal_finalization_race_conformance()
+      let report = @conformance_host.run_native_goal_finalization_race_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "publication-faults" {
     @async.run_async_main(async fn() {
-      let report = @goal_host.run_native_publication_fault_conformance()
+      let report = @conformance_host.run_native_publication_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-faults" {
     @async.run_async_main(async fn() {
-      let report = @goal_host.run_native_pull_request_fault_conformance()
+      let report = @conformance_host.run_native_pull_request_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-states" {
     @async.run_async_main(async fn() {
-      let report = @goal_host.run_native_pull_request_remote_state_conformance()
+      let report = @conformance_host.run_native_pull_request_remote_state_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
