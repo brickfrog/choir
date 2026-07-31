@@ -112,7 +112,7 @@ fn probe_mcp_launch(
   read_result_path? : String = "",
   fail_tool? : Bool = false,
 ) -> Result[(String, Array[String]), @types.ChoirError] {
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(path) => path
     None =>
       return Err(
@@ -264,7 +264,7 @@ async fn run_codex_live_cancellation_case(
   }
   let clock = @ref.new(500L)
   let cancellation_checks = @ref.new(0)
-  let result = @exec.run_native_codex_take(
+  let result = @provider_host.run_native_codex_take(
     {
       sterile_root: root,
       mcp_executable: mcp_command,
@@ -341,7 +341,7 @@ async fn run_codex_live_cancellation_case(
 fn unavailable_sandbox_mcp_launch(
   root : String,
 ) -> Result[(String, Array[String]), @types.ChoirError] {
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(path) => path
     None =>
       return Err(
@@ -376,7 +376,7 @@ async fn capture_surface_command(
   surface : @harness.ProviderSurface,
   command : @harness.HarnessProbeCommand,
 ) -> @harness.HarnessProbeCapture {
-  match @exec.capture_harness_probe({ surface, command }) {
+  match @conformance_host.capture_harness_probe({ surface, command }) {
     Ok(capture) => capture
     Err(error) => { exit_code: -1, output: error.message() }
   }
@@ -432,7 +432,9 @@ async fn run_claude_synthetic_startup() -> Int {
     }
   }
   let capture = match
-    @exec.capture_claude_synthetic_startup(root, mcp_command, mcp_args) {
+    @conformance_host.capture_claude_synthetic_startup(
+      root, mcp_command, mcp_args,
+    ) {
     Ok(capture) => capture
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -465,7 +467,7 @@ async fn run_claude_live_startup() -> Int {
     }
   }
   let capture = match
-    @exec.capture_claude_live_startup(root, mcp_command, mcp_args) {
+    @conformance_host.capture_claude_live_startup(root, mcp_command, mcp_args) {
     Ok(capture) => capture
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -531,7 +533,7 @@ async fn run_claude_required_tool_startup() -> Int {
     }
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: root + "/missing-mcp",
@@ -673,7 +675,7 @@ async fn run_claude_live_cancellation_case(
   }
   let clock = @ref.new(500L)
   let cancellation_checks = @ref.new(0)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -776,7 +778,9 @@ async fn run_claude_live_cancellation() -> Int {
     }
   }
   let workflow_root = "/tmp/choir-take-claude-cancel-matrix-" + discriminator
-  let workflow = @exec.run_native_claude_cancellation_fixture(workflow_root)
+  let workflow = @conformance_host.run_native_claude_cancellation_fixture(
+    workflow_root,
+  )
   ignore(@sys.rm_rf(workflow_root))
   let passed = workflow.passed &&
     workflow.implementation_dispatches_before_restart == 1 &&
@@ -990,7 +994,7 @@ async fn run_claude_live_driver_probe(probe : ClaudeLiveDriverProbe) -> Int {
     ignore(@sys.setenv("CHOIR_CREDENTIAL_CANARY", credential_secret))
   }
   let clock = @ref.new(100L)
-  let provider_result = @exec.run_native_claude_take(
+  let provider_result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1189,7 +1193,7 @@ async fn run_claude_capability_death() -> Int {
     }
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1295,7 +1299,7 @@ async fn run_claude_parent_loss_child(root : String) -> Int {
     Err(_) => return 1
   }
   let clock = @ref.new(100L)
-  let result = @exec.run_native_claude_take(
+  let result = @provider_host.run_native_claude_take(
     {
       sterile_root,
       mcp_executable: mcp_command,
@@ -1414,7 +1418,7 @@ async fn run_claude_parent_loss_live() -> Int {
   let provider_stopped = provider_pid > 1 &&
     !@sys.pgid_has_non_zombie_process(provider_pid)
   let reconciled = match
-    @exec.reconcile_native_claude_process_witness(sterile_root) {
+    @provider_host.reconcile_native_claude_process_witness(sterile_root) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -1492,7 +1496,9 @@ async fn run_codex_live_startup() -> Int {
     }
   }
   let evidence = match
-    @exec.capture_codex_live_startup(root, mcp_command, mcp_args, read_canary) {
+    @conformance_host.capture_codex_live_startup(
+      root, mcp_command, mcp_args, read_canary,
+    ) {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -1620,7 +1626,7 @@ async fn run_codex_live_driver_at(
     ignore(@sys.rm_rf(root))
     return 1
   }
-  let provider_result = @exec.run_native_codex_take(
+  let provider_result = @provider_host.run_native_codex_take(
     {
       sterile_root: root,
       mcp_executable: mcp_command,
@@ -1768,7 +1774,7 @@ async fn run_codex_live_driver_at(
     }
   }
   let attestation = match
-    @exec.read_native_codex_initialization_attestation(root) {
+    @provider_host.read_native_codex_initialization_attestation(root) {
     Some(value) => value
     None => {
       @sys.write_stderr("Codex initialization attestation is absent\n")
@@ -1958,7 +1964,7 @@ async fn run_codex_host_boundary() -> Int {
   let root = "/tmp/choir-codex-host-boundary-conformance-" +
     @sys.get_pid().to_string()
   let evidence = match
-    @exec.capture_native_provider_host_boundary(
+    @provider_host.capture_native_provider_host_boundary(
       root,
       @harness.ProviderSurface::CodexCli,
     ) {
@@ -1993,7 +1999,7 @@ async fn run_codex_host_boundary() -> Int {
 async fn run_claude_host_boundary() -> Int {
   let root = "/tmp/choir-claude-host-boundary-" + @sys.get_pid().to_string()
   let evidence = match
-    @exec.capture_native_provider_host_boundary(
+    @provider_host.capture_native_provider_host_boundary(
       root,
       @harness.ProviderSurface::ClaudeCli,
     ) {
@@ -2195,7 +2201,9 @@ async fn run_codex_live_cancellation() -> Int {
     }
   }
   let boxlite_root = "/tmp/choir-take-cancel-matrix-" + discriminator
-  let boxlite = @exec.run_native_codex_cancellation_fixture(boxlite_root)
+  let boxlite = @conformance_host.run_native_codex_cancellation_fixture(
+    boxlite_root,
+  )
   ignore(@sys.rm_rf(boxlite_root))
   let disabled = @harness.codex_take_disabled_features()
   disabled.sort()
@@ -2380,7 +2388,7 @@ async fn codex_recovery_pgid_stopped(pgid : Int) -> Bool {
 
 ///|
 async fn run_codex_recovery_crash_child(root : String, point : String) -> Int {
-  let moon = match @exec.resolve_executable_in_path("moon") {
+  let moon = match @process_host.resolve_executable_in_path("moon") {
     Some(value) => value
     None => return -1
   }
@@ -3092,7 +3100,7 @@ async fn run_conductor_start_live() -> Int {
     @sys.write_stderr("failed to create Conductor start fixture\n")
     return 1
   }
-  let (build_code, build_output) = @exec.capture_command_merged({
+  let (build_code, build_output) = @process_host.capture_command_merged({
     program: "moon",
     args: ["build", "--target", "native", "src/bin/choir"],
     workdir: None,
@@ -3130,7 +3138,7 @@ async fn run_conductor_start_live() -> Int {
     cleanup_conductor_start_probe(root)
     return 1
   }
-  let (chmod_code, chmod_output) = @exec.capture_command_merged({
+  let (chmod_code, chmod_output) = @process_host.capture_command_merged({
     program: "/usr/bin/chmod",
     args: ["0700", fake_conductor],
     workdir: None,
@@ -3141,7 +3149,7 @@ async fn run_conductor_start_live() -> Int {
     return 1
   }
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
-  let (start_code, start_output) = @exec.capture_command_merged({
+  let (start_code, start_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
     args: [
       "PATH=" + root + "/bin:" + inherited_path,
@@ -3163,7 +3171,7 @@ async fn run_conductor_start_live() -> Int {
   let conductor_settings = @sys.read_file(
     root + "/.choir/state/claude-settings.json",
   )
-  let (mode_code, socket_mode) = @exec.capture_command_merged({
+  let (mode_code, socket_mode) = @process_host.capture_command_merged({
     program: "/usr/bin/stat",
     args: ["-c", "%a", socket_path],
     workdir: None,
@@ -3293,7 +3301,7 @@ async fn run_conductor_reconnect_live() -> Int {
     @sys.write_stderr("failed to create Conductor reconnect fixture\n")
     return 1
   }
-  let real_claude = match @exec.resolve_executable_in_path("claude") {
+  let real_claude = match @process_host.resolve_executable_in_path("claude") {
     Some(value) => value
     None => {
       ignore(@sys.rm_rf(root))
@@ -3301,7 +3309,7 @@ async fn run_conductor_reconnect_live() -> Int {
       return 1
     }
   }
-  let (build_code, build_output) = @exec.capture_command_merged({
+  let (build_code, build_output) = @process_host.capture_command_merged({
     program: "moon",
     args: ["build", "--target", "native", "src/bin/choir"],
     workdir: None,
@@ -3341,14 +3349,14 @@ async fn run_conductor_reconnect_live() -> Int {
     @sys.write_stderr("failed to prepare Conductor reconnect launchers\n")
     return 1
   }
-  let (chmod_code, _) = @exec.capture_command_merged({
+  let (chmod_code, _) = @process_host.capture_command_merged({
     program: "/usr/bin/chmod",
     args: ["0700", fake_claude, ambient_choir],
     workdir: None,
   })
   let inherited_path = @sys.getenv("PATH").unwrap_or("/usr/bin:/bin")
   let fixture_path = root + "/bin:" + inherited_path
-  let (init_code, init_output) = @exec.capture_command_merged({
+  let (init_code, init_output) = @process_host.capture_command_merged({
     program: "/usr/bin/env",
     args: ["PATH=" + fixture_path, choir_binary, "init"],
     workdir: Some(root),
@@ -3360,7 +3368,7 @@ async fn run_conductor_reconnect_live() -> Int {
   }
   let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  let capture : async (@exec.Command) -> (Int, String) = command => {
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
     match (command.program, command.args) {
       ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
       ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
@@ -3381,10 +3389,16 @@ async fn run_conductor_reconnect_live() -> Int {
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
     #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","pull_request":{"title":"test: reconnect Conductor","body":"Exercises paused Goal visibility across Conductors."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
-  let submitted = @exec.submit_native_conductor_goal_draft(root, draft, capture)
+  let submitted = @goal_host.submit_native_conductor_goal_draft(
+    root,
+    draft,
+    capture,
+    nfc_available=@process_host.native_path_nfc_available,
+    is_nfc=@process_host.native_path_is_nfc,
+  )
   let paused = match submitted {
     Ok(report) if report.accepted =>
-      @exec.steer_native_goal(
+      @goal_host.steer_native_goal(
         root,
         goal_id,
         @workflow.GoalPolicyChange::GoalPolicyPause,
@@ -3432,7 +3446,7 @@ async fn run_conductor_reconnect_live() -> Int {
     (-1, "")
   }
   let daemon_stopped = stop_conductor_fixture_daemon(root)
-  let status = @exec.inspect_native_goal(root, goal_id)
+  let status = @goal_host.inspect_native_goal(root, goal_id)
   let passed = codex.0 == 0 &&
     codex.1.contains("CODEX_RECONNECT_OK") &&
     claude.0 == 0 &&
@@ -3484,7 +3498,7 @@ async fn run_boxlite_live() -> Int {
     @sys.write_stderr("failed to create dedicated BoxLite probe root\n")
     return 1
   }
-  let evidence = match @exec.capture_boxlite_live_evidence(root) {
+  let evidence = match @conformance_host.capture_boxlite_live_evidence(root) {
     Ok(evidence) => evidence
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -3504,14 +3518,14 @@ async fn run_boxlite_live() -> Int {
 
 ///|
 async fn exercise_boxlite_take(
-  server : @exec.NativeBoxLiteServerHandle,
-  active_server : @ref.Ref[@exec.NativeBoxLiteServerHandle],
+  server : @take_host.NativeBoxLiteServerHandle,
+  active_server : @ref.Ref[@take_host.NativeBoxLiteServerHandle],
   moon_home : String,
-  source : @exec.NativeGitWorkspaceSource,
-  git_config : @exec.NativeGitWorkspaceConfig,
+  source : @git_host.NativeGitWorkspaceSource,
+  git_config : @git_host.NativeGitWorkspaceConfig,
 ) -> Result[Map[String, Json], @types.ChoirError] {
   let prepared = match
-    @exec.prepare_native_boxlite_environment(
+    @take_host.prepare_native_boxlite_environment(
       server,
       moon_home,
       "choir-take-base-" + @sys.get_pid().to_string(),
@@ -3521,7 +3535,7 @@ async fn exercise_boxlite_take(
   }
   active_server.val = prepared.server
   let take = match
-    @exec.clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       moon_home,
       "choir-take-live-" + @sys.get_pid().to_string(),
@@ -3532,7 +3546,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   active_server.val = take.prepared.server
-  let inspected = match @exec.inspect_native_boxlite_take(take) {
+  let inspected = match @take_host.inspect_native_boxlite_take(take) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3543,7 +3557,8 @@ async fn exercise_boxlite_take(
         @types.ChoirError::workspace_error("sandbox MCP bridge is unavailable"),
       )
   }
-  let arguments = match @exec.native_boxlite_take_mcp_arguments(take, script) {
+  let arguments = match
+    @take_host.native_boxlite_take_mcp_arguments(take, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3572,7 +3587,7 @@ async fn exercise_boxlite_take(
   if owner_mode_capture.0 != 0 ||
     owner_mode.trim() != "600" ||
     arguments.length() != 7 ||
-    arguments.contains(@exec.native_boxlite_take_execution_token(take)) ||
+    arguments.contains(@take_host.native_boxlite_take_execution_token(take)) ||
     arguments.contains(take.prepared.server.owner_token) ||
     arguments.contains(take.prepared.server.config.api_key) ||
     arguments.contains(take.prepared.server.url) ||
@@ -3584,7 +3599,7 @@ async fn exercise_boxlite_take(
       ),
     )
   }
-  let node = match @exec.resolve_executable_in_path("node") {
+  let node = match @process_host.resolve_executable_in_path("node") {
     Some(value) => value
     None =>
       return Err(
@@ -3593,7 +3608,8 @@ async fn exercise_boxlite_take(
         ),
       )
   }
-  let bridge_probe = match @exec.probe_native_boxlite_mcp(take, node, script) {
+  let bridge_probe = match
+    @take_host.probe_native_boxlite_mcp(take, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3606,12 +3622,12 @@ async fn exercise_boxlite_take(
     )
   }
   let path_identity_probe = match
-    @exec.probe_native_boxlite_path_identity(take, node, script) {
+    @take_host.probe_native_boxlite_path_identity(take, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let host_after = @sys.read_file(host_path)
-  let result_root = match @exec.copy_native_boxlite_take_result(take) {
+  let result_root = match @take_host.copy_native_boxlite_take_result(take) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3680,7 +3696,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let (candidate, path_evidence) = match
-    @exec.normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       git_config,
       "take-live-" + @sys.get_pid().to_string(),
       @control.GoalId("live-goal"),
@@ -3695,7 +3711,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let retried = match
-    @exec.normalize_native_git_candidate(
+    @git_host.normalize_native_git_candidate(
       git_config,
       "take-live-" + @sys.get_pid().to_string(),
       @control.GoalId("live-goal"),
@@ -3729,7 +3745,7 @@ async fn exercise_boxlite_take(
     )
   }
   let assurance_mutable = match
-    @exec.clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       moon_home,
       "choir-assurance-live-" + @sys.get_pid().to_string(),
@@ -3740,7 +3756,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let assurance = match
-    @exec.seal_native_boxlite_assurance_subject(assurance_mutable) {
+    @take_host.seal_native_boxlite_assurance_subject(assurance_mutable) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3785,7 +3801,7 @@ async fn exercise_boxlite_take(
     @utf8.encode(assurance_process.to_json().stringify(indent=0)),
   )
   let assurance_process_result = match
-    @exec.execute_native_boxlite_process(
+    @take_host.execute_native_boxlite_process(
       assurance,
       {
         goal_id: @control.GoalId("assurance-live-goal"),
@@ -3808,21 +3824,21 @@ async fn exercise_boxlite_take(
     )
   }
   let assurance_probe = match
-    @exec.probe_native_boxlite_mcp(assurance, node, script) {
+    @take_host.probe_native_boxlite_mcp(assurance, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match @exec.cleanup_native_boxlite_assurance_subject(assurance) {
+  match @take_host.cleanup_native_boxlite_assurance_subject(assurance) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   let assurance_result = match
-    @exec.copy_native_boxlite_take_result(assurance) {
+    @take_host.copy_native_boxlite_take_result(assurance) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let assurance_tree = match
-    @exec.observe_native_git_result_tree(
+    @git_host.observe_native_git_result_tree(
       git_config,
       "assurance-live-" + @sys.get_pid().to_string(),
       source.commit_oid,
@@ -3837,11 +3853,11 @@ async fn exercise_boxlite_take(
       @types.ChoirError::workspace_error("read-only assurance subject changed"),
     )
   }
-  match @exec.destroy_native_boxlite_take(take) {
+  match @take_host.destroy_native_boxlite_take(take) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  match @exec.destroy_native_boxlite_take(assurance) {
+  match @take_host.destroy_native_boxlite_take(assurance) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -3882,7 +3898,7 @@ async fn capture_live_git(
   repository_root : String,
   arguments : Array[String],
 ) -> String {
-  @exec.capture_stdout_with_cwd(
+  @process_host.capture_stdout_with_cwd(
     "/usr/bin/git",
     arguments,
     Some(repository_root),
@@ -3923,7 +3939,7 @@ async fn run_boxlite_take_live() -> Int {
   let source_digest = @storage.artifact_digest(
     @utf8.encode("choir.live-source.v1\u{00}" + head + "\u{00}" + tree),
   )
-  let git_config : @exec.NativeGitWorkspaceConfig = {
+  let git_config : @git_host.NativeGitWorkspaceConfig = {
     repository_root,
     object_directory: capture_live_git(repository_root, [
       "rev-parse", "--path-format=absolute", "--git-path", "objects",
@@ -3933,7 +3949,7 @@ async fn run_boxlite_take_live() -> Int {
     staging_root,
   }
   let source = match
-    @exec.stage_native_git_workspace(
+    @git_host.stage_native_git_workspace(
       git_config,
       "source",
       @control.GitOid(head),
@@ -3947,7 +3963,7 @@ async fn run_boxlite_take_live() -> Int {
       return 1
     }
   }
-  let binary = match @exec.native_boxlite_binary_path() {
+  let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -3955,7 +3971,7 @@ async fn run_boxlite_take_live() -> Int {
       return 1
     }
   }
-  let runtime_dir = match @exec.native_boxlite_runtime_dir() {
+  let runtime_dir = match @process_host.native_boxlite_runtime_dir() {
     Ok(value) => value
     Err(error) => {
       @sys.write_stderr(error.message() + "\n")
@@ -3975,7 +3991,7 @@ async fn run_boxlite_take_live() -> Int {
       }
   }
   let server = match
-    @exec.start_native_boxlite_server({
+    @take_host.start_native_boxlite_server({
       binary,
       runtime_dir,
       root,
@@ -3996,7 +4012,7 @@ async fn run_boxlite_take_live() -> Int {
   )
   let owner_pid = active_server.val.owner_pid
   let runtime_pid = active_server.val.pid
-  let cleanup = @exec.cleanup_native_boxlite_server(active_server.val)
+  let cleanup = @take_host.cleanup_native_boxlite_server(active_server.val)
   let owner_stopped = !@sys.pgid_has_non_zombie_process(owner_pid)
   let runtime_stopped = !@sys.pgid_has_non_zombie_process(runtime_pid)
   let host_head_after = capture_live_git(repository_root, [
@@ -4063,7 +4079,7 @@ async fn run_joined_goal_until_settled(
   let mut cycles = 0
   while cycles < 16 {
     cycles = cycles + 1
-    match @exec.run_native_goal_execution_tick(project_dir) {
+    match @goal_host.run_native_goal_execution_tick(project_dir) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
         if record.goal.id != goal_id {
           continue
@@ -4096,8 +4112,12 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     }
     let draft = @sys.read_file(args[5])
     let submission = match
-      @exec.submit_native_conductor_goal_draft(
-        project_dir, draft, @exec.capture_command_merged,
+      @goal_host.submit_native_conductor_goal_draft(
+        project_dir,
+        draft,
+        @process_host.capture_command_merged,
+        nfc_available=@process_host.native_path_nfc_available,
+        is_nfc=@process_host.native_path_is_nfc,
       ) {
       Ok(value) => value
       Err(error) => {
@@ -4111,7 +4131,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
       @sys.exit(1)
     }
     if submission.replayed {
-      match @exec.inspect_native_goal(project_dir, submission.goal_id) {
+      match @goal_host.inspect_native_goal(project_dir, submission.goal_id) {
         Ok(report) if report.state ==
           @workflow.GoalExecutionState::GoalExecutionAssured => {
           @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
@@ -4150,14 +4170,14 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
         @sys.write_stderr("failed to create Part conformance root\n")
         @sys.exit(1)
       }
-      let report = @exec.run_part_conformance_fixture(root)
+      let report = @conformance_host.run_part_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "native-part-lifecycle" => {
       let root = "/tmp/choir-take-native-part-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_part_lifecycle_fixture(root)
+      let report = @conformance_host.run_native_part_lifecycle_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4165,7 +4185,9 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-part-lifecycle" => {
       let root = "/tmp/choir-take-native-codex-part-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_codex_part_lifecycle_fixture(root)
+      let report = @conformance_host.run_native_codex_part_lifecycle_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4173,7 +4195,9 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-claude-cancellation" => {
       let root = "/tmp/choir-take-native-claude-cancel-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_claude_cancellation_fixture(root)
+      let report = @conformance_host.run_native_claude_cancellation_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4181,28 +4205,30 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-cancellation" => {
       let root = "/tmp/choir-take-native-codex-cancel-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_codex_cancellation_fixture(root)
+      let report = @conformance_host.run_native_codex_cancellation_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "mixed-provider-goal" => {
       let root = "/tmp/choir-take-mixed-provider-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_mixed_provider_goal_fixture(root)
+      let report = @conformance_host.run_native_mixed_provider_goal_fixture(
+        root,
+      )
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "parallel-promotion" => {
       let root = "/tmp/choir-goal-conformance-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_goal_conformance_fixture(root)
+      let report = @conformance_host.run_native_goal_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "scale-mixed" => {
       let root = "/tmp/choir-scale-mixed-" + @sys.get_pid().to_string()
-      let report = @exec.run_scale_mixed_conformance_fixture(root)
+      let report = @conformance_host.run_scale_mixed_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4226,7 +4252,7 @@ fn run_goal_status_command(args : Array[String]) -> Unit {
     @sys.exit(2)
     return
   }
-  match @exec.inspect_native_goal(project_dir, @control.GoalId(args[5])) {
+  match @goal_host.inspect_native_goal(project_dir, @control.GoalId(args[5])) {
     Ok(report) => {
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(0)
@@ -4251,7 +4277,7 @@ fn run_goal_cancel_command(args : Array[String]) -> Unit {
     return
   }
   match
-    @exec.cancel_native_goal(
+    @goal_host.cancel_native_goal(
       project_dir,
       @control.GoalId(args[5]),
       @env.now().reinterpret_as_int64() / 1000L,
@@ -4280,7 +4306,10 @@ async fn run_goal_publish_command(args : Array[String]) -> Unit {
     return
   }
   match
-    @exec.advance_native_goal_publication(project_dir, @control.GoalId(args[5])) {
+    @goal_host.advance_native_goal_publication(
+      project_dir,
+      @control.GoalId(args[5]),
+    ) {
     Ok(outcome) => {
       @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
       @sys.exit(
@@ -4315,13 +4344,13 @@ async fn run_goal_pull_request_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.advance_native_goal_pull_request_with_adapters(
+    @goal_host.advance_native_goal_pull_request_with_adapters(
       project_dir,
       @control.GoalId(args[5]),
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
     )
   } else {
-    @exec.advance_native_goal_pull_request(
+    @goal_host.advance_native_goal_pull_request(
       project_dir,
       @control.GoalId(args[5]),
     )
@@ -4361,13 +4390,13 @@ async fn run_goal_finish_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.advance_native_goal_finalization_with_adapters(
+    @goal_host.advance_native_goal_finalization_with_adapters(
       project_dir,
       @control.GoalId(args[5]),
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
     )
   } else {
-    @exec.advance_native_goal_finalization(
+    @goal_host.advance_native_goal_finalization(
       project_dir,
       @control.GoalId(args[5]),
     )
@@ -4405,12 +4434,13 @@ async fn run_goal_tick_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.run_native_goal_execution_tick_with_forge(
+    @goal_host.run_native_goal_execution_tick_with_forge(
       project_dir,
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
+      beads_capture=@process_host.capture_command_merged,
     )
   } else {
-    @exec.run_native_goal_execution_tick(project_dir)
+    @goal_host.run_native_goal_execution_tick(project_dir)
   }
   match result {
     Ok(outcome) => {
@@ -4519,32 +4549,32 @@ fn main {
       let root = "/tmp/choir-integration-fault-report-" +
         @sys.get_pid().to_string()
       ignore(@sys.rm_rf(root))
-      let report = @exec.run_integration_fault_conformance(root)
+      let report = @conformance_host.run_integration_fault_conformance(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "finalization-races" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_goal_finalization_race_conformance()
+      let report = @conformance_host.run_native_goal_finalization_race_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "publication-faults" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_publication_fault_conformance()
+      let report = @conformance_host.run_native_publication_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-faults" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_pull_request_fault_conformance()
+      let report = @conformance_host.run_native_pull_request_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-states" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_pull_request_remote_state_conformance()
+      let report = @conformance_host.run_native_pull_request_remote_state_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })

@@ -23,6 +23,57 @@ pub let boxlite_runtime_shim_sha256 : String = "29ceaa8e4530ae71408828a1e9067933
 pub let boxlite_runtime_bundle_digest : String = "66364c9b629315a2f3c0f5ab341fa16e21d41b43873866125a110051e8c142cc"
 
 ///|
+pub fn boxlite_probe_environment_with_runtime(
+  root : String,
+  api_key : String?,
+  runtime_dir : String?,
+) -> Map[String, String] {
+  let environment : Map[String, String] = {
+    "HOME": root,
+    "TMPDIR": root + "/tmp",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NO_COLOR": "1",
+  }
+  match api_key {
+    Some(value) => environment["BOXLITE_API_KEY"] = value
+    None => ()
+  }
+  match runtime_dir {
+    Some(value) => environment["BOXLITE_RUNTIME_DIR"] = value
+    None => ()
+  }
+  environment
+}
+
+///|
+pub fn boxlite_json_string_field(body : String, key : String) -> String? {
+  let parsed = @json.parse(body) catch { _ => return None }
+  guard parsed is Object(fields) else { return None }
+  match fields.get(key) {
+    Some(String(value)) => Some(value)
+    _ => None
+  }
+}
+
+///|
+pub fn valid_boxlite_state_token(value : String) -> Bool {
+  if value == "" || value.length() > 180 {
+    return false
+  }
+  for char in value {
+    let valid = (char >= 'a' && char <= 'z') ||
+      (char >= 'A' && char <= 'Z') ||
+      (char >= '0' && char <= '9') ||
+      char == '_' ||
+      char == '-'
+    if !valid {
+      return false
+    }
+  }
+  true
+}
+
+///|
 pub fn boxlite_runtime_bundle_files() -> Array[String] {
   [
     "boxlite-guest", "boxlite-shim", "bwrap", "debugfs", "libkrunfw.so.5", "mke2fs",

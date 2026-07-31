@@ -181,7 +181,14 @@ async fn advance_bound_part(
     None => {
       if !(record.part.lifecycle is @control.PartLifecycle::PartPending) &&
         !(record.part.lifecycle is @control.PartLifecycle::PartReady) {
-        return Err(goal_part_adapter_error("active Part snapshot is absent"))
+        return Err(
+          goal_part_adapter_error(
+            "active Part snapshot is absent: part=" +
+            record.part.id.0 +
+            " lifecycle=" +
+            record.part.lifecycle.to_json().stringify(indent=0),
+          ),
+        )
       }
       @workflow.run_new_part_workflow(
         binding.repository,

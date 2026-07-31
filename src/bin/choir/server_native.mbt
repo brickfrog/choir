@@ -622,9 +622,10 @@ async fn conductor_dispatch(
   state : ConductorServerState,
   request : @types.Request,
 ) -> @types.Response {
-  @exec.dispatch_native_conductor_request(
+  @conductor_host.dispatch_native_conductor_request(
     state.config.project_dir,
     conductor_authenticated_request(request),
+    capture=@process_host.capture_command_merged,
   ) catch {
     error => {
       @moontrace.error("Conductor adapter error", fields=[
@@ -1077,7 +1078,7 @@ fn conductor_inspect_goal_with_capacity(
   provider_capacity : @types.ProviderCapacityPolicy,
   surface_reports : Array[@workflow.ProviderSurfaceTickReport],
 ) -> Result[@workflow.GoalStatusReport, @types.ChoirError] {
-  @exec.inspect_native_goal(
+  @goal_host.inspect_native_goal(
     project_dir,
     goal_id,
     provider_capacity=Some(provider_capacity),
@@ -1090,7 +1091,7 @@ fn conductor_read_goal_provider_reports(
   project_dir : String,
   goal_id : @control.GoalId,
 ) -> Result[Array[@workflow.ProviderSurfaceTickReport], @types.ChoirError] {
-  @exec.native_goal_executor_provider_reports(project_dir, goal_id)
+  @goal_host.native_goal_executor_provider_reports(project_dir, goal_id)
 }
 
 ///|
@@ -1172,7 +1173,7 @@ test "daemon Goal projection carries configured capacity and executor reports" {
 async fn conductor_goal_observer(config : @types.Config) -> Unit {
   let project_dir = config.project_dir
   for ;; {
-    let active = match @exec.list_native_active_goal_ids(project_dir) {
+    let active = match @goal_host.list_native_active_goal_ids(project_dir) {
       Ok(value) => value
       Err(_) => []
     }
@@ -1266,7 +1267,7 @@ async fn conductor_run_leased_goal_job(
   config : @types.Config,
   lease : @workflow.GoalExecutorLease,
 ) -> Unit {
-  let observed = @exec.run_native_goal_execution_job(
+  let observed = @goal_host.run_native_goal_execution_job(
     config.project_dir,
     lease,
     pull_request_delivery=config.pull_request_delivery,
@@ -1290,7 +1291,7 @@ async fn conductor_run_leased_goal_job(
       )
   }
   let completed = match
-    @exec.complete_native_goal_executor_dispatch(
+    @goal_host.complete_native_goal_executor_dispatch(
       config.project_dir,
       lease,
       outcome,
@@ -1360,19 +1361,21 @@ async fn conductor_run_leased_work_order_job(
   config : @types.Config,
   lease : @workflow.WorkOrderExecutorLease,
 ) -> Unit {
-  let observed = @exec.run_native_work_order_execution_job(
+  let observed = @work_order_host.run_native_work_order_execution_job(
     config.project_dir,
     lease,
     config.provider_capacity,
   )
   let outcome = match observed.0 {
-    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) =>
+    Ok(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle
+    ) =>
       @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickSucceeded(
         None,
         observed.1,
       )
     Ok(
-      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
         record
       )
     ) =>
@@ -1387,7 +1390,7 @@ async fn conductor_run_leased_work_order_job(
       )
   }
   let completed = match
-    @exec.complete_native_work_order_executor_dispatch(
+    @work_order_host.complete_native_work_order_executor_dispatch(
       config.project_dir,
       lease,
       outcome,
@@ -1406,7 +1409,7 @@ async fn conductor_run_leased_work_order_job(
   }
   match observed.0 {
     Ok(
-      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
         record
       )
     ) => {
@@ -1416,7 +1419,9 @@ async fn conductor_run_leased_work_order_job(
       ])
       conductor_publish_work_order_record(config, record)
     }
-    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) => ()
+    Ok(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle
+    ) => ()
     Err(error) =>
       @moontrace.error("WorkOrder execution job failed", fields=[
         @moontrace.field("work_order_id", lease.work_order_id.0),
@@ -1452,7 +1457,7 @@ async fn conductor_work_order_scheduler_loop(config : @types.Config) -> Unit {
     let mut consecutive_failures = 0
     for ;; {
       match
-        @exec.plan_native_work_order_executor_dispatches(
+        @work_order_host.plan_native_work_order_executor_dispatches(
           config.project_dir,
           config.work_order_executor_capacity,
         ) {
@@ -1506,7 +1511,7 @@ async fn conductor_goal_scheduler_loop(config : @types.Config) -> Unit {
     let mut consecutive_failures = 0
     for ;; {
       match
-        @exec.plan_native_goal_executor_dispatches(
+        @goal_host.plan_native_goal_executor_dispatches(
           config.project_dir,
           config.goal_executor_capacity,
         ) {
@@ -1634,12 +1639,12 @@ fn conductor_start_goal_worker(
   state : ConductorServerState,
   executable : String,
 ) -> Result[Int, @types.ChoirError] {
-  match @exec.mint_native_goal_fencing_epoch(state.config.project_dir) {
+  match @goal_host.mint_native_goal_fencing_epoch(state.config.project_dir) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   let pid = match
-    @exec.spawn_native_goal_worker(executable, state.config.project_dir) {
+    @process_host.spawn_native_goal_worker(executable, state.config.project_dir) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1721,7 +1726,7 @@ fn goal_worker_run() -> Unit {
     }
   }
   ignore(@sys.set_parent_death_signal_term())
-  match @exec.observe_native_goal_fencing_epoch(config.project_dir) {
+  match @goal_host.observe_native_goal_fencing_epoch(config.project_dir) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir run-goals: " + error.message() + "\n")
@@ -1800,9 +1805,9 @@ fn serve_run() -> Unit {
   conductor_statusline_deactivate_cache(config.project_dir)
   let control_state_prepared = Ref(false)
   @async.run_async_main(async fn() {
-    match @exec.prepare_native_goal_control_state(config.project_dir) {
+    match @goal_host.prepare_native_goal_control_state(config.project_dir) {
       Ok(
-        @exec.NativeGoalControlStatePreparation::NativeGoalControlStateReset(
+        @goal_host.NativeGoalControlStatePreparation::NativeGoalControlStateReset(
           report
         )
       ) => {
@@ -1824,7 +1829,7 @@ fn serve_run() -> Unit {
     if control_state_prepared.val {
       // Runtime roots outlive the Goals that made them. Reclaiming here means
       // an abandoned Goal costs one restart of disk, not a reboot.
-      match @exec.reclaim_native_goal_runtime_roots(config.project_dir) {
+      match @goal_host.reclaim_native_goal_runtime_roots(config.project_dir) {
         Ok(0) => ()
         Ok(removed) =>
           @sys.write_stdout(
@@ -1849,7 +1854,7 @@ fn serve_run() -> Unit {
   // written by older surviving processes are fenced once this generation
   // adopts them. Each worker generation mints again in
   // `conductor_start_goal_worker`; that is the value a worker observes.
-  match @exec.mint_native_goal_fencing_epoch(config.project_dir) {
+  match @goal_host.mint_native_goal_fencing_epoch(config.project_dir) {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir serve: " + error.message() + "\n")

@@ -338,7 +338,7 @@ test "exec root formatter is host-dangerous in tests" {
 }
 
 ///|
-test "allows only the four test-safe exec packages through every reference shape" {
+test "allows non-process exec packages through every test reference shape" {
   let source =
     #|async fn seam(
     #|  capture? : async (Config) -> Result[Observation, Error] = @git_integration.generate_native_promotion,
@@ -349,7 +349,9 @@ test "allows only the four test-safe exec packages through every reference shape
     #|  ignore(@test_support.hermetic_exec_violation_message("git status"))
     #|  let strip = @terminal.strip_terminal_responses
     #|  let adapters = { make: @part_adapter.goal_part_workflow_adapters }
+    #|  ignore(@storage_host.initialize_state_store(store))
     #|  ignore(@git_integration.generate_native_promotion(config, intent, injected))
+    #|  ignore(@beads_host.apply_native_bead_batch(root, proposal, injected))
     #|  ignore(strip)
     #|  ignore(adapters)
     #|}
@@ -359,6 +361,8 @@ test "allows only the four test-safe exec packages through every reference shape
     #|  "choir/src/exec/terminal",
     #|  "choir/src/exec/git_integration",
     #|  "choir/src/exec/part_adapter",
+    #|  "choir/src/exec/storage_host",
+    #|  "choir/src/exec/beads_host",
     #|}
   assert_eq(lint_source_with_manifest(source, manifest).length(), 0)
 }

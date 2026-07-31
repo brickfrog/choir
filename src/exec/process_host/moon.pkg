@@ -1,0 +1,25 @@
+import {
+  "choir/src/sys",
+  "choir/src/harness",
+  "choir/src/exec/test_support",
+  "choir/src/exec/terminal",
+  "choir/src/types",
+  "moonbitlang/async",
+  "moonbitlang/async/process",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
+  "moonbitlang/core/debug",
+}
+
+options(
+  "is-main": false,
+  "max-concurrent-tests": 1,
+  "native-stub": [ "stub.c" ],
+  targets: {
+    "process_native.mbt": [ "native" ],
+    "process_stub.mbt": [ "js", "wasm", "wasm-gc" ],
+    "interruptible_native.mbt": [ "native" ],
+    "interruptible_native_test.mbt": [ "native" ],
+    "process_test.mbt": [ "native" ],
+  },
+)
