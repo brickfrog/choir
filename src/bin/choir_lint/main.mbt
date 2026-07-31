@@ -35,6 +35,7 @@ fn cli_files() -> Array[String] {
   } else {
     collect_source_files("src", files)
   }
+  files.sort()
   files
 }
 
@@ -47,6 +48,7 @@ fn render_finding(finding : @lint.LintFinding) -> String {
 fn main {
   let files = cli_files()
   let mut failed = false
+  let sources : Array[@lint.LintSourceInput] = []
   for finding in @lint.lint_autonomy_documentation(@sys.read_file) {
     @sys.write_stderr(render_finding(finding))
     failed = true
@@ -58,18 +60,19 @@ fn main {
         @sys.write_stderr(render_finding(finding))
         failed = true
       }
-      continue
+    } else {
+      sources.push({ file, source })
     }
-    match @lint.lint_source(file, source) {
-      Ok(findings) =>
-        for finding in findings {
-          @sys.write_stderr(render_finding(finding))
-          failed = true
-        }
-      Err(err) => {
-        @sys.write_stderr(file + ": parse failed: " + err.message() + "\n")
+  }
+  match @lint.lint_sources(sources) {
+    Ok(findings) =>
+      for finding in findings {
+        @sys.write_stderr(render_finding(finding))
         failed = true
       }
+    Err(err) => {
+      @sys.write_stderr("parse failed: " + err.message() + "\n")
+      failed = true
     }
   }
   if failed {

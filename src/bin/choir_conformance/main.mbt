@@ -4394,6 +4394,7 @@ async fn run_goal_finish_command(args : Array[String]) -> Unit {
       project_dir,
       @control.GoalId(args[5]),
       @goal_host.synthetic_pull_request_forge_adapters(),
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     )
   } else {
     @goal_host.advance_native_goal_finalization(
@@ -4438,6 +4439,7 @@ async fn run_goal_tick_command(args : Array[String]) -> Unit {
       project_dir,
       @goal_host.synthetic_pull_request_forge_adapters(),
       beads_capture=@process_host.capture_command_merged,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     )
   } else {
     @goal_host.run_native_goal_execution_tick(project_dir)

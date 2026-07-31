@@ -65,11 +65,11 @@ pub async fn advance_native_goal_finalization_with_adapters(
   goal_id : @control.GoalId,
   forge : NativePullRequestForgeAdapters,
   fault? : @workflow.GoalFinalizationFaultPoint? = None,
-  reconcile_sources? : async (
+  reconcile_sources~ : async (
     String,
     @workflow.PartWorkflowRepository,
     @workflow.GoalExecutionRecord,
-  ) -> Result[Unit, @types.ChoirError] = reconcile_native_goal_delivery_sources,
+  ) -> Result[Unit, @types.ChoirError],
 ) -> Result[@workflow.GoalFinalizationTickOutcome, @types.ChoirError] {
   let repository = native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
@@ -236,6 +236,7 @@ pub async fn advance_native_goal_finalization(
     project_dir,
     goal_id,
     native_pull_request_forge_adapters(),
+    reconcile_sources=reconcile_native_goal_delivery_sources,
   )
 }
 

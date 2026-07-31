@@ -1,6 +1,16 @@
 ///|
+fn lint_single_source(
+  file : String,
+  source : String,
+  read_file? : (String) -> String = @sys.read_file,
+  path_exists? : (String) -> Bool = @sys.path_exists,
+) -> Result[Array[@lint.LintFinding], @types.ChoirError] {
+  lint_sources([{ file, source }], read_file~, path_exists~)
+}
+
+///|
 fn assert_single_rule(source : String, rule_id : String) -> Unit raise {
-  match lint_source("src/example/bad_test.mbt", source) {
+  match lint_single_source("src/example/bad_test.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, rule_id)
@@ -11,7 +21,7 @@ fn assert_single_rule(source : String, rule_id : String) -> Unit raise {
 
 ///|
 fn assert_has_rule(source : String, rule_id : String) -> Unit raise {
-  match lint_source("src/example/bad_test.mbt", source) {
+  match lint_single_source("src/example/bad_test.mbt", source) {
     Ok(findings) =>
       assert_true(findings.any(fn(finding) { finding.rule_id == rule_id }))
     Err(e) => fail(e.message())
@@ -23,7 +33,6 @@ fn lint_source_with_manifest(
   source : String,
   manifest : String,
 ) -> Array[@lint.LintFinding] {
-  let cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(Map([]))
   let read_file = fn(path) {
     if path == "src/example/moon.pkg" {
       manifest
@@ -31,12 +40,28 @@ fn lint_source_with_manifest(
       ""
     }
   }
-  lint_source(
-    "src/example/package_test.mbt",
-    source,
-    read_file~,
+  lint_single_source("src/example/package_test.mbt", source, read_file~, path_exists=fn(
+    path,
+  ) {
+    path == "src/example/moon.pkg"
+  }).unwrap()
+}
+
+///|
+fn lint_package_sources_with_manifest(
+  sources : Array[LintSourceInput],
+  manifest : String,
+) -> Array[@lint.LintFinding] {
+  lint_sources(
+    sources,
+    read_file=fn(path) {
+      if path == "src/example/moon.pkg" {
+        manifest
+      } else {
+        ""
+      }
+    },
     path_exists=fn(path) { path == "src/example/moon.pkg" },
-    package_alias_cache=cache,
   ).unwrap()
 }
 
@@ -147,7 +172,7 @@ test "does not loop on self-referential function alias" {
     #|  let f = f
     #|  ignore(f)
     #|}
-  match lint_source("src/example/cycle_test.mbt", source) {
+  match lint_single_source("src/example/cycle_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -162,7 +187,7 @@ test "flags one-hop helper call that reaches forbidden exec capture" {
     #|test "bad" {
     #|  ignore(helper_with_capture())
     #|}
-  match lint_source("src/bin/choir/uds_server.mbt", source) {
+  match lint_single_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-exec-capture")
@@ -184,7 +209,7 @@ test "flags two-hop helper call that reaches forbidden exec capture" {
     #|test "bad" {
     #|  ignore(helper_hop())
     #|}
-  match lint_source("src/bin/choir/uds_server.mbt", source) {
+  match lint_single_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-exec-capture")
@@ -197,18 +222,15 @@ test "flags two-hop helper call that reaches forbidden exec capture" {
 ///|
 test "does not flag helper that only parameterizes the capture function" {
   let source =
-    #|fn capture(_ : String) -> Unit {
-    #|  ignore(@exec.run_conductor_process(command, environment))
-    #|}
     #|fn helper_with_capture(
     #|  capture : (String) -> Unit,
     #|) {
     #|  ignore(capture("safe"))
     #|}
     #|test "ok" {
-    #|  ignore(helper_with_capture(capture))
+    #|  ignore(helper_with_capture(fn(_) { () }))
     #|}
-  match lint_source("src/exec/integration_native.mbt", source) {
+  match lint_single_source("src/exec/integration_native.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -231,7 +253,7 @@ test "does not flag helper calls shadowed by local and lambda bindings" {
     #|test "ok" {
     #|  helper_calls_shadowed_locals()
     #|}
-  match lint_source("src/bin/choir/uds_server.mbt", source) {
+  match lint_single_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -246,7 +268,7 @@ test "does not flag non-dangerous helper chains" {
     #|test "ok" {
     #|  ignore(safe_helper())
     #|}
-  match lint_source("src/bin/choir/uds_server.mbt", source) {
+  match lint_single_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -261,13 +283,241 @@ test "does not emit helper-chain findings from helper bodies" {
     #|fn helper_wrapper() {
     #|  helper_with_capture()
     #|}
-  match lint_source("src/example/helper_test.mbt", source) {
+  match lint_single_source("src/example/helper_test.mbt", source) {
     Ok(findings) =>
       assert_false(
         findings.any(fn(f) { f.message.contains("test calls helper") }),
       )
     Err(e) => fail(e.message())
   }
+}
+
+///|
+test "flags arbitrary multi-hop helpers across package files" {
+  let findings = lint_package_sources_with_manifest(
+    [
+      {
+        file: "src/example/native.mbt",
+        source: (
+          #|async fn launch_tool() {
+          #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+          #|}
+        ),
+      },
+      {
+        file: "src/example/wrapper.mbt",
+        source: (
+          #|async fn forward_request() {
+          #|  launch_tool()
+          #|}
+        ),
+      },
+      {
+        file: "src/example/wrapper_test.mbt",
+        source: (
+          #|async test "ordinary" {
+          #|  forward_request()
+          #|}
+        ),
+      },
+    ],
+    (
+      #|import {
+      #|  "moonbitlang/async/process",
+      #|}
+    ),
+  )
+  assert_eq(findings.length(), 1)
+  assert_eq(findings[0].rule_id, "test-direct-process")
+  assert_true(findings[0].message.contains("src/example/wrapper.mbt"))
+}
+
+///|
+test "propagates effects through aliases records and top-level values" {
+  let findings = lint_package_sources_with_manifest(
+    [
+      {
+        file: "src/example/native.mbt",
+        source: (
+          #|async fn launch_tool() {
+          #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+          #|}
+        ),
+      },
+      {
+        file: "src/example/wrappers.mbt",
+        source: (
+          #|fn alias_wrapper() {
+          #|  let run = launch_tool
+          #|  ignore(run)
+          #|}
+          #|fn record_wrapper() {
+          #|  ignore({ runner: launch_tool })
+          #|}
+        ),
+      },
+      {
+        file: "src/example/wrappers_test.mbt",
+        source: (
+          #|let launch_alias : async () -> Unit = launch_tool
+          #|test "ordinary" {
+          #|  alias_wrapper()
+          #|  record_wrapper()
+          #|  ignore(launch_alias)
+          #|}
+        ),
+      },
+    ],
+    (
+      #|import {
+      #|  "moonbitlang/async/process",
+      #|}
+    ),
+  )
+  assert_eq(findings.length(), 3)
+  assert_true(
+    findings.all(fn(finding) {
+      finding.rule_id == "test-direct-process" ||
+      finding.rule_id == "test-exec-reference"
+    }),
+  )
+}
+
+///|
+test "propagates effects through optional defaults across files" {
+  let findings = lint_package_sources_with_manifest(
+    [
+      {
+        file: "src/example/native.mbt",
+        source: (
+          #|async fn launch_tool() {
+          #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+          #|}
+        ),
+      },
+      {
+        file: "src/example/default.mbt",
+        source: (
+          #|fn run_default(
+          #|  run? : async () -> Unit = launch_tool,
+          #|) {
+          #|  ignore(run)
+          #|}
+        ),
+      },
+    ],
+    (
+      #|import {
+      #|  "moonbitlang/async/process",
+      #|}
+    ),
+  )
+  assert_true(
+    findings.any(fn(finding) { finding.rule_id == "exec-default-parameter" }),
+  )
+}
+
+///|
+test "respects local shadowing and capture-shaped safe names" {
+  let findings = lint_sources([
+    {
+      file: "src/example/helpers.mbt",
+      source: (
+        #|fn launch_tool() {
+        #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+        #|}
+        #|fn safe_wrapper(launch_tool : () -> Unit) {
+        #|  launch_tool()
+        #|}
+        #|fn capture_harmless() {
+        #|  ()
+        #|}
+      ),
+    },
+    {
+      file: "src/example/helpers_test.mbt",
+      source: (
+        #|test "safe" {
+        #|  safe_wrapper(fn() { () })
+        #|  capture_harmless()
+        #|  ignore(@other.capture_harmless)
+        #|}
+      ),
+    },
+  ]).unwrap()
+  assert_eq(findings.length(), 0)
+}
+
+///|
+test "propagates a seed through cycles but permits safe cycles" {
+  let findings = lint_sources([
+    {
+      file: "src/example/first.mbt",
+      source: (
+        #|fn first() {
+        #|  second()
+        #|}
+        #|fn safe_first() {
+        #|  safe_second()
+        #|}
+      ),
+    },
+    {
+      file: "src/example/second.mbt",
+      source: (
+        #|fn second() {
+        #|  first()
+        #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+        #|}
+        #|fn safe_second() {
+        #|  safe_first()
+        #|}
+      ),
+    },
+    {
+      file: "src/example/cycle_test.mbt",
+      source: (
+        #|test "cycle" {
+        #|  first()
+        #|  safe_first()
+        #|}
+      ),
+    },
+  ]).unwrap()
+  assert_eq(findings.length(), 1)
+  assert_eq(findings[0].rule_id, "test-direct-process")
+}
+
+///|
+test "coalesces target-specific implementations conservatively" {
+  let findings = lint_sources([
+    {
+      file: "src/example/platform_native.mbt",
+      source: (
+        #|fn platform_run() {
+        #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+        #|}
+      ),
+    },
+    {
+      file: "src/example/platform_stub.mbt",
+      source: (
+        #|fn platform_run() {
+        #|  ()
+        #|}
+      ),
+    },
+    {
+      file: "src/example/platform_test.mbt",
+      source: (
+        #|test "ordinary" {
+        #|  platform_run()
+        #|}
+      ),
+    },
+  ]).unwrap()
+  assert_eq(findings.length(), 1)
+  assert_eq(findings[0].rule_id, "test-direct-process")
 }
 
 ///|
@@ -279,7 +529,7 @@ test "allows helper-chain calls in explicit real exec integration tests" {
     #|async test "real exec integration: helper chain may use real exec" {
     #|  helper_with_capture()
     #|}
-  match lint_source("src/exec/exec_test.mbt", source) {
+  match lint_single_source("src/exec/exec_test.mbt", source) {
     Ok(findings) =>
       assert_false(
         findings.any(fn(f) { f.message.contains("test calls helper") }),
@@ -289,17 +539,16 @@ test "allows helper-chain calls in explicit real exec integration tests" {
 }
 
 ///|
-test "flags direct exec capture through exec and external helpers" {
+test "flags host exec calls without classifying external names" {
   let source =
     #|async test "bad" {
     #|  ignore(@exec.capture_stdout_with_cwd("gh", ["pr", "list"], None))
     #|  ignore(@other.capture_stdout_with_cwd("other-tool", ["status"], None))
     #|}
-  match lint_source("src/example/bad_test.mbt", source) {
+  match lint_single_source("src/example/bad_test.mbt", source) {
     Ok(findings) => {
-      assert_eq(findings.length(), 2)
+      assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-exec-capture")
-      assert_eq(findings[1].rule_id, "test-exec-capture")
     }
     Err(e) => fail(e.message())
   }
@@ -322,7 +571,7 @@ test "flags direct non-capture exec calls in tests" {
     #|async test "bad" {
     #|  ignore(@exec.run_conductor_process(command, environment))
     #|}
-  assert_single_rule(source, "test-exec-reference")
+  assert_single_rule(source, "test-exec-capture")
 }
 
 ///|
@@ -331,7 +580,7 @@ test "exec root formatter is host-dangerous in tests" {
     #|test "ok" {
     #|  ignore(@exec.hermetic_exec_violation_message("git status"))
     #|}
-  match lint_source("src/workflow/goal_runner_test.mbt", source) {
+  match lint_single_source("src/workflow/goal_runner_test.mbt", source) {
     Ok(findings) => assert_true(findings.length() > 0)
     Err(e) => fail(e.message())
   }
@@ -497,33 +746,45 @@ test "exec root injected APIs are host-dangerous in tests" {
     #|  ignore(@exec.observe_native_integration(config, intent, promotion, adapters))
     #|  ignore(@exec.goal_part_workflow_adapters(config))
     #|}
-  match lint_source("src/exec/injected_test.mbt", source) {
+  match lint_single_source("src/exec/injected_test.mbt", source) {
     Ok(findings) => assert_true(findings.length() > 0)
     Err(e) => fail(e.message())
   }
 }
 
 ///|
-test "flags unqualified exec capture in exec package tests" {
+test "flags unqualified effectful helpers across package files" {
+  let production =
+    #|async fn launch_tool() {
+    #|  ignore(@process.spawn_orphan("echo", ["ok"]))
+    #|}
   let source =
     #|async test "bad" {
-    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+    #|  launch_tool()
     #|}
-  assert_single_rule_for_file(
-    source, "src/exec/exec_test.mbt", "test-exec-capture",
-  )
+  let findings = lint_sources([
+    { file: "src/exec/process_native.mbt", source: production },
+    { file: "src/exec/process_test.mbt", source },
+  ]).unwrap()
+  assert_eq(findings.length(), 1)
+  assert_eq(findings[0].rule_id, "test-direct-process")
 }
 
 ///|
-test "allows explicitly tagged real exec integration tests" {
-  let source =
-    #|async test "real exec integration: capture_command_merged captures stdout" {
-    #|  ignore(capture_command_merged({ program: "echo", args: ["ok"], workdir: None }))
+test "allows explicitly tagged package-wide real exec integration tests" {
+  let production =
+    #|async fn launch_tool() {
+    #|  ignore(@process.spawn_orphan("echo", ["ok"]))
     #|}
-  match lint_source("src/exec/exec_test.mbt", source) {
-    Ok(findings) => assert_eq(findings.length(), 0)
-    Err(e) => fail(e.message())
-  }
+  let source =
+    #|async test "real exec integration: launch tool" {
+    #|  launch_tool()
+    #|}
+  let findings = lint_sources([
+    { file: "src/exec/process_native.mbt", source: production },
+    { file: "src/exec/process_test.mbt", source },
+  ]).unwrap()
+  assert_eq(findings.length(), 0)
 }
 
 ///|
@@ -532,7 +793,7 @@ test "allows explicitly tagged real exec integration helpers" {
     #|async test "real exec integration: workflow fixture" {
     #|  ignore(@exec.run_part_conformance_fixture("/tmp/fixture"))
     #|}
-  match lint_source("src/exec/workflow_conformance_test.mbt", source) {
+  match lint_single_source("src/exec/workflow_conformance_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -544,7 +805,7 @@ test "allows explicitly tagged real exec integration tests outside exec package"
     #|async test "real exec integration: process group fixture" {
     #|  ignore(@process.spawn_orphan("setsid", ["bash", "-c", "true"]))
     #|}
-  match lint_source("src/workflow/goal_runner.mbt", source) {
+  match lint_single_source("src/workflow/goal_runner.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -558,7 +819,7 @@ test "allows canonical real exec integration self-skip helper" {
     #|    return
     #|  }
     #|}
-  match lint_source("src/bin/choir/uds_server.mbt", source) {
+  match lint_single_source("src/bin/choir/uds_server.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -643,7 +904,7 @@ test "allows hazardous native ffi call from sanctioned seam" {
     #|fn clean_runtime() -> Unit {
     #|  @sys.init_cleanup_runtime_artifacts_native()
     #|}
-  match lint_source("src/bin/choir/main.mbt", source) {
+  match lint_single_source("src/bin/choir/main.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -665,7 +926,7 @@ test "does not flag git text without execution" {
     #|  let msg = "git -C /tmp/repo status"
     #|  assert_true(msg.contains("git"))
     #|}
-  match lint_source("src/example/text_test.mbt", source) {
+  match lint_single_source("src/example/text_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -677,7 +938,7 @@ fn assert_single_rule_for_file(
   file : String,
   rule_id : String,
 ) -> Unit raise {
-  match lint_source(file, source) {
+  match lint_single_source(file, source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, rule_id)
@@ -694,7 +955,7 @@ test "does not flag mocked git command comparisons" {
     #|    assert_true(true)
     #|  }
     #|}
-  match lint_source("src/exec/integration_native_test.mbt", source) {
+  match lint_single_source("src/exec/integration_native_test.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -706,7 +967,7 @@ test "does not apply test rules to production files" {
     #|fn run_git {
     #|  ignore(@process.spawn_orphan("git", ["status"]))
     #|}
-  match lint_source("src/exec/exec_native.mbt", source) {
+  match lint_single_source("src/exec/exec_native.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -723,7 +984,7 @@ test "parses with-fn trait impl emitted by moon fmt" {
     #|pub impl Show for Foo with fn output(self, logger) -> Unit {
     #|  logger.write_string("foo")
     #|}
-  match lint_source("src/example/foo.mbt", source) {
+  match lint_single_source("src/example/foo.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail("expected with-fn impl to parse cleanly: " + e.message())
   }
@@ -736,7 +997,7 @@ test "parses fn-keyword trait body emitted by moon fmt" {
     #|  fn machine_name(Self) -> String
     #|  fn can_exit(Self) -> Bool
     #|}
-  match lint_source("src/workflow/machine.mbt", source) {
+  match lint_single_source("src/workflow/machine.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) =>
       fail("expected fn-keyword trait body to parse cleanly: " + e.message())
@@ -752,7 +1013,7 @@ test "does not strip fn from nested function definitions outside trait bodies" {
     #|  }
     #|  helper(x)
     #|}
-  match lint_source("src/example/nested.mbt", source) {
+  match lint_single_source("src/example/nested.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail("nested fn should survive preprocessor: " + e.message())
   }
@@ -772,7 +1033,7 @@ test "preprocessor ignores trait header inside line comment" {
     #|  }
     #|  helper(x)
     #|}
-  match lint_source("src/example/commented_trait.mbt", source) {
+  match lint_single_source("src/example/commented_trait.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) =>
       fail(
@@ -793,7 +1054,7 @@ test "preprocessor ignores close-brace inside trait body comment" {
     #|  /// docs mention } syntax
     #|  fn m(Self) -> String
     #|}
-  match lint_source("src/example/braced_comment_trait.mbt", source) {
+  match lint_single_source("src/example/braced_comment_trait.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) =>
       fail(
@@ -821,7 +1082,7 @@ test "preprocessor masks trait header inside string literal" {
     #|  ignore(s)
     #|  helper(0)
     #|}
-  match lint_source("src/example/string_with_trait.mbt", source) {
+  match lint_single_source("src/example/string_with_trait.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) =>
       fail(
@@ -837,7 +1098,7 @@ test "wbtest top-level helpers are subject to test exec capture rules" {
     #|fn helper() -> Unit {
     #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
     #|}
-  match lint_source("src/example/fixture_wbtest.mbt", source) {
+  match lint_single_source("src/example/fixture_wbtest.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-exec-capture")
@@ -852,7 +1113,7 @@ test "wbtest real exec integration prefixed helpers are exempt" {
     #|fn real_exec_integration_fixture() -> Unit {
     #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
     #|}
-  match lint_source("src/example/fixture_wbtest.mbt", source) {
+  match lint_single_source("src/example/fixture_wbtest.mbt", source) {
     Ok(findings) => assert_eq(findings.length(), 0)
     Err(e) => fail(e.message())
   }
@@ -868,7 +1129,7 @@ test "wbtest ordinary helpers remain enforced beside real exec fixtures" {
     #|fn ordinary_fixture() -> Unit {
     #|  ignore(@exec.capture_command_merged({ program: "tool", args: [], cwd: None }))
     #|}
-  match lint_source("src/example/fixture_wbtest.mbt", source) {
+  match lint_single_source("src/example/fixture_wbtest.mbt", source) {
     Ok(findings) => {
       assert_eq(findings.length(), 1)
       assert_eq(findings[0].rule_id, "test-exec-capture")

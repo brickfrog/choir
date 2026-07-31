@@ -6008,6 +6008,11 @@ pub async fn run_native_goal_execution_tick_with_forge(
   },
   provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
   beads_capture~ : async (@process_host.Command) -> (Int, String),
+  reconcile_sources~ : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.GoalExecutionRecord,
+  ) -> Result[Unit, @types.ChoirError],
   goal_id? : @control.GoalId? = None,
   executor_slot? : Int = 0,
   observe? : (@workflow.ProviderSurfaceTickReport) -> Unit = fn(_) { () },
@@ -6185,6 +6190,7 @@ pub async fn run_native_goal_execution_tick_with_forge(
             project_dir,
             record.goal.id,
             forge,
+            reconcile_sources~,
           ) {
           Ok(value) => value
           Err(error) => return Err(error)
@@ -6344,6 +6350,11 @@ pub async fn run_native_goal_execution_job_with_forge(
   },
   provider_capacity? : @types.ProviderCapacityPolicy = @types.Config::default().provider_capacity,
   beads_capture~ : async (@process_host.Command) -> (Int, String),
+  reconcile_sources~ : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.GoalExecutionRecord,
+  ) -> Result[Unit, @types.ChoirError],
 ) -> (
   Result[@workflow.GoalExecutionTickResult, @types.ChoirError],
   Array[@workflow.ProviderSurfaceTickReport],
@@ -6377,6 +6388,7 @@ pub async fn run_native_goal_execution_job_with_forge(
     pull_request_delivery~,
     provider_capacity~,
     beads_capture~,
+    reconcile_sources~,
     goal_id=Some(lease.goal_id),
     executor_slot=lease.slot,
     observe=fn(report) {
@@ -6412,6 +6424,7 @@ pub async fn run_native_goal_execution_job(
     pull_request_delivery~,
     provider_capacity~,
     beads_capture=@process_host.capture_command_merged,
+    reconcile_sources=reconcile_native_goal_delivery_sources,
   )
 }
 
@@ -6486,6 +6499,7 @@ pub async fn run_native_goal_execution_tick(
     pull_request_delivery~,
     provider_capacity~,
     beads_capture=@process_host.capture_command_merged,
+    reconcile_sources=reconcile_native_goal_delivery_sources,
   )
 }
 
