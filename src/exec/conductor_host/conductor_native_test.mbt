@@ -49,14 +49,19 @@ async test "native Conductor pins the Beads CLI contract" {
     (0, "bd version 1.1.0 (8e4e59d39)\n")
   })
   assert_true(official_build is Ok(_))
+  let official_release = @beads_host.validate_native_beads_cli(capture=_ => {
+    (0, "bd version 1.1.0 (8e4e59d39: HEAD@8e4e59d39f34)\n")
+  })
+  assert_true(official_release is Ok(_))
   let drifted = @beads_host.validate_native_beads_cli(capture=_ => {
-    (0, "bd version 1.2.0 (8e4e59d39)\n")
+    (0, "bd version 1.2.0 (8e4e59d39: HEAD@8e4e59d39f34)\n")
   })
   assert_true(drifted is Err(_))
   for
     malformed in [
       "bd version 1.1.0 ()", "bd version 1.1.0 (not-a-revision)", "bd version 1.1.0 (ABCDEF0)",
-      "bd version 1.1.0 (8e4e59d39)\nextra",
+      "bd version 1.1.0 (8e4e59d39: HEAD@deadbeef)", "bd version 1.1.0 (8e4e59d39: head@8e4e59d39f34)",
+      "bd version 1.1.0 (8e4e59d39: HEAD@8e4e59d39f34)\nextra",
     ] {
     let rejected = @beads_host.validate_native_beads_cli(capture=_ => {
       (0, malformed)
