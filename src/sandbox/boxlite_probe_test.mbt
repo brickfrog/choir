@@ -241,3 +241,27 @@ test "one failed downstream case blocks otherwise passing evidence" {
     ),
   )
 }
+
+///|
+test "BoxLite probe environment starts from an explicit narrow map" {
+  let environment = @sandbox.boxlite_probe_environment_with_runtime(
+    "/tmp/probe",
+    Some("key"),
+    Some("/opt/choir/boxlite-runtime"),
+  )
+  assert_eq(environment.length(), 6)
+  assert_eq(environment["HOME"], "/tmp/probe")
+  assert_eq(environment["BOXLITE_API_KEY"], "key")
+  assert_eq(environment["BOXLITE_RUNTIME_DIR"], "/opt/choir/boxlite-runtime")
+  assert_false(environment.contains("SSH_AUTH_SOCK"))
+  assert_false(environment.contains("DOCKER_HOST"))
+}
+
+///|
+test "BoxLite state tokens stay path-component safe" {
+  assert_true(@sandbox.valid_boxlite_state_token("generation_A-42"))
+  assert_false(@sandbox.valid_boxlite_state_token(""))
+  assert_false(@sandbox.valid_boxlite_state_token("../generation"))
+  assert_false(@sandbox.valid_boxlite_state_token("generation.json"))
+  assert_false(@sandbox.valid_boxlite_state_token("a".repeat(181)))
+}

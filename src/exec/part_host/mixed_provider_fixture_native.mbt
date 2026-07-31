@@ -66,6 +66,41 @@ fn native_mixed_provider_record(
 }
 
 ///|
+fn native_mixed_provider_integration_input(
+  snapshot : @workflow.PartWorkflowSnapshot,
+  selection : @workflow.DeterministicPromotionSelection,
+) -> Result[@workflow.IntegrationPlanInput, @types.ChoirError] {
+  let key = @storage.artifact_digest(
+      @utf8.encode(
+        "choir.native-mixed-provider-promotion.v1\u{00}" +
+        snapshot.goal.id.0 +
+        "\u{00}" +
+        snapshot.part.id.0 +
+        "\u{00}" +
+        selection.candidate_id.0 +
+        "\u{00}" +
+        selection.expected_goal_head_oid.0,
+      ),
+    ).0
+  Ok({
+    lease: {
+      id: @control.IntegrationLeaseId("integration-lease-" + key),
+      goal_id: snapshot.goal.id,
+      fencing_epoch: snapshot.fencing_epoch,
+      holder: "choird",
+    },
+    intent_id: @control.IntegrationIntentId("integration-intent-" + key),
+    expected_goal_head_oid: selection.expected_goal_head_oid,
+    promotion_metadata_digest: @storage.artifact_digest(
+      @utf8.encode(
+        "choir.native-mixed-provider-promotion-metadata.v1\u{00}" + key,
+      ),
+    ),
+    git_witness_ref: "refs/choir/witness/" + key,
+  })
+}
+
+///|
 fn native_mixed_provider_accepted_part(
   decision : @workflow.GoalSelectionDecision,
   part_id : @control.PartId,
@@ -97,10 +132,10 @@ fn native_mixed_provider_stored_snapshot(
 
 ///|
 async fn cleanup_failed_native_mixed_provider_goal(
-  server : NativeBoxLiteServerHandle,
+  server : @take_host.NativeBoxLiteServerHandle,
   message : String,
 ) -> NativeMixedProviderGoalReport {
-  ignore(cleanup_native_boxlite_server(server))
+  ignore(@take_host.cleanup_native_boxlite_server(server))
   failed_native_mixed_provider_goal(message)
 }
 
@@ -342,7 +377,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
       return failed_native_mixed_provider_goal("sandbox MCP is unavailable")
   }
   let server = match
-    start_native_boxlite_server({
+    @take_host.start_native_boxlite_server({
       binary,
       runtime_dir,
       root,
@@ -359,7 +394,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
     clock.val
   }
   let prepared = match
-    prepare_native_boxlite_environment(
+    @take_host.prepare_native_boxlite_environment(
       server, moon_home, "choir-base-mixed-provider",
     ) {
     Ok(value) => value
@@ -419,6 +454,35 @@ pub async fn run_native_mixed_provider_goal_fixture(
       surface: accepted_codex.provider_surface,
     },
   ]
+  // Native Goal submission persists every accepted Part before the Goal
+  // scheduler can admit it. Seed the fixture at the same durable boundary so
+  // concurrent adapter passes exercise resume/reconciliation, not two
+  // competing first-write paths that production never exposes.
+  for part in parts {
+    let receipt = match
+      @workflow.persist_part_snapshot(
+        repository,
+        @storage_host.local_part_workflow_repository_adapters(),
+        {
+          snapshot: part.snapshot,
+          expected_store_version: None,
+          fault_point: None,
+        },
+      ) {
+      Ok(value) => value
+      Err(error) =>
+        return cleanup_failed_native_mixed_provider_goal(
+          active_server,
+          error.message(),
+        )
+    }
+    if receipt.transaction_outcome !=
+      @storage.StateTransactionOutcome::StateTransactionCommitted {
+      return cleanup_failed_native_mixed_provider_goal(
+        active_server, "accepted Part initialization conflicted",
+      )
+    }
+  }
   let integration : @git_integration.NativeGitIntegrationConfig = {
     repository_root: git.root,
     git_directory: git.git_directory,
@@ -429,144 +493,75 @@ pub async fn run_native_mixed_provider_goal_fixture(
   let active = @ref.new(0)
   let maximum_active = @ref.new(0)
   let sandbox_prepare_lock = @ref.new(false)
+  let config : @part_adapter.GoalPartWorkflowAdapterConfig = {
+    bindings: parts.map(fn(part) {
+      {
+        scheduling_record: native_mixed_provider_record(part.snapshot),
+        initial_snapshot: part.snapshot,
+        repository,
+      }
+    }),
+    repository_adapters: @storage_host.local_part_workflow_repository_adapters(),
+    dependencies: fn(part_id, admission) {
+      let part = match native_mixed_provider_part(parts, part_id) {
+        Some(value) => value
+        None => return Err(native_mixed_provider_error("Part is absent"))
+      }
+      Ok(
+        native_part_dependencies_with_admission(
+          repository,
+          part.runtime,
+          clock,
+          part.counts,
+          part.surface,
+          None,
+          Some(sandbox_prepare_lock),
+          fn(_) { None },
+          explicit_admission=Some(admission),
+        ),
+      )
+    },
+    integration_input: native_mixed_provider_integration_input,
+    plan_conflict_repair: fn(_) {
+      Ok(@workflow.PartConflictRepairDecision::PartConflictRepairLimitReached)
+    },
+    plan_audit_repair: fn(_) {
+      Ok(@workflow.PartAuditRepairDecision::PartAuditRepairLimitReached)
+    },
+    plan_verification_repair: fn(_) {
+      Ok(
+        @workflow.PartVerificationRepairDecision::PartVerificationRepairLimitReached,
+      )
+    },
+    plan_recovery_retry: fn(_) {
+      Ok(@workflow.PartRecoveryRetryDecision::PartRecoveryRetryRetained)
+    },
+    read_goal_head: async fn() {
+      @git_integration.read_native_goal_head(
+        integration,
+        @git_host.native_git_integration_adapters(),
+      )
+    },
+    release_provider_lease: fn(_) { Ok(()) },
+  }
+  let adapters = @part_adapter.goal_part_workflow_adapters(config)
   let result = match
     @workflow.run_goal_parts(
-      parts.map(fn(part) { native_mixed_provider_record(part.snapshot) }),
+      config.bindings.map(fn(binding) { binding.scheduling_record }),
       2,
       {
         advance_part: async fn(record) {
-          let part = match native_mixed_provider_part(parts, record.part.id) {
-            Some(value) => value
-            None => return Err(native_mixed_provider_error("Part is absent"))
-          }
           active.val = active.val + 1
           if active.val > maximum_active.val {
             maximum_active.val = active.val
           }
-          let run = @workflow.run_new_part_workflow(
-            repository,
-            @storage_host.local_part_workflow_repository_adapters(),
-            part.snapshot,
-            native_part_dependencies(
-              repository,
-              part.runtime,
-              clock,
-              part.counts,
-              part.surface,
-              None,
-              Some(sandbox_prepare_lock),
-              fn(_) { None },
-            ),
-          )
+          let run = (adapters.advance_part)(record)
           active.val = active.val - 1
-          let observed = match run {
-            Ok(value) => value
-            Err(error) => return Err(error)
-          }
-          if observed.outcome !=
-            @workflow.PartWorkflowRunOutcome::PartRunAwaitingPromotion {
-            return Err(
-              native_mixed_provider_error(
-                "Part " +
-                record.part.id.0 +
-                " did not stop at audited promotion admission: outcome=" +
-                observed.outcome.to_json().stringify(indent=0) +
-                " stage=" +
-                observed.snapshot.stage.to_json().stringify(indent=0) +
-                " verification=" +
-                native_part_verification_debug(repository, observed.snapshot) +
-                " audit=" +
-                native_part_audit_debug(repository, observed.snapshot),
-              ),
-            )
-          }
-          Ok(native_mixed_provider_record(observed.snapshot))
+          run
         },
-        read_goal_head: async fn() {
-          @git_integration.read_native_goal_head(
-            integration,
-            @git_host.native_git_integration_adapters(),
-          )
-        },
-        promote_part: async fn(record, selection) {
-          let part = match native_mixed_provider_part(parts, record.part.id) {
-            Some(value) => value
-            None => return Err(native_mixed_provider_error("Part is absent"))
-          }
-          let stored = match
-            native_mixed_provider_stored_snapshot(
-              repository,
-              part.snapshot.workflow_id,
-            ) {
-            Ok(value) => value
-            Err(error) => return Err(error)
-          }
-          let candidate_matches = match stored.candidate {
-            Some(value) => value.id == selection.candidate_id
-            None => false
-          }
-          let receipt_matches = match stored.audit_receipt {
-            Some(value) => value.receipt_id == selection.audit_receipt_id
-            None => false
-          }
-          if !candidate_matches || !receipt_matches {
-            return Err(
-              native_mixed_provider_error("promotion selection is stale"),
-            )
-          }
-          let promoted = match
-            @workflow.resume_part_workflow(
-              repository,
-              @storage_host.local_part_workflow_repository_adapters(),
-              part.snapshot.workflow_id,
-              native_part_dependencies(
-                repository,
-                part.runtime,
-                clock,
-                part.counts,
-                part.surface,
-                Some(selection.expected_goal_head_oid),
-                Some(sandbox_prepare_lock),
-                fn(_) { None },
-              ),
-            ) {
-            Ok(value) => value
-            Err(error) => return Err(error)
-          }
-          if promoted.outcome !=
-            @workflow.PartWorkflowRunOutcome::PartRunIntegrated {
-            return Err(
-              native_mixed_provider_error("Part promotion did not finish"),
-            )
-          }
-          Ok(native_mixed_provider_record(promoted.snapshot))
-        },
-        resume_promotion: async fn(record) {
-          let part = match native_mixed_provider_part(parts, record.part.id) {
-            Some(value) => value
-            None => return Err(native_mixed_provider_error("Part is absent"))
-          }
-          let resumed = match
-            @workflow.resume_part_workflow(
-              repository,
-              @storage_host.local_part_workflow_repository_adapters(),
-              part.snapshot.workflow_id,
-              native_part_dependencies(
-                repository,
-                part.runtime,
-                clock,
-                part.counts,
-                part.surface,
-                None,
-                Some(sandbox_prepare_lock),
-                fn(_) { None },
-              ),
-            ) {
-            Ok(value) => value
-            Err(error) => return Err(error)
-          }
-          Ok(native_mixed_provider_record(resumed.snapshot))
-        },
+        read_goal_head: adapters.read_goal_head,
+        promote_part: adapters.promote_part,
+        resume_promotion: adapters.resume_promotion,
       },
     ) {
     Ok(value) => value
@@ -660,7 +655,7 @@ pub async fn run_native_mixed_provider_goal_fixture(
   }
   let combined_tree_valid = claude_source.contains("-> Int { 2 }") &&
     codex_source.contains("-> Int { 20 }")
-  let counts_valid = effect_receipt_count == 24 &&
+  let counts_valid = effect_receipt_count == 26 &&
     verification_receipt_count == 2 &&
     audit_receipt_count == 2 &&
     integration_receipt_count == 2 &&
@@ -670,10 +665,35 @@ pub async fn run_native_mixed_provider_goal_fixture(
     codex_counts.implementation.val == 1 &&
     codex_counts.verification.val == 1 &&
     codex_counts.audit.val == 1
-  ignore(cleanup_native_boxlite_server(active_server))
+  ignore(@take_host.cleanup_native_boxlite_server(active_server))
   if !combined_tree_valid || !counts_valid {
     return failed_native_mixed_provider_goal(
-      "combined tree or durable receipt cardinality was invalid",
+      "combined tree or durable receipt cardinality was invalid: combined_tree=" +
+      combined_tree_valid.to_string() +
+      " effect_receipts=" +
+      effect_receipt_count.to_string() +
+      " verification_receipts=" +
+      verification_receipt_count.to_string() +
+      " audit_receipts=" +
+      audit_receipt_count.to_string() +
+      " integration_receipts=" +
+      integration_receipt_count.to_string() +
+      " claude_dispatches=" +
+      [
+        claude_counts.implementation.val,
+        claude_counts.verification.val,
+        claude_counts.audit.val,
+      ]
+      .to_json()
+      .stringify(indent=0) +
+      " codex_dispatches=" +
+      [
+        codex_counts.implementation.val,
+        codex_counts.verification.val,
+        codex_counts.audit.val,
+      ]
+      .to_json()
+      .stringify(indent=0),
     )
   }
   {

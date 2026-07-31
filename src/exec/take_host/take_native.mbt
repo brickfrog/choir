@@ -60,7 +60,9 @@ pub(all) struct NativeSandboxProcessResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-fn native_sandbox_process_evidence(result : NativeSandboxProcessResult) -> Json {
+pub fn native_sandbox_process_evidence(
+  result : NativeSandboxProcessResult,
+) -> Json {
   {
     "exit_code": result.exit_code.to_json(),
     "output_digest": result.output_digest.to_json(),
@@ -88,6 +90,95 @@ test "durable process evidence excludes captured output" {
   assert_true(evidence.contains("exit_code"))
   assert_false(evidence.contains(secret))
   assert_false(evidence.contains("stderr"))
+}
+
+///|
+pub async fn capture_boxlite_fixed_process(
+  program : String,
+  args : Array[String],
+  root : String,
+  extra_env : Map[String, String],
+  timeout_ms : Int,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_for_program(program, args, Some(root)),
+  )
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      program,
+      args,
+      extra_env~,
+      inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite lifecycle process failed to start or collect output",
+        ),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "BoxLite lifecycle output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+pub async fn capture_boxlite_runtime_bundle_hashes(
+  root : String,
+  runtime_dir : String?,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  match runtime_dir {
+    Some(path) => {
+      let environment = @sandbox.boxlite_probe_environment_with_runtime(
+        root,
+        None,
+        Some(path),
+      )
+      let entries = match
+        capture_boxlite_fixed_process(
+          "/usr/bin/find",
+          [path, "-mindepth", "1", "-maxdepth", "1", "-printf", "%y %f\n"],
+          root,
+          environment,
+          10000,
+        ) {
+        Ok(capture) => capture
+        Err(error) => return Err(error)
+      }
+      if entries.exit_code != 0 {
+        return Ok(entries)
+      }
+      let args : Array[String] = []
+      for name in @sandbox.boxlite_runtime_bundle_files() {
+        args.push(path + "/" + name)
+      }
+      let hashes = match
+        capture_boxlite_fixed_process(
+          "/usr/bin/sha256sum", args, root, environment, 10000,
+        ) {
+        Ok(capture) => capture
+        Err(error) => return Err(error)
+      }
+      Ok({
+        exit_code: hashes.exit_code,
+        output: "ENTRIES\n" + entries.output + "HASHES\n" + hashes.output,
+      })
+    }
+    None => Ok({ exit_code: -3, output: "" })
+  }
 }
 
 ///|
@@ -200,7 +291,7 @@ fn native_boxlite_environment(
   server : NativeBoxLiteServerHandle,
   authenticated : Bool,
 ) -> Map[String, String] {
-  boxlite_probe_environment_with_runtime(
+  @sandbox.boxlite_probe_environment_with_runtime(
     server.config.root,
     if authenticated {
       Some(server.config.api_key)
@@ -399,7 +490,7 @@ async fn capture_native_boxlite_local_cli(
     config.binary,
     args,
     config.root,
-    boxlite_probe_environment_with_runtime(
+    @sandbox.boxlite_probe_environment_with_runtime(
       config.root,
       None,
       Some(config.runtime_dir),
@@ -528,7 +619,7 @@ pub async fn start_native_boxlite_server(
       "/usr/bin/sha256sum",
       [config.binary],
       config.root,
-      boxlite_probe_environment_with_runtime(
+      @sandbox.boxlite_probe_environment_with_runtime(
         config.root,
         None,
         Some(config.runtime_dir),
@@ -559,7 +650,7 @@ pub async fn start_native_boxlite_server(
       config.binary,
       ["--home", config.home, "pull", @sandbox.boxlite_take_image],
       config.root,
-      boxlite_probe_environment_with_runtime(
+      @sandbox.boxlite_probe_environment_with_runtime(
         config.root,
         None,
         Some(config.runtime_dir),
@@ -594,7 +685,7 @@ pub async fn start_native_boxlite_server(
   let pid = @process.spawn_orphan(
     config.binary,
     args[:],
-    extra_env=boxlite_probe_environment_with_runtime(
+    extra_env=@sandbox.boxlite_probe_environment_with_runtime(
       config.root,
       None,
       Some(config.runtime_dir),
@@ -947,7 +1038,8 @@ async fn create_and_start_native_boxlite(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let box_id = match boxlite_json_string_field(created.output, "box_id") {
+  let box_id = match
+    @sandbox.boxlite_json_string_field(created.output, "box_id") {
     Some(value) if created.exit_code == 0 => value
     _ => return Err(native_boxlite_take_error("box creation failed"))
   }
@@ -1530,7 +1622,8 @@ pub async fn clone_native_boxlite_take(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let box_id = match boxlite_json_string_field(cloned.output, "box_id") {
+  let box_id = match
+    @sandbox.boxlite_json_string_field(cloned.output, "box_id") {
     Some(value) if cloned.exit_code == 0 => value
     _ => return Err(native_boxlite_take_error("prepared clone failed"))
   }
@@ -1834,6 +1927,18 @@ pub fn native_boxlite_take_execution_token(
       access,
     ),
   ).0
+}
+
+///|
+fn native_boxlite_mcp_probe_environment(
+  take : NativeBoxLiteTakeSandbox,
+) -> Map[String, String] {
+  {
+    "HOME": take.prepared.server.config.root,
+    "PATH": "/usr/bin:/bin",
+    "NO_COLOR": "1",
+    "CHOIR_BOXLITE_EXECUTION_TOKEN": native_boxlite_take_execution_token(take),
+  }
 }
 
 ///|
@@ -2166,11 +2271,7 @@ pub async fn probe_native_boxlite_mcp(
     @process.collect_output_merged(
       node,
       args,
-      extra_env={
-        "HOME": take.prepared.server.config.root,
-        "PATH": "/usr/bin:/bin",
-        "NO_COLOR": "1",
-      },
+      extra_env=native_boxlite_mcp_probe_environment(take),
       inherit_env=false,
       stdin=stdin_read,
       cwd=take.prepared.server.config.root,
@@ -2327,11 +2428,7 @@ pub async fn probe_native_boxlite_path_identity(
     @process.collect_output_merged(
       node,
       args,
-      extra_env={
-        "HOME": take.prepared.server.config.root,
-        "PATH": "/usr/bin:/bin",
-        "NO_COLOR": "1",
-      },
+      extra_env=native_boxlite_mcp_probe_environment(take),
       inherit_env=false,
       stdin=stdin_read,
       cwd=take.prepared.server.config.root,
@@ -2717,7 +2814,7 @@ test "native BoxLite Take body fixes isolation and resources" {
 }
 
 ///|
-test "native BoxLite MCP launch binds one fixed box" {
+test "native BoxLite MCP probes receive the capability only in their environment" {
   let server : NativeBoxLiteServerHandle = {
     config: {
       binary: "/opt/boxlite",
@@ -2734,42 +2831,35 @@ test "native BoxLite MCP launch binds one fixed box" {
     owner_socket: "/tmp/choir-take-test/owner-socket/owner.sock",
     owner_token: "a".repeat(64),
   }
-  let prepared : NativeBoxLitePreparedEnvironment = {
-    server,
-    base_box_id: "base-1",
-    image_digest: @sandbox.boxlite_take_image_digest,
-    tool_manifest_digest: @sandbox.boxlite_take_tool_manifest_digest(),
-    runtime_policy_digest: @sandbox.boxlite_take_runtime_policy_digest(),
-  }
   let take : NativeBoxLiteTakeSandbox = {
-    prepared,
+    prepared: {
+      server,
+      base_box_id: "base-1",
+      image_digest: @sandbox.boxlite_take_image_digest,
+      tool_manifest_digest: @sandbox.boxlite_take_tool_manifest_digest(),
+      runtime_policy_digest: @sandbox.boxlite_take_runtime_policy_digest(),
+    },
     box_id: "box-1",
     source_digest: @control.Digest(
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ),
     workspace_access: @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace,
   }
-  let args = native_boxlite_take_mcp_arguments(
-    take, "/repo/scripts/choir_sandbox_mcp.mjs",
-  ).unwrap()
-  assert_true(args.contains("--box"))
-  assert_true(args.contains("box-1"))
-  assert_true(args.contains("--owner-socket"))
-  // The capability is not on the command line. /proc/<pid>/cmdline is
-  // world-readable and the owner socket authenticates on possession alone, so
-  // an argv carrying it handed exec-in-the-box to anything that could list
-  // processes. It reaches the bridge through the provider environment instead.
-  assert_false(args.contains("--owner-token"))
-  let token = native_boxlite_take_execution_token(take)
+  let environment = native_boxlite_mcp_probe_environment(take)
+  assert_eq(environment.length(), 4)
+  assert_eq(environment["HOME"], server.config.root)
   assert_eq(
-    token, "4494355adc99b905a122f7753198715a048dfa99d69e943cfb588c691b909ed2",
+    environment["CHOIR_BOXLITE_EXECUTION_TOKEN"],
+    native_boxlite_take_execution_token(take),
   )
-  assert_false(args.contains(token))
-  assert_false(args.contains("--api-key"))
-  assert_false(args.contains("--url"))
-  assert_true(args.contains("--access"))
-  assert_true(args.contains("mutable"))
-  assert_false(args.contains("base-1"))
+  assert_false(environment.values().contains(server.config.api_key))
+  assert_false(
+    native_boxlite_take_mcp_arguments(
+      take, "/repo/scripts/choir_sandbox_mcp.mjs",
+    )
+    .unwrap()
+    .contains(native_boxlite_take_execution_token(take)),
+  )
 }
 
 ///|

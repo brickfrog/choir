@@ -232,7 +232,7 @@ fn native_work_order_planner_server_config(
   record : @workflow.WorkOrderRecord,
   round : @workflow.WorkOrderPlanningRound,
   executor_slot : Int,
-) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
+) -> Result[@take_host.NativeBoxLiteServerConfig, @types.ChoirError] {
   let key = native_work_order_runtime_key(record, round)
   let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
@@ -263,7 +263,7 @@ fn native_work_order_planner_server_config(
 ///|
 fn native_work_order_planner_session(
   attempt : @workflow.WorkOrderPlannerAttemptRecord,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
 ) -> Result[@control.HarnessSession, @types.ChoirError] {
   if sandbox.workspace_access !=
     @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject {
@@ -323,20 +323,21 @@ fn native_work_order_planner_session(
 
 ///|
 async fn cleanup_native_work_order_planner_runtime(
-  server : NativeBoxLiteServerHandle,
-  prepared : NativeBoxLitePreparedEnvironment?,
-  sandbox : NativeBoxLiteTakeSandbox?,
+  server : @take_host.NativeBoxLiteServerHandle,
+  prepared : @take_host.NativeBoxLitePreparedEnvironment?,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox?,
 ) -> Unit {
   match sandbox {
-    Some(value) => ignore(destroy_native_boxlite_take(value))
+    Some(value) => ignore(@take_host.destroy_native_boxlite_take(value))
     None => ()
   }
   match prepared {
-    Some(value) => ignore(destroy_native_boxlite_prepared_environment(value))
+    Some(value) =>
+      ignore(@take_host.destroy_native_boxlite_prepared_environment(value))
     None => ()
   }
-  stop_native_boxlite_server(server)
-  ignore(cleanup_native_boxlite_runtime_root(server.config))
+  @take_host.stop_native_boxlite_server(server)
+  ignore(@take_host.cleanup_native_boxlite_runtime_root(server.config))
 }
 
 ///|
@@ -388,7 +389,7 @@ async fn execute_native_work_order_planner(
     Err(error) => return Err(error)
   }
   if @sys.path_exists(server_config.root) {
-    match cleanup_native_boxlite_runtime_root(server_config) {
+    match @take_host.cleanup_native_boxlite_runtime_root(server_config) {
       Ok(_) => ()
       Err(error) => return Err(error)
     }
@@ -430,7 +431,7 @@ async fn execute_native_work_order_planner(
       native_work_order_planning_error("planner context staging failed"),
     )
   }
-  let server = match start_native_boxlite_server(server_config) {
+  let server = match @take_host.start_native_boxlite_server(server_config) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -446,7 +447,7 @@ async fn execute_native_work_order_planner(
       }
   }
   let prepared = match
-    prepare_native_boxlite_environment(
+    @take_host.prepare_native_boxlite_environment(
       server,
       moon_home,
       "choir-base-work-order-" + native_work_order_runtime_key(record, round),
@@ -458,7 +459,7 @@ async fn execute_native_work_order_planner(
     }
   }
   let mutable = match
-    clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       moon_home,
       "choir-" + native_work_order_runtime_key(record, round),
@@ -475,7 +476,8 @@ async fn execute_native_work_order_planner(
       return Err(error)
     }
   }
-  let sandbox = match seal_native_boxlite_assurance_subject(mutable) {
+  let sandbox = match
+    @take_host.seal_native_boxlite_assurance_subject(mutable) {
     Ok(value) => value
     Err(error) => {
       cleanup_native_work_order_planner_runtime(
@@ -521,7 +523,7 @@ async fn execute_native_work_order_planner(
     }
   }
   let arguments = match
-    native_boxlite_take_mcp_arguments(
+    @take_host.native_boxlite_take_mcp_arguments(
       sandbox,
       mcp_script,
       owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
@@ -577,7 +579,9 @@ async fn execute_native_work_order_planner(
             sterile_root: server_config.root + "/providers/claude",
             mcp_executable: node,
             mcp_arguments: arguments,
-            execution_token: native_boxlite_take_execution_token(sandbox),
+            execution_token: @take_host.native_boxlite_take_execution_token(
+              sandbox,
+            ),
             boxlite_owner_socket_root: Some(
               sandbox.prepared.server.owner_socket_root,
             ),
@@ -613,7 +617,9 @@ async fn execute_native_work_order_planner(
             sterile_root: server_config.root + "/providers/codex",
             mcp_executable: node,
             mcp_arguments: arguments,
-            execution_token: native_boxlite_take_execution_token(sandbox),
+            execution_token: @take_host.native_boxlite_take_execution_token(
+              sandbox,
+            ),
             boxlite_owner_socket_root: Some(
               sandbox.prepared.server.owner_socket_root,
             ),

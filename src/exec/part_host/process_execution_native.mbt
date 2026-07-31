@@ -14,7 +14,10 @@ enum NativeProcessFaultPoint {
 
 ///|
 priv struct NativeProcessExecutionAdapters {
-  execute : async () -> Result[NativeSandboxProcessResult, @types.ChoirError]
+  execute : async () -> Result[
+    @take_host.NativeSandboxProcessResult,
+    @types.ChoirError,
+  ]
   retire_generation : async () -> Result[Unit, @types.ChoirError]
   fault_enabled : (NativeProcessFaultPoint) -> Bool
 }
@@ -50,7 +53,7 @@ fn native_process_event_key(
 fn adopt_native_process_output(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
-  result : NativeSandboxProcessResult,
+  result : @take_host.NativeSandboxProcessResult,
 ) -> Result[Unit, @types.ChoirError] {
   let content = @utf8.encode(result.output)
   if @storage.artifact_digest(content) != result.output_digest {
@@ -233,7 +236,7 @@ fn persist_native_process_execution(
 }
 
 ///|
-fn native_process_execution_id(
+pub fn native_process_execution_id(
   effect_intent_id : @control.EffectId,
   discriminator : String,
 ) -> @sandbox.ProcessExecutionId {
@@ -329,7 +332,7 @@ async fn execute_durable_native_process_with(
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
   adapters : NativeProcessExecutionAdapters,
-) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+) -> Result[@take_host.NativeSandboxProcessResult, @types.ChoirError] {
   let planned = match
     planned_native_process_execution(
       effect_intent_id,
@@ -499,7 +502,7 @@ async fn execute_durable_native_process_with(
 }
 
 ///|
-async fn execute_durable_native_process(
+pub async fn execute_durable_native_process(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   fencing_epoch : @control.FencingEpoch,
@@ -507,10 +510,10 @@ async fn execute_durable_native_process(
   discriminator : String,
   take_id : @control.TakeId,
   lease : @control.SandboxLease,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
-) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+) -> Result[@take_host.NativeSandboxProcessResult, @types.ChoirError] {
   execute_durable_native_process_with(
     runtime,
     goal_id,
@@ -523,7 +526,7 @@ async fn execute_durable_native_process(
     process,
     {
       execute: async fn() {
-        execute_native_boxlite_process(
+        @take_host.execute_native_boxlite_process(
           sandbox,
           { goal_id, take_id, fencing_epoch },
           persisted_process_spec_digest,
@@ -532,7 +535,7 @@ async fn execute_durable_native_process(
         )
       },
       retire_generation: async fn() {
-        let result = destroy_native_boxlite_take(sandbox)
+        let result = @take_host.destroy_native_boxlite_take(sandbox)
         match result {
           Ok(_) => {
             runtime.sandboxes.remove(lease.generation_id.0)
@@ -552,10 +555,10 @@ async fn execute_durable_native_boxlite_process(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
   take_id : @control.TakeId,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
-) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+) -> Result[@take_host.NativeSandboxProcessResult, @types.ChoirError] {
   let lease = match
     native_process_lease(
       snapshot,
@@ -594,7 +597,7 @@ async fn reconcile_unadoptable_native_process(
 }
 
 ///|
-async fn reconcile_unadoptable_native_process_id(
+pub async fn reconcile_unadoptable_native_process_id(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   fencing_epoch : @control.FencingEpoch,
@@ -620,7 +623,7 @@ async fn reconcile_unadoptable_native_process_id(
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      match destroy_native_boxlite_take(sandbox) {
+      match @take_host.destroy_native_boxlite_take(sandbox) {
         Ok(_) => ()
         Err(error) => return Err(error)
       }
@@ -823,7 +826,10 @@ async test "process execution state persists and recovers every start boundary" 
   for index = 0; index < points.length(); index = index + 1 {
     let calls = @ref.new(0)
     let effect_id = @control.EffectId("process-fault-" + index.to_string())
-    let runner = async fn() {
+    let runner : async () -> Result[
+      @take_host.NativeSandboxProcessResult,
+      @types.ChoirError,
+    ] = async fn() {
       @async.sleep(0)
       calls.val = calls.val + 1
       Ok({

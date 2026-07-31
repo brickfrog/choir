@@ -25,7 +25,7 @@ priv struct NativePartFixtureRepository {
 }
 
 ///|
-priv struct NativePartDispatchCounts {
+pub(all) struct NativePartDispatchCounts {
   implementation : Ref[Int]
   verification : Ref[Int]
   audit : Ref[Int]
@@ -650,7 +650,7 @@ fn serialized_native_part_boxlite_effects(
 }
 
 ///|
-fn native_part_artifact_exists(
+pub fn native_part_artifact_exists(
   repository : @workflow.PartWorkflowRepository,
   reference : @control.ArtifactReference,
 ) -> Bool {
@@ -766,7 +766,7 @@ fn native_part_dependencies(
 }
 
 ///|
-fn native_part_dependencies_with_admission(
+pub fn native_part_dependencies_with_admission(
   repository : @workflow.PartWorkflowRepository,
   runtime : NativePartEffectRuntime,
   clock : Ref[Int64],
@@ -880,7 +880,7 @@ fn native_part_dependencies_with_admission(
 ///|
 fn native_part_runtime_config(
   repository : @workflow.PartWorkflowRepository,
-  server : NativeBoxLiteServerHandle,
+  server : @take_host.NativeBoxLiteServerHandle,
   git : NativePartFixtureRepository,
   moon_home : String,
   node : String,
@@ -902,9 +902,9 @@ fn native_part_runtime_config(
 }
 
 ///|
-fn native_part_runtime_config_for_paths(
+pub fn native_part_runtime_config_for_paths(
   repository : @workflow.PartWorkflowRepository,
-  server : NativeBoxLiteServerHandle,
+  server : @take_host.NativeBoxLiteServerHandle,
   repository_root : String,
   git_directory : String,
   object_directory : String,
@@ -1016,7 +1016,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }
   let server = match
-    start_native_boxlite_server({
+    @take_host.start_native_boxlite_server({
       binary,
       runtime_dir,
       root,
@@ -1038,7 +1038,7 @@ pub async fn run_native_part_lifecycle_fixture_for_surface(
   let first_runtime = match create_native_part_effect_runtime(first_config) {
     Ok(value) => value
     Err(error) => {
-      ignore(cleanup_native_boxlite_server(server))
+      ignore(@take_host.cleanup_native_boxlite_server(server))
       return failed_native_part_lifecycle(error.message())
     }
   }
@@ -1310,7 +1310,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
     None => return failed_native_part_lifecycle("sandbox MCP is unavailable")
   }
   let server = match
-    start_native_boxlite_server({
+    @take_host.start_native_boxlite_server({
       binary,
       runtime_dir,
       root,
@@ -1346,7 +1346,7 @@ async fn run_native_part_cancellation_fixture_for_surface(
   let runtime = match create_native_part_effect_runtime(config) {
     Ok(value) => value
     Err(error) => {
-      ignore(cleanup_native_boxlite_server(server))
+      ignore(@take_host.cleanup_native_boxlite_server(server))
       return failed_native_part_lifecycle(error.message())
     }
   }

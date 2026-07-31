@@ -163,77 +163,11 @@ async fn capture_boxlite_probe_operation(
 }
 
 ///|
-async fn capture_boxlite_fixed_process(
-  program : String,
-  args : Array[String],
-  root : String,
-  extra_env : Map[String, String],
-  timeout_ms : Int,
-) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  @process_host.abort_if_hermetic_test_exec(
-    @process_host.command_for_program(program, args, Some(root)),
-  )
-  let collected = @async.with_timeout_opt(timeout_ms, () => {
-    @process.collect_output_merged(
-      program,
-      args,
-      extra_env~,
-      inherit_env=false,
-      cwd=root,
-    )
-  }) catch {
-    _ =>
-      return Err(
-        @types.ChoirError::transport_error(
-          "BoxLite lifecycle process failed to start or collect output",
-        ),
-      )
-  }
-  match collected {
-    None => Ok({ exit_code: -2, output: "" })
-    Some((exit_code, data)) => {
-      let output = data.text() catch {
-        _ =>
-          return Err(
-            @types.ChoirError::transport_error(
-              "BoxLite lifecycle output was not UTF-8",
-            ),
-          )
-      }
-      Ok({ exit_code, output })
-    }
-  }
-}
-
-///|
-fn boxlite_probe_environment_with_runtime(
-  root : String,
-  api_key : String?,
-  runtime_dir : String?,
-) -> Map[String, String] {
-  let environment : Map[String, String] = {
-    "HOME": root,
-    "TMPDIR": root + "/tmp",
-    "PATH": "/usr/local/bin:/usr/bin:/bin",
-    "NO_COLOR": "1",
-  }
-  match api_key {
-    Some(value) => environment["BOXLITE_API_KEY"] = value
-    None => ()
-  }
-  match runtime_dir {
-    Some(value) => environment["BOXLITE_RUNTIME_DIR"] = value
-    None => ()
-  }
-  environment
-}
-
-///|
 fn boxlite_probe_environment(
   root : String,
   api_key : String?,
 ) -> Map[String, String] {
-  boxlite_probe_environment_with_runtime(
+  @sandbox.boxlite_probe_environment_with_runtime(
     root,
     api_key,
     @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR"),
@@ -247,7 +181,7 @@ async fn capture_boxlite_network_case(
   script : String,
   security_enabled : Bool,
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  capture_boxlite_fixed_process(
+  @take_host.capture_boxlite_fixed_process(
     binary,
     [
       "--home",
@@ -371,16 +305,6 @@ priv struct BoxLiteProbeServer {
 }
 
 ///|
-fn boxlite_json_string_field(body : String, key : String) -> String? {
-  let parsed = @json.parse(body) catch { _ => return None }
-  guard parsed is Object(fields) else { return None }
-  match fields.get(key) {
-    Some(String(value)) => Some(value)
-    _ => None
-  }
-}
-
-///|
 fn boxlite_pass_capture(marker : String) -> @sandbox.BoxLiteProbeCapture {
   { exit_code: 0, output: marker + "\n" }
 }
@@ -405,7 +329,7 @@ async fn capture_boxlite_curl(
   root : String,
   args : Array[String],
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  capture_boxlite_fixed_process(
+  @take_host.capture_boxlite_fixed_process(
     "/usr/bin/curl",
     args,
     root,
@@ -424,7 +348,7 @@ async fn capture_boxlite_authorized_http(
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
   capture_boxlite_curl(
     root,
-    boxlite_http_arguments(
+    @take_host.boxlite_http_arguments(
       server.api_key,
       server.url,
       http_method,
@@ -522,7 +446,7 @@ async fn capture_boxlite_remote_cli(
   for arg in command_args {
     args.push(arg)
   }
-  capture_boxlite_fixed_process(
+  @take_host.capture_boxlite_fixed_process(
     binary,
     args,
     root,
@@ -562,7 +486,7 @@ fn boxlite_create_body(name : String, network_disabled : Bool) -> String {
 
 ///|
 fn boxlite_clone_body(name : String) -> String {
-  boxlite_clone_request_body(name)
+  @take_host.boxlite_clone_request_body(name)
 }
 
 ///|
@@ -635,21 +559,6 @@ test "BoxLite copy commands target staging directories" {
 }
 
 ///|
-test "BoxLite probe environment starts from an explicit narrow map" {
-  let environment = boxlite_probe_environment_with_runtime(
-    "/tmp/probe",
-    Some("key"),
-    Some("/opt/choir/boxlite-runtime"),
-  )
-  assert_eq(environment.length(), 6)
-  assert_eq(environment["HOME"], "/tmp/probe")
-  assert_eq(environment["BOXLITE_API_KEY"], "key")
-  assert_eq(environment["BOXLITE_RUNTIME_DIR"], "/opt/choir/boxlite-runtime")
-  assert_false(environment.contains("SSH_AUTH_SOCK"))
-  assert_false(environment.contains("DOCKER_HOST"))
-}
-
-///|
 fn boxlite_lifecycle_failure_evidence(
   capture : @sandbox.BoxLiteProbeCapture,
   label : String,
@@ -712,7 +621,8 @@ async fn capture_boxlite_lifecycle_evidence(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let base_id = match boxlite_json_string_field(created.output, "box_id") {
+  let base_id = match
+    @sandbox.boxlite_json_string_field(created.output, "box_id") {
     Some(value) if created.exit_code == 0 => value
     _ =>
       return Ok(
@@ -796,7 +706,7 @@ async fn capture_boxlite_lifecycle_evidence(
     Err(error) => return Err(error)
   }
   let clone_a = match
-    boxlite_json_string_field(clone_a_capture.output, "box_id") {
+    @sandbox.boxlite_json_string_field(clone_a_capture.output, "box_id") {
     Some(value) if clone_a_capture.exit_code == 0 => value
     _ =>
       return Ok(
@@ -815,7 +725,7 @@ async fn capture_boxlite_lifecycle_evidence(
     Err(error) => return Err(error)
   }
   let clone_b = match
-    boxlite_json_string_field(clone_b_capture.output, "box_id") {
+    @sandbox.boxlite_json_string_field(clone_b_capture.output, "box_id") {
     Some(value) if clone_b_capture.exit_code == 0 => value
     _ =>
       return Ok(
@@ -1001,7 +911,7 @@ async fn capture_boxlite_lifecycle_evidence(
     Err(error) => return Err(error)
   }
   let execution_id = match
-    boxlite_json_string_field(execution.output, "execution_id") {
+    @sandbox.boxlite_json_string_field(execution.output, "execution_id") {
     Some(value) if execution.exit_code == 0 => value
     _ =>
       return Ok(
@@ -1031,7 +941,7 @@ async fn capture_boxlite_lifecycle_evidence(
     Err(error) => return Err(error)
   }
   let kill_execution_id = match
-    boxlite_json_string_field(kill_execution.output, "execution_id") {
+    @sandbox.boxlite_json_string_field(kill_execution.output, "execution_id") {
     Some(value) if kill_execution.exit_code == 0 => value
     _ =>
       return Ok(
@@ -1163,52 +1073,6 @@ fn merge_boxlite_downstream_evidence(
 }
 
 ///|
-async fn capture_boxlite_runtime_bundle_hashes(
-  root : String,
-  runtime_dir : String?,
-) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  match runtime_dir {
-    Some(path) => {
-      let environment = boxlite_probe_environment_with_runtime(
-        root,
-        None,
-        Some(path),
-      )
-      let entries = match
-        capture_boxlite_fixed_process(
-          "/usr/bin/find",
-          [path, "-mindepth", "1", "-maxdepth", "1", "-printf", "%y %f\n"],
-          root,
-          environment,
-          10000,
-        ) {
-        Ok(capture) => capture
-        Err(error) => return Err(error)
-      }
-      if entries.exit_code != 0 {
-        return Ok(entries)
-      }
-      let args : Array[String] = []
-      for name in @sandbox.boxlite_runtime_bundle_files() {
-        args.push(path + "/" + name)
-      }
-      let hashes = match
-        capture_boxlite_fixed_process(
-          "/usr/bin/sha256sum", args, root, environment, 10000,
-        ) {
-        Ok(capture) => capture
-        Err(error) => return Err(error)
-      }
-      Ok({
-        exit_code: hashes.exit_code,
-        output: "ENTRIES\n" + entries.output + "HASHES\n" + hashes.output,
-      })
-    }
-    None => Ok({ exit_code: -3, output: "" })
-  }
-}
-
-///|
 /// Execute only the fixed, pinned BoxLite release probe matrix.
 pub async fn capture_boxlite_live_evidence(
   dedicated_root : String,
@@ -1248,7 +1112,9 @@ pub async fn capture_boxlite_live_evidence(
   }
   let observed_hash = executable_hash.output.trim().to_owned()
   let runtime_bundle_hashes = match
-    capture_boxlite_runtime_bundle_hashes(dedicated_root, runtime_dir) {
+    @take_host.capture_boxlite_runtime_bundle_hashes(
+      dedicated_root, runtime_dir,
+    ) {
     Ok(capture) => capture
     Err(error) => return Err(error)
   }

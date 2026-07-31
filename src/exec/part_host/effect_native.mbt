@@ -24,7 +24,7 @@ pub(all) struct NativeSandboxResourceManifest {
 pub(all) struct NativePartEffectRuntimeConfig {
   repository : @workflow.PartWorkflowRepository
   repository_adapters : @workflow.PartWorkflowRepositoryAdapters
-  server : NativeBoxLiteServerHandle
+  server : @take_host.NativeBoxLiteServerHandle
   git_workspace : @git_host.NativeGitWorkspaceConfig
   git_integration : @git_integration.NativeGitIntegrationConfig
   moon_home : String
@@ -40,33 +40,14 @@ pub(all) struct NativePartEffectRuntimeConfig {
 ///|
 pub(all) struct NativePartEffectRuntime {
   config : NativePartEffectRuntimeConfig
-  server : Ref[NativeBoxLiteServerHandle]
-  prepared : Ref[NativeBoxLitePreparedEnvironment?]
-  sandboxes : Map[String, NativeBoxLiteTakeSandbox]
+  server : Ref[@take_host.NativeBoxLiteServerHandle]
+  prepared : Ref[@take_host.NativeBoxLitePreparedEnvironment?]
+  sandboxes : Map[String, @take_host.NativeBoxLiteTakeSandbox]
 }
 
 ///|
 fn native_part_effect_error(message : String) -> @types.ChoirError {
   @types.ChoirError::workspace_error("native Part effect: " + message)
-}
-
-///|
-fn valid_native_effect_token(value : String) -> Bool {
-  if value == "" || value.length() > 180 {
-    return false
-  }
-  for index = 0; index < value.length(); index = index + 1 {
-    let code = value[index].to_int()
-    let valid = (code >= 'a'.to_int() && code <= 'z'.to_int()) ||
-      (code >= 'A'.to_int() && code <= 'Z'.to_int()) ||
-      (code >= '0'.to_int() && code <= '9'.to_int()) ||
-      code == '_'.to_int() ||
-      code == '-'.to_int()
-    if !valid {
-      return false
-    }
-  }
-  true
 }
 
 ///|
@@ -125,7 +106,7 @@ fn native_artifact_exists(
 }
 
 ///|
-fn read_native_effect_artifact(
+pub fn read_native_effect_artifact(
   runtime : NativePartEffectRuntime,
   digest : @control.Digest,
   max_bytes : Int,
@@ -137,7 +118,7 @@ fn read_native_effect_artifact(
 }
 
 ///|
-fn adopt_native_effect_artifact(
+pub fn adopt_native_effect_artifact(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   content : Bytes,
@@ -166,7 +147,7 @@ fn adopt_native_effect_artifact(
 }
 
 ///|
-fn read_native_instruction(
+pub fn read_native_instruction(
   runtime : NativePartEffectRuntime,
   reference : @control.ArtifactReference,
 ) -> Result[String, @types.ChoirError] {
@@ -297,7 +278,7 @@ fn native_sandbox_registry_path(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
 ) -> Result[String, @types.ChoirError] {
-  if !valid_native_effect_token(generation_id.0) {
+  if !@sandbox.valid_boxlite_state_token(generation_id.0) {
     return Err(native_part_effect_error("sandbox generation is invalid"))
   }
   let root = native_sandbox_registry_root(runtime)
@@ -311,7 +292,7 @@ fn native_sandbox_registry_path(
 fn store_native_sandbox_resource(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
 ) -> Result[Unit, @types.ChoirError] {
   let path = match native_sandbox_registry_path(runtime, generation_id) {
     Ok(value) => value
@@ -347,7 +328,7 @@ fn store_native_sandbox_resource(
 fn read_native_sandbox_resource(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
-) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
+) -> Result[@take_host.NativeBoxLiteTakeSandbox, @types.ChoirError] {
   let path = match native_sandbox_registry_path(runtime, generation_id) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -364,8 +345,8 @@ fn read_native_sandbox_resource(
   }
   if manifest.version != 2 ||
     manifest.generation_id != generation_id ||
-    !valid_native_effect_token(manifest.base_box_id) ||
-    !valid_native_effect_token(manifest.box_id) ||
+    !@sandbox.valid_boxlite_state_token(manifest.base_box_id) ||
+    !@sandbox.valid_boxlite_state_token(manifest.box_id) ||
     manifest.image_digest != @sandbox.boxlite_take_image_digest ||
     manifest.tool_manifest_digest !=
     @sandbox.boxlite_take_tool_manifest_digest() ||
@@ -373,14 +354,14 @@ fn read_native_sandbox_resource(
     @sandbox.boxlite_take_runtime_policy_digest() {
     return Err(native_part_effect_error("sandbox registry identity is invalid"))
   }
-  let prepared : NativeBoxLitePreparedEnvironment = {
+  let prepared : @take_host.NativeBoxLitePreparedEnvironment = {
     server: runtime.server.val,
     base_box_id: manifest.base_box_id,
     image_digest: manifest.image_digest,
     tool_manifest_digest: manifest.tool_manifest_digest,
     runtime_policy_digest: manifest.runtime_policy_digest,
   }
-  let sandbox : NativeBoxLiteTakeSandbox = {
+  let sandbox : @take_host.NativeBoxLiteTakeSandbox = {
     prepared,
     box_id: manifest.box_id,
     source_digest: manifest.source_digest,
@@ -390,10 +371,10 @@ fn read_native_sandbox_resource(
 }
 
 ///|
-async fn native_runtime_sandbox(
+pub async fn native_runtime_sandbox(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
-) -> Result[NativeBoxLiteTakeSandbox, @types.ChoirError] {
+) -> Result[@take_host.NativeBoxLiteTakeSandbox, @types.ChoirError] {
   match runtime.sandboxes.get(generation_id.0) {
     Some(value) => return Ok(value)
     None => ()
@@ -402,7 +383,7 @@ async fn native_runtime_sandbox(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match inspect_native_boxlite_take(sandbox) {
+  match @take_host.inspect_native_boxlite_take(sandbox) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -504,7 +485,7 @@ test "implementation sandbox selects the contract base after repair" {
 }
 
 ///|
-async fn prepare_native_source_sandbox(
+pub async fn prepare_native_source_sandbox(
   runtime : NativePartEffectRuntime,
   lease : @control.SandboxLease,
   commit_oid : @control.GitOid,
@@ -523,7 +504,7 @@ async fn prepare_native_source_sandbox(
     Some(value) => value
     None => {
       let value = match
-        prepare_native_boxlite_environment(
+        @take_host.prepare_native_boxlite_environment(
           runtime.server.val,
           runtime.config.moon_home,
           "choir-base-" +
@@ -550,7 +531,7 @@ async fn prepare_native_source_sandbox(
     Err(error) => return Err(error)
   }
   let mutable_sandbox = match
-    clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       runtime.config.moon_home,
       "choir-" + lease.generation_id.0,
@@ -561,7 +542,7 @@ async fn prepare_native_source_sandbox(
     Err(error) => return Err(error)
   }
   let sandbox = if read_only_subject {
-    match seal_native_boxlite_assurance_subject(mutable_sandbox) {
+    match @take_host.seal_native_boxlite_assurance_subject(mutable_sandbox) {
       Ok(value) => value
       Err(error) => return Err(error)
     }
@@ -582,10 +563,10 @@ async fn prepare_native_source_sandbox(
 fn native_claude_config(
   runtime : NativePartEffectRuntime,
   session : @control.HarnessSession,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
 ) -> Result[@provider_host.NativeClaudeDriverConfig, @types.ChoirError] {
   let arguments = match
-    native_boxlite_take_mcp_arguments(
+    @take_host.native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
       owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
@@ -597,7 +578,7 @@ fn native_claude_config(
     sterile_root: runtime.config.claude_root + session.id.0,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
-    execution_token: native_boxlite_take_execution_token(sandbox),
+    execution_token: @take_host.native_boxlite_take_execution_token(sandbox),
     boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
@@ -615,11 +596,11 @@ fn native_claude_config(
 fn native_codex_config(
   runtime : NativePartEffectRuntime,
   session : @control.HarnessSession,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
 ) -> Result[@provider_host.NativeCodexDriverConfig, @types.ChoirError] {
   let sterile_root = runtime.config.codex_root + session.id.0
   let arguments = match
-    native_boxlite_take_mcp_arguments(
+    @take_host.native_boxlite_take_mcp_arguments(
       sandbox,
       runtime.config.sandbox_mcp_script,
       owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
@@ -631,7 +612,7 @@ fn native_codex_config(
     sterile_root,
     mcp_executable: runtime.config.node_executable,
     mcp_arguments: arguments,
-    execution_token: native_boxlite_take_execution_token(sandbox),
+    execution_token: @take_host.native_boxlite_take_execution_token(sandbox),
     boxlite_owner_socket_root: Some(sandbox.prepared.server.owner_socket_root),
     mcp_server_name: "choir_sandbox",
     allowed_tools: match sandbox.workspace_access {
@@ -646,20 +627,20 @@ fn native_codex_config(
 }
 
 ///|
-priv enum NativeTakeRole {
+pub(all) enum NativeTakeRole {
   NativeImplementationTake
   NativeAuditTake
 }
 
 ///|
-enum NativeTakeOutcome {
+pub(all) enum NativeTakeOutcome {
   NativeImplementationCompleted
   NativeAuditPassed
   NativeAuditFindings(Int, Int)
 } derive(Eq, ToJson)
 
 ///|
-priv struct NativeProviderResult {
+pub(all) struct NativeProviderResult {
   session : @control.HarnessSession
   events : Array[@control.HarnessEventEnvelope]
   terminal_response : String
@@ -669,10 +650,10 @@ priv struct NativeProviderResult {
 }
 
 ///|
-async fn run_native_part_provider_take(
+pub async fn run_native_part_provider_take(
   runtime : NativePartEffectRuntime,
   session : @control.HarnessSession,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
   role : NativeTakeRole,
   instruction : String,
 ) -> Result[NativeProviderResult, @types.ChoirError] {
@@ -769,7 +750,7 @@ async fn run_native_part_provider_take(
 }
 
 ///|
-fn start_native_part_harness(
+pub fn start_native_part_harness(
   session : @control.HarnessSession,
 ) -> Result[@control.HarnessSession, @types.ChoirError] {
   match session.surface {
@@ -781,14 +762,14 @@ fn start_native_part_harness(
 }
 
 ///|
-async fn store_native_take_result(
+pub async fn store_native_take_result(
   runtime : NativePartEffectRuntime,
   goal_id : @control.GoalId,
   take_id : @control.TakeId,
   sandbox_generation_id : @control.SandboxGenerationId,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
 ) -> Result[@control.ArtifactReference, @types.ChoirError] {
-  let result_root = match copy_native_boxlite_take_result(sandbox) {
+  let result_root = match @take_host.copy_native_boxlite_take_result(sandbox) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -796,7 +777,8 @@ async fn store_native_take_result(
     "/results/" +
     sandbox.box_id +
     "/workspace"
-  if result_root != expected_root || !valid_native_effect_token(sandbox.box_id) {
+  if result_root != expected_root ||
+    !@sandbox.valid_boxlite_state_token(sandbox.box_id) {
     return Err(native_part_effect_error("Take result identity is invalid"))
   }
   let manifest : NativeTakeResultManifest = {
@@ -815,7 +797,7 @@ async fn store_native_take_result(
 }
 
 ///|
-fn read_native_take_result_manifest(
+pub fn read_native_take_result_manifest(
   runtime : NativePartEffectRuntime,
   reference : @control.ArtifactReference,
 ) -> Result[NativeTakeResultManifest, @types.ChoirError] {
@@ -831,7 +813,7 @@ fn read_native_take_result_manifest(
     _ => return Err(native_part_effect_error("Take result schema is invalid"))
   }
   if manifest.version != 1 ||
-    !valid_native_effect_token(manifest.result_key) ||
+    !@sandbox.valid_boxlite_state_token(manifest.result_key) ||
     manifest.source_digest.0.length() != 64 {
     Err(native_part_effect_error("Take result manifest is invalid"))
   } else {
@@ -840,7 +822,7 @@ fn read_native_take_result_manifest(
 }
 
 ///|
-fn native_take_result_root(
+pub fn native_take_result_root(
   runtime : NativePartEffectRuntime,
   manifest : NativeTakeResultManifest,
 ) -> String {
@@ -1006,7 +988,7 @@ fn decode_native_verification_process(
 
 ///|
 pub fn native_prepared_environment_digest(
-  prepared : NativeBoxLitePreparedEnvironment,
+  prepared : @take_host.NativeBoxLitePreparedEnvironment,
 ) -> @control.Digest {
   @storage.artifact_digest(
     @utf8.encode(
@@ -1024,11 +1006,11 @@ async fn native_post_take_tree(
   snapshot : @workflow.PartWorkflowSnapshot,
   take_id : @control.TakeId,
   sandbox_generation_id : @control.SandboxGenerationId,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
   candidate : @control.CandidateCommit,
   suffix : String,
 ) -> Result[@control.GitOid, @types.ChoirError] {
-  match cleanup_native_boxlite_assurance_subject(sandbox) {
+  match @take_host.cleanup_native_boxlite_assurance_subject(sandbox) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -1169,7 +1151,7 @@ async fn execute_native_verification(
   let evidence_fields : Map[String, Json] = {
     "subject": subject.to_json(),
     "process_spec_digest": snapshot.task_contract.verification_specs[0].process_spec_digest.to_json(),
-    "process_result": native_sandbox_process_evidence(process_result),
+    "process_result": @take_host.native_sandbox_process_evidence(process_result),
     "pre_tree": candidate.tree_oid.to_json(),
     "post_tree": post_tree.to_json(),
   }
@@ -1501,7 +1483,8 @@ async fn reconcile_unwitnessed_native_part_effect(
           }
         Ok(_) => {
           let name = "choir-" + lease.generation_id.0
-          match lookup_native_boxlite_named_box(runtime.server.val, name) {
+          match
+            @take_host.lookup_native_boxlite_named_box(runtime.server.val, name) {
             Ok(NativeBoxLiteNamedBoxAbsent) =>
               Ok(@workflow.PartEffectRecovery::ExactEffectRetryAuthorized)
             Ok(
@@ -1586,5 +1569,5 @@ pub fn native_part_effect_adapters(
 pub async fn cleanup_native_part_effect_runtime(
   runtime : NativePartEffectRuntime,
 ) -> Result[Unit, @types.ChoirError] {
-  cleanup_native_boxlite_server(runtime.server.val)
+  @take_host.cleanup_native_boxlite_server(runtime.server.val)
 }

@@ -41,8 +41,8 @@ priv struct NativeOrphanedGoalSourceClaim {
 ///|
 priv struct NativeGoalPartRuntime {
   snapshot : @workflow.PartWorkflowSnapshot
-  runtime : NativePartEffectRuntime
-  counts : NativePartDispatchCounts
+  runtime : @part_host.NativePartEffectRuntime
+  counts : @part_host.NativePartDispatchCounts
   surface : @control.ProviderSurfaceId
 }
 
@@ -1726,7 +1726,7 @@ fn native_existing_sandbox_generation(
   path_exists : (String) -> Bool,
 ) -> @control.SandboxGenerationId? {
   for generation_id in generations {
-    if valid_native_effect_token(generation_id.0) &&
+    if @sandbox.valid_boxlite_state_token(generation_id.0) &&
       path_exists(
         runtime_root + "/state/sandboxes/" + generation_id.0 + ".json",
       ) {
@@ -1975,7 +1975,7 @@ test "Goal executor ports retain process identity and distinct bounded slots" {
 fn native_goal_boxlite_server_config(
   record : @workflow.GoalExecutionRecord,
   executor_slot? : Int = 0,
-) -> Result[NativeBoxLiteServerConfig, @types.ChoirError] {
+) -> Result[@take_host.NativeBoxLiteServerConfig, @types.ChoirError] {
   let port = match native_goal_executor_port(executor_slot) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -2034,7 +2034,7 @@ async fn cleanup_native_goal_runtime_identity(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  cleanup_native_boxlite_runtime_root({
+  @take_host.cleanup_native_boxlite_runtime_root({
     binary,
     runtime_dir,
     root: runtime_root,
@@ -3119,7 +3119,7 @@ async fn execute_native_goal_record(
   // A runtime that has registered nothing yet is the normal state right after a
   // rebuild, and discarding it there rebuilds it again on the next tick forever.
   if disposition is NativeGoalRuntimeStale {
-    match cleanup_native_boxlite_runtime(server_config) {
+    match @take_host.cleanup_native_boxlite_runtime(server_config) {
       Ok(_) => ()
       Err(error) => return Err(error)
     }
@@ -3144,7 +3144,7 @@ async fn execute_native_goal_record(
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
-  let server = match start_native_boxlite_server(server_config) {
+  let server = match @take_host.start_native_boxlite_server(server_config) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3152,14 +3152,14 @@ async fn execute_native_goal_record(
     Some(_) => (server, None)
     None =>
       match
-        prepare_native_boxlite_environment(
+        @take_host.prepare_native_boxlite_environment(
           server,
           moon_home,
           "choir-base-goal-" + runtime_key,
         ) {
         Ok(value) => (value.server, Some(value))
         Err(error) => {
-          ignore(cleanup_native_boxlite_server(server))
+          ignore(@take_host.cleanup_native_boxlite_server(server))
           return Err(error)
         }
       }
@@ -3187,16 +3187,16 @@ async fn execute_native_goal_record(
     let surface = snapshot.identities.implementation_session.surface
     if snapshot.identities.audit_session.surface != surface {
       match existing_generation {
-        Some(_) => stop_native_boxlite_server(active_server)
-        None => ignore(cleanup_native_boxlite_server(active_server))
+        Some(_) => @take_host.stop_native_boxlite_server(active_server)
+        None => ignore(@take_host.cleanup_native_boxlite_server(active_server))
       }
       return Err(
         native_goal_execution_error("Part provider assignment drifted"),
       )
     }
     let runtime = match
-      create_native_part_effect_runtime(
-        native_part_runtime_config_for_paths(
+      @part_host.create_native_part_effect_runtime(
+        @part_host.native_part_runtime_config_for_paths(
           repository,
           active_server,
           git.root,
@@ -3213,8 +3213,9 @@ async fn execute_native_goal_record(
       Ok(value) => value
       Err(error) => {
         match existing_generation {
-          Some(_) => stop_native_boxlite_server(active_server)
-          None => ignore(cleanup_native_boxlite_server(active_server))
+          Some(_) => @take_host.stop_native_boxlite_server(active_server)
+          None =>
+            ignore(@take_host.cleanup_native_boxlite_server(active_server))
         }
         return Err(error)
       }
@@ -3232,8 +3233,8 @@ async fn execute_native_goal_record(
   }
   if parts.length() == 0 {
     match existing_generation {
-      Some(_) => stop_native_boxlite_server(active_server)
-      None => ignore(cleanup_native_boxlite_server(active_server))
+      Some(_) => @take_host.stop_native_boxlite_server(active_server)
+      None => ignore(@take_host.cleanup_native_boxlite_server(active_server))
     }
     return Err(native_goal_execution_error("Goal has no Part runtimes"))
   }
@@ -3242,15 +3243,16 @@ async fn execute_native_goal_record(
     None =>
       match existing_generation {
         Some(generation_id) =>
-          match native_runtime_sandbox(parts[0].runtime, generation_id) {
+          match
+            @part_host.native_runtime_sandbox(parts[0].runtime, generation_id) {
             Ok(value) => value.prepared
             Err(error) => {
-              stop_native_boxlite_server(active_server)
+              @take_host.stop_native_boxlite_server(active_server)
               return Err(error)
             }
           }
         None => {
-          stop_native_boxlite_server(active_server)
+          @take_host.stop_native_boxlite_server(active_server)
           return Err(
             native_goal_execution_error("Goal runtime preparation is absent"),
           )
@@ -3286,7 +3288,7 @@ async fn execute_native_goal_record(
         None =>
           return Err(native_goal_execution_error("Part runtime is absent"))
       }
-      let dependencies = native_part_dependencies_with_admission(
+      let dependencies = @part_host.native_part_dependencies_with_admission(
         repository,
         part.runtime,
         clock,
@@ -3354,13 +3356,13 @@ async fn execute_native_goal_record(
       // A successful pass may still be nonterminal. Preserve the Goal-scoped
       // runtime and its sandbox-generation witnesses for the next pass;
       // terminal finalization and cancellation own destructive cleanup.
-      stop_native_boxlite_server(prepared.server)
+      @take_host.stop_native_boxlite_server(prepared.server)
       released
     }
     Err(error) => {
       // The authorized effect may still be retriable on the next tick. Keep
       // its persisted sandbox generation while releasing live processes.
-      stop_native_boxlite_server(prepared.server)
+      @take_host.stop_native_boxlite_server(prepared.server)
       Err(error)
     }
   }
@@ -3743,7 +3745,9 @@ async fn persist_native_cancellation_observation(
     intent,
     observation,
     observed_at,
-    fn(reference) { native_part_artifact_exists(repository, reference) },
+    fn(reference) {
+      @part_host.native_part_artifact_exists(repository, reference)
+    },
     fn(_) { true },
   )
 }
@@ -6100,7 +6104,7 @@ async fn advance_native_goal_assurance_attempt(
                 observation,
                 observed_at,
                 fn(reference) {
-                  native_part_artifact_exists(repository, reference)
+                  @part_host.native_part_artifact_exists(repository, reference)
                 },
               ) {
               Ok(value) => value
@@ -6856,7 +6860,7 @@ async fn cleanup_native_goal_runtime_at_key(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let config : NativeBoxLiteServerConfig = {
+  let config : @take_host.NativeBoxLiteServerConfig = {
     binary,
     runtime_dir,
     root: temporary_root + "/" + native_goal_runtime_root_prefix + key,
@@ -6865,9 +6869,9 @@ async fn cleanup_native_goal_runtime_at_key(
     api_key: "choir-goal-" + key,
   }
   if repository_boxes_may_be_removed {
-    cleanup_native_boxlite_runtime(config)
+    @take_host.cleanup_native_boxlite_runtime(config)
   } else {
-    cleanup_native_boxlite_runtime_root(config)
+    @take_host.cleanup_native_boxlite_runtime_root(config)
   }
 }
 

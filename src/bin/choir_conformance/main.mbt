@@ -776,7 +776,9 @@ async fn run_claude_live_cancellation() -> Int {
     }
   }
   let workflow_root = "/tmp/choir-take-claude-cancel-matrix-" + discriminator
-  let workflow = @exec.run_native_claude_cancellation_fixture(workflow_root)
+  let workflow = @part_host.run_native_claude_cancellation_fixture(
+    workflow_root,
+  )
   ignore(@sys.rm_rf(workflow_root))
   let passed = workflow.passed &&
     workflow.implementation_dispatches_before_restart == 1 &&
@@ -2195,7 +2197,7 @@ async fn run_codex_live_cancellation() -> Int {
     }
   }
   let boxlite_root = "/tmp/choir-take-cancel-matrix-" + discriminator
-  let boxlite = @exec.run_native_codex_cancellation_fixture(boxlite_root)
+  let boxlite = @part_host.run_native_codex_cancellation_fixture(boxlite_root)
   ignore(@sys.rm_rf(boxlite_root))
   let disabled = @harness.codex_take_disabled_features()
   disabled.sort()
@@ -3510,14 +3512,14 @@ async fn run_boxlite_live() -> Int {
 
 ///|
 async fn exercise_boxlite_take(
-  server : @exec.NativeBoxLiteServerHandle,
-  active_server : @ref.Ref[@exec.NativeBoxLiteServerHandle],
+  server : @take_host.NativeBoxLiteServerHandle,
+  active_server : @ref.Ref[@take_host.NativeBoxLiteServerHandle],
   moon_home : String,
   source : @git_host.NativeGitWorkspaceSource,
   git_config : @git_host.NativeGitWorkspaceConfig,
 ) -> Result[Map[String, Json], @types.ChoirError] {
   let prepared = match
-    @exec.prepare_native_boxlite_environment(
+    @take_host.prepare_native_boxlite_environment(
       server,
       moon_home,
       "choir-take-base-" + @sys.get_pid().to_string(),
@@ -3527,7 +3529,7 @@ async fn exercise_boxlite_take(
   }
   active_server.val = prepared.server
   let take = match
-    @exec.clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       moon_home,
       "choir-take-live-" + @sys.get_pid().to_string(),
@@ -3538,7 +3540,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   active_server.val = take.prepared.server
-  let inspected = match @exec.inspect_native_boxlite_take(take) {
+  let inspected = match @take_host.inspect_native_boxlite_take(take) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3549,7 +3551,8 @@ async fn exercise_boxlite_take(
         @types.ChoirError::workspace_error("sandbox MCP bridge is unavailable"),
       )
   }
-  let arguments = match @exec.native_boxlite_take_mcp_arguments(take, script) {
+  let arguments = match
+    @take_host.native_boxlite_take_mcp_arguments(take, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3578,7 +3581,7 @@ async fn exercise_boxlite_take(
   if owner_mode_capture.0 != 0 ||
     owner_mode.trim() != "600" ||
     arguments.length() != 7 ||
-    arguments.contains(@exec.native_boxlite_take_execution_token(take)) ||
+    arguments.contains(@take_host.native_boxlite_take_execution_token(take)) ||
     arguments.contains(take.prepared.server.owner_token) ||
     arguments.contains(take.prepared.server.config.api_key) ||
     arguments.contains(take.prepared.server.url) ||
@@ -3599,7 +3602,8 @@ async fn exercise_boxlite_take(
         ),
       )
   }
-  let bridge_probe = match @exec.probe_native_boxlite_mcp(take, node, script) {
+  let bridge_probe = match
+    @take_host.probe_native_boxlite_mcp(take, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3612,12 +3616,12 @@ async fn exercise_boxlite_take(
     )
   }
   let path_identity_probe = match
-    @exec.probe_native_boxlite_path_identity(take, node, script) {
+    @take_host.probe_native_boxlite_path_identity(take, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let host_after = @sys.read_file(host_path)
-  let result_root = match @exec.copy_native_boxlite_take_result(take) {
+  let result_root = match @take_host.copy_native_boxlite_take_result(take) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3735,7 +3739,7 @@ async fn exercise_boxlite_take(
     )
   }
   let assurance_mutable = match
-    @exec.clone_native_boxlite_take(
+    @take_host.clone_native_boxlite_take(
       prepared,
       moon_home,
       "choir-assurance-live-" + @sys.get_pid().to_string(),
@@ -3746,7 +3750,7 @@ async fn exercise_boxlite_take(
     Err(error) => return Err(error)
   }
   let assurance = match
-    @exec.seal_native_boxlite_assurance_subject(assurance_mutable) {
+    @take_host.seal_native_boxlite_assurance_subject(assurance_mutable) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3791,7 +3795,7 @@ async fn exercise_boxlite_take(
     @utf8.encode(assurance_process.to_json().stringify(indent=0)),
   )
   let assurance_process_result = match
-    @exec.execute_native_boxlite_process(
+    @take_host.execute_native_boxlite_process(
       assurance,
       {
         goal_id: @control.GoalId("assurance-live-goal"),
@@ -3814,16 +3818,16 @@ async fn exercise_boxlite_take(
     )
   }
   let assurance_probe = match
-    @exec.probe_native_boxlite_mcp(assurance, node, script) {
+    @take_host.probe_native_boxlite_mcp(assurance, node, script) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match @exec.cleanup_native_boxlite_assurance_subject(assurance) {
+  match @take_host.cleanup_native_boxlite_assurance_subject(assurance) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   let assurance_result = match
-    @exec.copy_native_boxlite_take_result(assurance) {
+    @take_host.copy_native_boxlite_take_result(assurance) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -3843,11 +3847,11 @@ async fn exercise_boxlite_take(
       @types.ChoirError::workspace_error("read-only assurance subject changed"),
     )
   }
-  match @exec.destroy_native_boxlite_take(take) {
+  match @take_host.destroy_native_boxlite_take(take) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  match @exec.destroy_native_boxlite_take(assurance) {
+  match @take_host.destroy_native_boxlite_take(assurance) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -3981,7 +3985,7 @@ async fn run_boxlite_take_live() -> Int {
       }
   }
   let server = match
-    @exec.start_native_boxlite_server({
+    @take_host.start_native_boxlite_server({
       binary,
       runtime_dir,
       root,
@@ -4002,7 +4006,7 @@ async fn run_boxlite_take_live() -> Int {
   )
   let owner_pid = active_server.val.owner_pid
   let runtime_pid = active_server.val.pid
-  let cleanup = @exec.cleanup_native_boxlite_server(active_server.val)
+  let cleanup = @take_host.cleanup_native_boxlite_server(active_server.val)
   let owner_stopped = !@sys.pgid_has_non_zombie_process(owner_pid)
   let runtime_stopped = !@sys.pgid_has_non_zombie_process(runtime_pid)
   let host_head_after = capture_live_git(repository_root, [
@@ -4167,7 +4171,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     }
     "native-part-lifecycle" => {
       let root = "/tmp/choir-take-native-part-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_part_lifecycle_fixture(root)
+      let report = @part_host.run_native_part_lifecycle_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4175,7 +4179,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-part-lifecycle" => {
       let root = "/tmp/choir-take-native-codex-part-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_codex_part_lifecycle_fixture(root)
+      let report = @part_host.run_native_codex_part_lifecycle_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4183,7 +4187,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-claude-cancellation" => {
       let root = "/tmp/choir-take-native-claude-cancel-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_claude_cancellation_fixture(root)
+      let report = @part_host.run_native_claude_cancellation_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4191,21 +4195,21 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     "native-codex-cancellation" => {
       let root = "/tmp/choir-take-native-codex-cancel-" +
         @sys.get_pid().to_string()
-      let report = @exec.run_native_codex_cancellation_fixture(root)
+      let report = @part_host.run_native_codex_cancellation_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "mixed-provider-goal" => {
       let root = "/tmp/choir-take-mixed-provider-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_mixed_provider_goal_fixture(root)
+      let report = @part_host.run_native_mixed_provider_goal_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     }
     "parallel-promotion" => {
       let root = "/tmp/choir-goal-conformance-" + @sys.get_pid().to_string()
-      let report = @exec.run_native_goal_conformance_fixture(root)
+      let report = @part_host.run_native_goal_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })

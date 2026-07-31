@@ -11,6 +11,8 @@ import {
   "choir/src/exec/process_host",
   "choir/src/exec/git_host",
   "choir/src/exec/provider_host",
+  "choir/src/exec/take_host",
+  "choir/src/exec/part_host",
   "choir/src/sandbox",
   "choir/src/storage",
   "choir/src/types",
@@ -48,8 +50,5 @@ options(
     "goal_publication_native.mbt": [ "native" ],
     "goal_pull_request_native.mbt": [ "native" ],
     "goal_finalization_native.mbt": [ "native" ],
-    "boxlite_take_native.mbt": [ "native" ],
-    "part_effect_native.mbt": [ "native" ],
-    "part_lifecycle_native.mbt": [ "native" ],
   },
 )

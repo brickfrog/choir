@@ -5,7 +5,7 @@ async fn create_native_goal_assurance_runtime(
   git : NativeGoalRepositoryIdentity,
   assurance : @workflow.GoalAssuranceRecord,
   executor_slot : Int,
-) -> Result[NativePartEffectRuntime, @types.ChoirError] {
+) -> Result[@part_host.NativePartEffectRuntime, @types.ChoirError] {
   let runtime_key = native_goal_runtime_key(
     execution.repository_id,
     execution.goal.id,
@@ -39,7 +39,7 @@ async fn create_native_goal_assurance_runtime(
     Some(value) => value
     None => return Err(native_goal_execution_error("sandbox MCP is absent"))
   }
-  let server = match start_native_boxlite_server(server_config) {
+  let server = match @take_host.start_native_boxlite_server(server_config) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -85,21 +85,21 @@ async fn create_native_goal_assurance_runtime(
     Some(_) => (server, None)
     None =>
       match
-        prepare_native_boxlite_environment(
+        @take_host.prepare_native_boxlite_environment(
           server,
           moon_home,
           "choir-base-goal-" + runtime_key,
         ) {
         Ok(value) => (value.server, Some(value))
         Err(error) => {
-          stop_native_boxlite_server(server)
+          @take_host.stop_native_boxlite_server(server)
           return Err(error)
         }
       }
   }
   let runtime = match
-    create_native_part_effect_runtime(
-      native_part_runtime_config_for_paths(
+    @part_host.create_native_part_effect_runtime(
+      @part_host.native_part_runtime_config_for_paths(
         repository,
         active_server,
         git.root,
@@ -115,7 +115,7 @@ async fn create_native_goal_assurance_runtime(
     ) {
     Ok(value) => value
     Err(error) => {
-      stop_native_boxlite_server(active_server)
+      @take_host.stop_native_boxlite_server(active_server)
       return Err(error)
     }
   }
@@ -124,10 +124,10 @@ async fn create_native_goal_assurance_runtime(
     None =>
       match existing_generation {
         Some(generation_id) =>
-          match native_runtime_sandbox(runtime, generation_id) {
+          match @part_host.native_runtime_sandbox(runtime, generation_id) {
             Ok(_) => ()
             Err(error) => {
-              stop_native_boxlite_server(runtime.server.val)
+              @take_host.stop_native_boxlite_server(runtime.server.val)
               return Err(error)
             }
           }
@@ -152,12 +152,16 @@ fn native_goal_assurance_session(
 
 ///|
 fn decode_native_goal_verification_process(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   take_id : @control.TakeId,
   spec : @control.VerificationSpec,
 ) -> Result[@sandbox.SandboxProcessSpec, @types.ChoirError] {
   let content = match
-    read_native_effect_artifact(runtime, spec.process_spec_digest, 65536) {
+    @part_host.read_native_effect_artifact(
+      runtime,
+      spec.process_spec_digest,
+      65536,
+    ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -187,7 +191,7 @@ fn decode_native_goal_verification_process(
 
 ///|
 fn native_goal_assurance_task_summary(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
 ) -> Result[String, @types.ChoirError] {
   let stored_execution = match
@@ -220,7 +224,7 @@ fn native_goal_assurance_task_summary(
       return Err(native_goal_execution_error("Part assurance state is stale"))
     }
     let instruction = match
-      read_native_instruction(
+      @part_host.read_native_instruction(
         runtime,
         snapshot.task_contract.instruction_artifact,
       ) {
@@ -245,23 +249,23 @@ fn native_goal_assurance_task_summary(
 
 ///|
 async fn native_goal_assurance_post_tree(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
   take_id : @control.TakeId,
   sandbox_generation_id : @control.SandboxGenerationId,
-  sandbox : NativeBoxLiteTakeSandbox,
+  sandbox : @take_host.NativeBoxLiteTakeSandbox,
   suffix : String,
 ) -> Result[@control.GitOid, @types.ChoirError] {
   let seal = match record.seal {
     Some(value) => value
     None => return Err(native_goal_execution_error("Goal seal is absent"))
   }
-  match cleanup_native_boxlite_assurance_subject(sandbox) {
+  match @take_host.cleanup_native_boxlite_assurance_subject(sandbox) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
   let artifact = match
-    store_native_take_result(
+    @part_host.store_native_take_result(
       runtime,
       record.goal_id,
       take_id,
@@ -271,7 +275,8 @@ async fn native_goal_assurance_post_tree(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let manifest = match read_native_take_result_manifest(runtime, artifact) {
+  let manifest = match
+    @part_host.read_native_take_result_manifest(runtime, artifact) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -281,7 +286,7 @@ async fn native_goal_assurance_post_tree(
       suffix + "-" + take_id.0,
       seal.head_oid,
       manifest.source_digest,
-      native_take_result_root(runtime, manifest),
+      @part_host.native_take_result_root(runtime, manifest),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -316,7 +321,7 @@ fn native_goal_assurance_active_lease(
 
 ///|
 async fn execute_native_goal_verification(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
   intent : @workflow.GoalAssuranceEffectIntent,
   take_id : @control.TakeId,
@@ -327,7 +332,7 @@ async fn execute_native_goal_verification(
     return Err(native_goal_execution_error("verification subject is stale"))
   }
   let sandbox = match
-    native_runtime_sandbox(
+    @part_host.native_runtime_sandbox(
       runtime,
       record.identities.verification_sandbox.generation_id,
     ) {
@@ -344,7 +349,7 @@ async fn execute_native_goal_verification(
     Err(error) => return Err(error)
   }
   let processes : Array[
-    (@control.VerificationSpec, NativeSandboxProcessResult, Int64),
+    (@control.VerificationSpec, @take_host.NativeSandboxProcessResult, Int64),
   ] = []
   for spec in record.verification_specs {
     let process = match
@@ -353,7 +358,7 @@ async fn execute_native_goal_verification(
       Err(error) => return Err(error)
     }
     let result = match
-      execute_durable_native_process(
+      @part_host.execute_durable_native_process(
         runtime,
         record.goal_id,
         record.fencing_epoch,
@@ -397,12 +402,12 @@ async fn execute_native_goal_verification(
     let evidence_fields : Map[String, Json] = {
       "subject": subject.to_json(),
       "verification_spec": entry.0.to_json(),
-      "process_result": native_sandbox_process_evidence(entry.1),
+      "process_result": @take_host.native_sandbox_process_evidence(entry.1),
       "pre_tree": subject.goal_tree_oid.to_json(),
       "post_tree": post_tree.to_json(),
     }
     let evidence = match
-      adopt_native_effect_artifact(
+      @part_host.adopt_native_effect_artifact(
         runtime,
         record.goal_id,
         @utf8.encode(evidence_fields.to_json().stringify(indent=0)),
@@ -417,7 +422,7 @@ async fn execute_native_goal_verification(
         "goal-verification-" + take_id.0 + "-" + entry.0.id.0,
       ),
       verification_spec: entry.0,
-      environment_and_image_digest: native_prepared_environment_digest(
+      environment_and_image_digest: @part_host.native_prepared_environment_digest(
         sandbox.prepared,
       ),
       runtime_and_policy_digest: sandbox.prepared.runtime_policy_digest,
@@ -430,7 +435,7 @@ async fn execute_native_goal_verification(
     })
   }
   let evidence_manifest = match
-    adopt_native_effect_artifact(
+    @part_host.adopt_native_effect_artifact(
       runtime,
       record.goal_id,
       @utf8.encode(evidence_references.to_json().stringify(indent=0)),
@@ -451,7 +456,7 @@ async fn execute_native_goal_verification(
 
 ///|
 async fn execute_native_goal_audit(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
   take_id : @control.TakeId,
   session_id : @control.HarnessSessionId,
@@ -465,7 +470,7 @@ async fn execute_native_goal_audit(
     Err(error) => return Err(error)
   }
   let sandbox = match
-    native_runtime_sandbox(runtime, session.sandbox_generation_id) {
+    @part_host.native_runtime_sandbox(runtime, session.sandbox_generation_id) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -481,7 +486,7 @@ async fn execute_native_goal_audit(
     task_summary +
     "\nInspect cross-Part interactions, the exact declared checks, and the final combined result. Report every concrete finding attributable to this sealed tree. Do not modify the workspace."
   let provider = match
-    run_native_part_provider_take(
+    @part_host.run_native_part_provider_take(
       runtime,
       session,
       sandbox,
@@ -524,7 +529,7 @@ async fn execute_native_goal_audit(
     None
   } else {
     match
-      adopt_native_effect_artifact(
+      @part_host.adopt_native_effect_artifact(
         runtime,
         record.goal_id,
         @utf8.encode(provider.terminal_response),
@@ -559,7 +564,7 @@ async fn execute_native_goal_audit(
 
 ///|
 async fn execute_native_goal_assurance_effect(
-  runtime : NativePartEffectRuntime,
+  runtime : @part_host.NativePartEffectRuntime,
   record : @workflow.GoalAssuranceRecord,
   intent : @workflow.GoalAssuranceEffectIntent,
 ) -> Result[@workflow.GoalAssuranceEffectObservation, @types.ChoirError] {
@@ -570,7 +575,7 @@ async fn execute_native_goal_assurance_effect(
   match intent.kind {
     @workflow.GoalAssuranceEffectKind::PrepareGoalVerificationSandbox(lease) =>
       match
-        prepare_native_source_sandbox(
+        @part_host.prepare_native_source_sandbox(
           runtime,
           lease,
           seal.head_oid,
@@ -587,7 +592,7 @@ async fn execute_native_goal_assurance_effect(
       }
     @workflow.GoalAssuranceEffectKind::PrepareGoalAuditSandbox(lease) =>
       match
-        prepare_native_source_sandbox(
+        @part_host.prepare_native_source_sandbox(
           runtime,
           lease,
           seal.head_oid,
@@ -603,7 +608,7 @@ async fn execute_native_goal_assurance_effect(
         Err(error) => Err(error)
       }
     @workflow.GoalAssuranceEffectKind::StartGoalAuditHarness(session) =>
-      match start_native_part_harness(session) {
+      match @part_host.start_native_part_harness(session) {
         Ok(value) =>
           Ok(
             @workflow.GoalAssuranceEffectObservation::GoalAuditHarnessStarted(
@@ -647,14 +652,14 @@ async fn execute_native_goal_assurance_effect_once(
   let result = execute_native_goal_assurance_effect(runtime, record, intent)
   let mut stop_error : @types.ChoirError? = None
   for sandbox in runtime.sandboxes.values() {
-    match stop_native_boxlite_take(sandbox) {
+    match @take_host.stop_native_boxlite_take(sandbox) {
       Ok(_) => ()
       Err(error) => stop_error = Some(error)
     }
   }
   // Each durable effect gets a fresh host process, while its stopped VM and
   // disk remain available for exact re-adoption by the next effect.
-  stop_native_boxlite_server(runtime.server.val)
+  @take_host.stop_native_boxlite_server(runtime.server.val)
   match result {
     Err(error) => Err(error)
     Ok(value) =>
@@ -686,15 +691,15 @@ async fn reconcile_native_goal_processes_once(
     @workflow.GoalAssuranceEffectKind::DispatchGoalVerification(_, _) =>
       for spec in record.verification_specs {
         let value = match
-          reconcile_unadoptable_native_process_id(
+          @part_host.reconcile_unadoptable_native_process_id(
             runtime,
             record.goal_id,
             record.fencing_epoch,
-            native_process_execution_id(intent.effect_id, spec.id.0),
+            @part_host.native_process_execution_id(intent.effect_id, spec.id.0),
           ) {
           Ok(result) => result
           Err(error) => {
-            stop_native_boxlite_server(runtime.server.val)
+            @take_host.stop_native_boxlite_server(runtime.server.val)
             return Err(error)
           }
         }
@@ -704,12 +709,12 @@ async fn reconcile_native_goal_processes_once(
   }
   let mut stop_error : @types.ChoirError? = None
   for sandbox in runtime.sandboxes.values() {
-    match stop_native_boxlite_take(sandbox) {
+    match @take_host.stop_native_boxlite_take(sandbox) {
       Ok(_) => ()
       Err(error) => stop_error = Some(error)
     }
   }
-  stop_native_boxlite_server(runtime.server.val)
+  @take_host.stop_native_boxlite_server(runtime.server.val)
   match stop_error {
     Some(error) => Err(error)
     None => Ok(uncertain)
