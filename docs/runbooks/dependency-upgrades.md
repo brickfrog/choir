@@ -500,6 +500,7 @@ moon run --target native src/bin/choir_conformance -- harness --surface codex-cl
 ```sh
 moon run --target native src/bin/choir_conformance -- conductor --start-live
 moon run --target native src/bin/choir_conformance -- conductor --reconnect-live
+moon run --target native src/bin/choir_conformance -- conductor --security-live
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-part-lifecycle
 moon run --target native src/bin/choir_conformance -- e2e --fixture native-codex-cancellation
 ```

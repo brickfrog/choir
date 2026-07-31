@@ -351,19 +351,6 @@ pub async fn capture_stdout_with_cwd(
 }
 
 ///|
-pub async fn run_conductor_process(
-  cmd : Command,
-  environment : ConductorProcessEnvironment,
-) -> Int {
-  abort_if_hermetic_test_exec(command_to_shell_string(cmd))
-  let extra_env = conductor_process_environment_variables(environment)
-  match cmd.workdir {
-    Some(dir) => @process.run(cmd.program, cmd.args[:], extra_env~, cwd=dir)
-    None => @process.run(cmd.program, cmd.args[:], extra_env~)
-  }
-}
-
-///|
 fn native_spawn_goal_worker(
   command : Command,
 ) -> Result[Int, @types.ChoirError] {

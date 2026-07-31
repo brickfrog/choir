@@ -15,14 +15,6 @@ pub async fn capture_stdout_with_cwd(
 }
 
 ///|
-pub async fn run_conductor_process(
-  _cmd : Command,
-  _environment : ConductorProcessEnvironment,
-) -> Int {
-  -1
-}
-
-///|
 pub fn spawn_native_goal_worker(
   _choir_executable : String,
   _project_dir : String,

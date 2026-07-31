@@ -164,6 +164,16 @@ fn parse_claude_initialization(
 }
 
 ///|
+/// Read the observed initialization surface without applying a Take-specific
+/// policy. Conductor conformance owns a different exact tool set but must parse
+/// the same provider event rather than maintaining a second JSON dialect.
+pub fn claude_initialization_manifest(
+  output : String,
+) -> ClaudeInitializationManifest? {
+  parse_claude_initialization(output).0
+}
+
+///|
 fn startup_json_bool(fields : Map[String, Json], key : String) -> Bool? {
   match fields.get(key) {
     Some(True) => Some(true)

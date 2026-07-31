@@ -418,20 +418,49 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  match init_materialize_conductor_files(config.project_dir, executable) {
-    Ok(_) => ()
-    Err(error) => {
-      @sys.write_stderr("choir start: " + error + "\n")
-      @sys.exit(1)
-      return
-    }
-  }
   match @process_host.validate_native_goal_runtime() {
     Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir start: " + error.message() + "\n")
       @sys.exit(1)
       return
+    }
+  }
+  let claude_sources : (String, String)? = match options.conductor {
+    StartCodexConductor => None
+    StartClaudeConductor => {
+      let claude = match
+        @conductor_host.resolve_native_claude_conductor_executable() {
+        Ok(value) => value
+        Err(error) => {
+          @sys.write_stderr("choir start: " + error.message() + "\n")
+          @sys.exit(1)
+          return
+        }
+      }
+      let credential = match
+        @conductor_host.native_claude_conductor_credential_file() {
+        Ok(value) => value
+        Err(error) => {
+          @sys.write_stderr("choir start: " + error.message() + "\n")
+          @sys.exit(1)
+          return
+        }
+      }
+      match
+        @conductor_host.validate_native_claude_conductor_sources(
+          config.project_dir,
+          claude,
+          executable,
+          credential,
+        ) {
+        Ok(_) => Some((claude, credential))
+        Err(error) => {
+          @sys.write_stderr("choir start: " + error.message() + "\n")
+          @sys.exit(1)
+          return
+        }
+      }
     }
   }
   let token = match @sys.mint_local_token() {
@@ -461,9 +490,11 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     // discovering it from a Conductor that failed to start. Only the Claude
     // surface is declared, so the Codex Conductor does not require Claude.
     if options.conductor == StartClaudeConductor {
+      let claude = claude_sources.unwrap().0
       match
         @conductor_host.validate_native_conductor_surface(
-          probe=@conformance_host.capture_harness_probe,
+          claude,
+          capture=@process_host.capture_command_merged,
         ) {
         Ok(_) => ()
         Err(error) => {
@@ -510,16 +541,25 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     }
     let exit_code = match options.conductor {
       StartClaudeConductor => {
-        let command = @conductor_host.conductor_launch_command(
-          config.project_dir,
-          executable,
-          lean=options.lean,
-        )
-        @process_host.run_conductor_process(
-          command,
-          start_conductor_environment(config, token, statusline_cache_key),
-        ) catch {
-          _ => -1
+        let sources = claude_sources.unwrap()
+        let conductor_config : @conductor_host.NativeClaudeConductorConfig = {
+          project_dir: config.project_dir,
+          claude_executable: sources.0,
+          choir_executable: executable,
+          credential_file: sources.1,
+          daemon_socket: config.listen_uds,
+          environment: start_conductor_environment(
+            config, token, statusline_cache_key,
+          ),
+          prompt: @prompts.load_goal_prompt(config.project_dir),
+          lean: options.lean,
+        }
+        match @conductor_host.run_native_claude_conductor(conductor_config) {
+          Ok(code) => code
+          Err(error) => {
+            @sys.write_stderr("choir start: " + error.message() + "\n")
+            -1
+          }
         }
       }
       StartCodexConductor =>

@@ -15,11 +15,10 @@
 /// Whether the installed CLI is expected to advertise a flag.
 ///
 /// The distinction is forced by the CLI, not invented here. Two flags Choir
-/// depends on — `--append-system-prompt-file` and
-/// `--dangerously-load-development-channels` — are accepted but absent from
-/// `--help`, verified directly against 2.1.220: passing them reaches argument
-/// validation, while a genuinely unknown flag is rejected with
-/// `unknown option`. Qualifying by help text alone would fail on both.
+/// depends on — `--dangerously-load-development-channels` — is accepted but
+/// absent from `--help`, verified directly against 2.1.220: passing it reaches
+/// argument validation, while a genuinely unknown flag is rejected with
+/// `unknown option`. Qualifying by help text alone would fail on it.
 ///
 /// So an undocumented flag is not silently tolerated; it is declared, which is
 /// what makes its disappearance from the documented set a detectable change
@@ -40,19 +39,19 @@ pub(all) struct ConductorFlag {
 /// Every flag the Conductor launch depends on, in the order it is passed.
 pub fn conductor_surface_flags() -> Array[ConductorFlag] {
   [
-    {
-      name: "--dangerously-skip-permissions",
-      visibility: ConductorFlagDocumented,
-    },
+    { name: "--input-format", visibility: ConductorFlagDocumented },
+    { name: "--output-format", visibility: ConductorFlagDocumented },
+    { name: "--verbose", visibility: ConductorFlagDocumented },
+    { name: "--no-session-persistence", visibility: ConductorFlagDocumented },
+    { name: "--tools", visibility: ConductorFlagDocumented },
+    { name: "--permission-mode", visibility: ConductorFlagDocumented },
     { name: "--allowedTools", visibility: ConductorFlagDocumented },
     { name: "--setting-sources", visibility: ConductorFlagDocumented },
     { name: "--mcp-config", visibility: ConductorFlagDocumented },
     { name: "--strict-mcp-config", visibility: ConductorFlagDocumented },
-    {
-      name: "--append-system-prompt-file",
-      visibility: ConductorFlagUndocumented,
-    },
+    { name: "--append-system-prompt", visibility: ConductorFlagDocumented },
     { name: "--settings", visibility: ConductorFlagDocumented },
+    { name: "--no-chrome", visibility: ConductorFlagDocumented },
     {
       name: "--dangerously-load-development-channels",
       visibility: ConductorFlagUndocumented,
