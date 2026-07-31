@@ -8,6 +8,8 @@ import {
   "choir/src/uds",
   "choir/src/exec/terminal",
   "choir/src/exec",
+  "choir/src/exec/beads_host",
+  "choir/src/exec/goal_host",
   "choir/src/exec/process_host",
   "choir/src/exec/provider_host",
   "choir/src/exec/doctor_host",

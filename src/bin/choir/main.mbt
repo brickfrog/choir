@@ -153,7 +153,7 @@ fn stop_run() -> Unit {
       }
     }
     @async.run_async_main(async fn() {
-      match @exec.purge_native_goal_resources(project_dir) {
+      match @goal_host.purge_native_goal_resources(project_dir) {
         Ok(report) => {
           @sys.init_cleanup_purge_artifacts_native()
           @sys.write_stdout(

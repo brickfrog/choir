@@ -361,7 +361,8 @@ fn is_allowed_test_exec_package_ref(
           s == "choir/src/exec/terminal" ||
           s == "choir/src/exec/git_integration" ||
           s == "choir/src/exec/part_adapter" ||
-          s == "choir/src/exec/storage_host"
+          s == "choir/src/exec/storage_host" ||
+          s == "choir/src/exec/beads_host"
         }
         None => false
       }

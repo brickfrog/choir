@@ -3383,7 +3383,7 @@ async fn run_conductor_reconnect_live() -> Int {
   let goal_id = @control.GoalId("goal-conductor-reconnect")
   let draft =
     #|{"proposal_id":"proposal-conductor-reconnect","goal_id":"goal-conductor-reconnect","pull_request":{"title":"test: reconnect Conductor","body":"Exercises paused Goal visibility across Conductors."},"maximum_parallel_parts":1,"parts":[{"part_id":"choir-reconnect","commit_title":"test: reconnect Conductor","instruction":"Do not execute this paused conformance Part.","provider":"codex","repository_wide":true,"moon_args":["test","--target","native"]}]}
-  let submitted = @exec.submit_native_conductor_goal_draft(
+  let submitted = @goal_host.submit_native_conductor_goal_draft(
     root,
     draft,
     capture,
@@ -3392,7 +3392,7 @@ async fn run_conductor_reconnect_live() -> Int {
   )
   let paused = match submitted {
     Ok(report) if report.accepted =>
-      @exec.steer_native_goal(
+      @goal_host.steer_native_goal(
         root,
         goal_id,
         @workflow.GoalPolicyChange::GoalPolicyPause,
@@ -3440,7 +3440,7 @@ async fn run_conductor_reconnect_live() -> Int {
     (-1, "")
   }
   let daemon_stopped = stop_conductor_fixture_daemon(root)
-  let status = @exec.inspect_native_goal(root, goal_id)
+  let status = @goal_host.inspect_native_goal(root, goal_id)
   let passed = codex.0 == 0 &&
     codex.1.contains("CODEX_RECONNECT_OK") &&
     claude.0 == 0 &&
@@ -4073,7 +4073,7 @@ async fn run_joined_goal_until_settled(
   let mut cycles = 0
   while cycles < 16 {
     cycles = cycles + 1
-    match @exec.run_native_goal_execution_tick(project_dir) {
+    match @goal_host.run_native_goal_execution_tick(project_dir) {
       Ok(@workflow.GoalExecutionTickResult::GoalExecutionTickAdvanced(record)) =>
         if record.goal.id != goal_id {
           continue
@@ -4106,7 +4106,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     }
     let draft = @sys.read_file(args[5])
     let submission = match
-      @exec.submit_native_conductor_goal_draft(
+      @goal_host.submit_native_conductor_goal_draft(
         project_dir,
         draft,
         @process_host.capture_command_merged,
@@ -4125,7 +4125,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
       @sys.exit(1)
     }
     if submission.replayed {
-      match @exec.inspect_native_goal(project_dir, submission.goal_id) {
+      match @goal_host.inspect_native_goal(project_dir, submission.goal_id) {
         Ok(report) if report.state ==
           @workflow.GoalExecutionState::GoalExecutionAssured => {
           @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
@@ -4164,7 +4164,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
         @sys.write_stderr("failed to create Part conformance root\n")
         @sys.exit(1)
       }
-      let report = @exec.run_part_conformance_fixture(root)
+      let report = @goal_host.run_part_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4216,7 +4216,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
     }
     "scale-mixed" => {
       let root = "/tmp/choir-scale-mixed-" + @sys.get_pid().to_string()
-      let report = @exec.run_scale_mixed_conformance_fixture(root)
+      let report = @goal_host.run_scale_mixed_conformance_fixture(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
@@ -4240,7 +4240,7 @@ fn run_goal_status_command(args : Array[String]) -> Unit {
     @sys.exit(2)
     return
   }
-  match @exec.inspect_native_goal(project_dir, @control.GoalId(args[5])) {
+  match @goal_host.inspect_native_goal(project_dir, @control.GoalId(args[5])) {
     Ok(report) => {
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(0)
@@ -4265,7 +4265,7 @@ fn run_goal_cancel_command(args : Array[String]) -> Unit {
     return
   }
   match
-    @exec.cancel_native_goal(
+    @goal_host.cancel_native_goal(
       project_dir,
       @control.GoalId(args[5]),
       @env.now().reinterpret_as_int64() / 1000L,
@@ -4294,7 +4294,10 @@ async fn run_goal_publish_command(args : Array[String]) -> Unit {
     return
   }
   match
-    @exec.advance_native_goal_publication(project_dir, @control.GoalId(args[5])) {
+    @goal_host.advance_native_goal_publication(
+      project_dir,
+      @control.GoalId(args[5]),
+    ) {
     Ok(outcome) => {
       @sys.write_stdout(outcome.to_json().stringify(indent=2) + "\n")
       @sys.exit(
@@ -4329,13 +4332,13 @@ async fn run_goal_pull_request_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.advance_native_goal_pull_request_with_adapters(
+    @goal_host.advance_native_goal_pull_request_with_adapters(
       project_dir,
       @control.GoalId(args[5]),
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
     )
   } else {
-    @exec.advance_native_goal_pull_request(
+    @goal_host.advance_native_goal_pull_request(
       project_dir,
       @control.GoalId(args[5]),
     )
@@ -4375,13 +4378,13 @@ async fn run_goal_finish_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.advance_native_goal_finalization_with_adapters(
+    @goal_host.advance_native_goal_finalization_with_adapters(
       project_dir,
       @control.GoalId(args[5]),
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
     )
   } else {
-    @exec.advance_native_goal_finalization(
+    @goal_host.advance_native_goal_finalization(
       project_dir,
       @control.GoalId(args[5]),
     )
@@ -4419,13 +4422,13 @@ async fn run_goal_tick_command(args : Array[String]) -> Unit {
     return
   }
   let result = if synthetic {
-    @exec.run_native_goal_execution_tick_with_forge(
+    @goal_host.run_native_goal_execution_tick_with_forge(
       project_dir,
-      @exec.synthetic_pull_request_forge_adapters(),
+      @goal_host.synthetic_pull_request_forge_adapters(),
       beads_capture=@process_host.capture_command_merged,
     )
   } else {
-    @exec.run_native_goal_execution_tick(project_dir)
+    @goal_host.run_native_goal_execution_tick(project_dir)
   }
   match result {
     Ok(outcome) => {
@@ -4534,32 +4537,32 @@ fn main {
       let root = "/tmp/choir-integration-fault-report-" +
         @sys.get_pid().to_string()
       ignore(@sys.rm_rf(root))
-      let report = @exec.run_integration_fault_conformance(root)
+      let report = @goal_host.run_integration_fault_conformance(root)
       ignore(@sys.rm_rf(root))
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "finalization-races" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_goal_finalization_race_conformance()
+      let report = @goal_host.run_native_goal_finalization_race_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "publication-faults" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_publication_fault_conformance()
+      let report = @goal_host.run_native_publication_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-faults" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_pull_request_fault_conformance()
+      let report = @goal_host.run_native_pull_request_fault_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })
   } else if args.length() == 2 && args[1] == "pull-request-states" {
     @async.run_async_main(async fn() {
-      let report = @exec.run_native_pull_request_remote_state_conformance()
+      let report = @goal_host.run_native_pull_request_remote_state_conformance()
       @sys.write_stdout(report.to_json().stringify(indent=2) + "\n")
       @sys.exit(if report.passed { 0 } else { 1 })
     })

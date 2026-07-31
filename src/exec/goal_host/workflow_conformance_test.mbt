@@ -4,7 +4,7 @@ async test "real exec integration: Part conformance survives restart and faults"
     @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   assert_true(@sys.create_dir_all(root))
-  let report = @exec.run_part_conformance_fixture(root)
+  let report = run_part_conformance_fixture(root)
   ignore(@sys.rm_rf(root))
   assert_true(report.passed)
   assert_eq(report.effect_receipt_count, 13)
@@ -22,7 +22,7 @@ async test "real exec integration: Part conformance survives restart and faults"
 async test "real exec integration: mixed scale Goal is concurrency-invariant" {
   let root = "/tmp/choir-scale-mixed-test-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
-  let report = @exec.run_scale_mixed_conformance_fixture(root)
+  let report = run_scale_mixed_conformance_fixture(root)
   ignore(@sys.rm_rf(root))
   assert_true(report.passed)
   assert_eq(report.part_count, 6)

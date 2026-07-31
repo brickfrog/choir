@@ -2088,11 +2088,11 @@ async fn capture_native_goal_source_state(
   claim : @workflow.GoalSourceClaim,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[
-  (@workflow.GoalSelectionSourcePart, NativeConductorTask)?,
+  (@workflow.GoalSelectionSourcePart, @beads_host.NativeConductorTask)?,
   @types.ChoirError,
 ] {
   let output = match
-    native_conductor_capture_beads(
+    @beads_host.native_conductor_capture_beads(
       project_dir,
       "show",
       ["show", claim.part_id.0, "--json", "--readonly"],
@@ -2111,7 +2111,7 @@ async fn capture_native_goal_source_state(
     Ok(value) => value
     Err(_) => return Ok(None)
   }
-  let tasks = match native_conductor_tasks_from_output(output) {
+  let tasks = match @beads_host.native_conductor_tasks_from_output(output) {
     Ok(value) => value
     Err(_) => return Ok(None)
   }
@@ -2221,7 +2221,7 @@ async fn apply_native_goal_source_claim(
   if initial != @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact {
     return Ok(initial)
   }
-  let claim_result = native_conductor_capture_beads(
+  let claim_result = @beads_host.native_conductor_capture_beads(
     project_dir,
     "claim",
     ["update", claim.part_id.0, "--claim", "--actor", claim.claimant, "--json"],
@@ -2257,7 +2257,7 @@ async fn apply_native_goal_source_release(
     @workflow.GoalSourceClaimObservation::GoalSourceClaimedByExpectedActor {
     return Ok(initial)
   }
-  let release_result = native_conductor_capture_beads(
+  let release_result = @beads_host.native_conductor_capture_beads(
     project_dir,
     "release",
     [
@@ -3416,7 +3416,7 @@ async fn reconcile_native_completed_bead(
   capture~ : async (@process_host.Command) -> (Int, String),
 ) -> Result[Unit, @types.ChoirError] {
   let current_output = match
-    native_conductor_capture_beads(
+    @beads_host.native_conductor_capture_beads(
       project_dir,
       "show",
       ["show", part_id.0, "--json", "--readonly"],
@@ -3452,7 +3452,8 @@ async fn reconcile_native_completed_bead(
         native_goal_execution_error("Beads omitted the integrated source Part"),
       )
   }
-  let task = match native_conductor_tasks_from_output(current_output) {
+  let task = match
+    @beads_host.native_conductor_tasks_from_output(current_output) {
     Ok([value]) if value.id == part_id.0 => value
     Ok(_) =>
       return Err(
@@ -3478,7 +3479,7 @@ async fn reconcile_native_completed_bead(
     )
   }
   let updated_output = match
-    native_conductor_capture_beads(
+    @beads_host.native_conductor_capture_beads(
       project_dir,
       "update",
       ["update", part_id.0, "--status", "closed", "--json"],
@@ -3487,7 +3488,8 @@ async fn reconcile_native_completed_bead(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let updated = match native_conductor_tasks_from_output(updated_output) {
+  let updated = match
+    @beads_host.native_conductor_tasks_from_output(updated_output) {
     Ok([value]) => value
     Ok(_) =>
       return Err(
@@ -6674,7 +6676,7 @@ async fn inspect_native_orphaned_goal_source_claims(
   capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[Array[NativeOrphanedGoalSourceClaim], @types.ChoirError] {
   let output = match
-    native_conductor_capture_beads(
+    @beads_host.native_conductor_capture_beads(
       project_dir,
       "list",
       ["list", "--json", "--all", "--readonly"],
@@ -6683,7 +6685,7 @@ async fn inspect_native_orphaned_goal_source_claims(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let tasks = match native_conductor_tasks_from_output(output) {
+  let tasks = match @beads_host.native_conductor_tasks_from_output(output) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -6717,7 +6719,7 @@ async fn release_native_orphaned_goal_source_claims(
   let mut released = 0
   for claim in claims {
     let output = match
-      native_conductor_capture_beads(
+      @beads_host.native_conductor_capture_beads(
         project_dir,
         "release",
         [
@@ -6736,7 +6738,7 @@ async fn release_native_orphaned_goal_source_claims(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    let task = match native_conductor_tasks_from_output(output) {
+    let task = match @beads_host.native_conductor_tasks_from_output(output) {
       Ok([value]) => value
       Ok(_) =>
         return Err(

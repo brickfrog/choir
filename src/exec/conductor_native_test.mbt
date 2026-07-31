@@ -40,12 +40,12 @@ async test "native Conductor task dispatch uses typed Beads commands" {
 
 ///|
 async test "native Conductor pins the Beads CLI contract" {
-  let admitted = validate_native_beads_cli(capture=command => {
+  let admitted = @beads_host.validate_native_beads_cli(capture=command => {
     @debug.assert_eq(command.args, ["--version"])
     (0, "bd version 1.1.0 (v1.1.0)\n")
   })
   assert_true(admitted is Ok(_))
-  let drifted = validate_native_beads_cli(capture=_ => {
+  let drifted = @beads_host.validate_native_beads_cli(capture=_ => {
     (0, "bd version 1.2.0 (v1.2.0)\n")
   })
   assert_true(drifted is Err(_))
@@ -271,7 +271,7 @@ fn migration_materialized_task_json(
   proposal : @migration.MigrationBeadProposal,
   title? : String? = None,
 ) -> String {
-  let content = native_migration_bead_content(proposal)
+  let content = @beads_host.native_migration_bead_content(proposal)
   {
     "id": content.id.to_json(),
     "title": title.unwrap_or(content.title).to_json(),
@@ -309,7 +309,11 @@ async test "migration Beads materialize dependency-first and replay exactly" {
       (1, "not found")
     }
   }
-  let first = materialize_native_migration_beads("/repo", proposals, capture~).unwrap()
+  let first = @beads_host.materialize_native_migration_beads(
+    "/repo",
+    proposals,
+    capture~,
+  ).unwrap()
   assert_eq(first.created_ids.length(), 2)
   assert_eq(first.adopted_ids, [])
   let blocker = proposals.filter(fn(proposal) {
@@ -320,7 +324,7 @@ async test "migration Beads materialize dependency-first and replay exactly" {
     })[0]
   assert_eq(created, [blocker.id.0, dependent.id.0])
   let command_count = commands.length()
-  let replayed = materialize_native_migration_beads(
+  let replayed = @beads_host.materialize_native_migration_beads(
     "/repo",
     proposals,
     capture~,
@@ -336,14 +340,16 @@ async test "migration Beads materialize dependency-first and replay exactly" {
 async test "migration Bead conflict blocks before any mutation" {
   let proposals = migration_materialization_proposals()
   let commands : Array[@process_host.Command] = []
-  let result = materialize_native_migration_beads("/repo", proposals, capture=fn(
-    command,
-  ) {
-    commands.push(command)
-    let id = command.args[1]
-    let proposal = proposals.filter(fn(candidate) { candidate.id.0 == id })[0]
-    (0, migration_materialized_task_json(proposal, title=Some("conflict")))
-  })
+  let result = @beads_host.materialize_native_migration_beads(
+    "/repo",
+    proposals,
+    capture=fn(command) {
+      commands.push(command)
+      let id = command.args[1]
+      let proposal = proposals.filter(fn(candidate) { candidate.id.0 == id })[0]
+      (0, migration_materialized_task_json(proposal, title=Some("conflict")))
+    },
+  )
   assert_true(result is Err(_))
   assert_true(commands.all(fn(command) { command.args[0] == "show" }))
 }
@@ -446,7 +452,7 @@ async test "WorkOrder batch delivery rereads exact applied Bead revisions" {
       },
     ],
   }
-  let applied = apply_native_bead_batch("/repo", proposal, command => {
+  let applied = @beads_host.apply_native_bead_batch("/repo", proposal, command => {
     commands.push(command)
     match command.args {
       ["list", ..] => (0, graph.val)

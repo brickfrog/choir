@@ -445,7 +445,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
   let statusline_cache_key = "conductor-" + @sys.get_pid().to_string()
   @async.run_async_main(async fn() {
     match
-      @exec.validate_native_beads_cli(
+      @beads_host.validate_native_beads_cli(
         capture=@process_host.capture_command_merged,
       ) {
       Ok(_) => ()

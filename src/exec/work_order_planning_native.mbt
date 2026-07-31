@@ -242,7 +242,7 @@ fn native_work_order_planner_server_config(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let home = match native_goal_boxlite_home(record.repository_id) {
+  let home = match @goal_host.native_goal_boxlite_home(record.repository_id) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -347,7 +347,7 @@ async fn execute_native_work_order_planner(
   record : @workflow.WorkOrderRecord,
   round : @workflow.WorkOrderPlanningRound,
 ) -> Result[Bytes, @types.ChoirError] {
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   let instruction = native_work_order_planner_instruction(record, round)
   let schema = @provider_host.native_work_order_planning_output_schema()
@@ -511,7 +511,7 @@ async fn execute_native_work_order_planner(
       return Err(native_work_order_planning_error("Node is absent"))
     }
   }
-  let mcp_script = match native_goal_mcp_script() {
+  let mcp_script = match @goal_host.native_goal_mcp_script() {
     Some(value) => value
     None => {
       cleanup_native_work_order_planner_runtime(
@@ -745,7 +745,7 @@ fn recover_native_work_order_planner(
   record : @workflow.WorkOrderRecord,
   round : @workflow.WorkOrderPlanningRound,
 ) -> Result[NativeWorkOrderPlannerRecovery, @types.ChoirError] {
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   let instruction_digest = @storage.artifact_digest(
     @utf8.encode(native_work_order_planner_instruction(record, round)),
@@ -823,7 +823,7 @@ fn native_work_order_planning_adapters(
   executor_slot : Int,
   provider_capacity : @types.ProviderCapacityPolicy,
 ) -> NativeWorkOrderPlanningAdapters {
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   {
     capture_snapshot: async fn() {
       capture_native_work_order_planning_snapshot(
@@ -844,7 +844,7 @@ fn native_work_order_planning_adapters(
         record,
         round,
         provider_capacity,
-        current_native_goal_fencing_epoch(),
+        @goal_host.current_native_goal_fencing_epoch(),
         @env.now().reinterpret_as_int64() / 1000L,
       )
     },
@@ -853,7 +853,7 @@ fn native_work_order_planning_adapters(
         repository,
         record,
         round,
-        current_native_goal_fencing_epoch(),
+        @goal_host.current_native_goal_fencing_epoch(),
       )
     },
     deliver_beads: async fn(round_id, proposal) {
@@ -912,7 +912,7 @@ pub fn plan_native_work_order_executor_dispatches(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   match @workflow.initialize_part_workflow_repository(repository, adapters) {
     Ok(_) => ()
@@ -923,7 +923,7 @@ pub fn plan_native_work_order_executor_dispatches(
     adapters,
     capacity.maximum_parallel_jobs,
     @env.now().reinterpret_as_int64() / 1000L,
-    current_native_goal_fencing_epoch(),
+    @goal_host.current_native_goal_fencing_epoch(),
   )
 }
 
@@ -934,7 +934,7 @@ pub fn complete_native_work_order_executor_dispatch(
   outcome : @workflow.WorkOrderExecutionJobTickOutcome,
 ) -> Result[@workflow.WorkOrderExecutionJob, @types.ChoirError] {
   @workflow.persist_work_order_executor_completion(
-    native_goal_repository(project_dir),
+    @goal_host.native_goal_repository(project_dir),
     @storage_host.local_part_workflow_repository_adapters(),
     lease,
     outcome,
@@ -1016,7 +1016,8 @@ pub async fn capture_native_work_order_planning_snapshot(
     @sys.realpath_native(object_directory) != Some(object_directory) {
     return Err(native_work_order_planning_error("Git roots are not canonical"))
   }
-  let beads = match native_conductor_bead_graph(project_dir, capture) {
+  let beads = match
+    @beads_host.native_conductor_bead_graph(project_dir, capture) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1047,7 +1048,8 @@ pub async fn deliver_native_work_order_beads(
   proposal : @command.BeadBatchProposal,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeWorkOrderBeadDeliveryReceipt, @types.ChoirError] {
-  let applied = match apply_native_bead_batch(project_dir, proposal, capture) {
+  let applied = match
+    @beads_host.apply_native_bead_batch(project_dir, proposal, capture) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -1066,7 +1068,7 @@ pub async fn admit_observed_native_work_order_successor(
   snapshot : NativeWorkOrderPlanningSnapshot,
   capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch : @control.FencingEpoch,
-) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
+) -> Result[@goal_host.NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let state_root = project_dir + "/.choir/state/control"
   let repository : @workflow.PartWorkflowRepository = {
     state_store: { path: state_root + "/workflow.db" },
@@ -1150,7 +1152,7 @@ pub async fn admit_observed_native_work_order_successor(
     Err(error) => return Err(error)
   }
   let report = match
-    submit_native_conductor_goal_draft(
+    @goal_host.submit_native_conductor_goal_draft(
       project_dir,
       draft_json,
       capture,
@@ -1181,8 +1183,8 @@ pub async fn admit_native_work_order_successor(
   project_dir : String,
   work_order_id : @workflow.WorkOrderId,
   capture : async (@process_host.Command) -> (Int, String),
-  fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
-) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
+  fencing_epoch : @control.FencingEpoch,
+) -> Result[@goal_host.NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let snapshot = match
     capture_native_work_order_planning_snapshot(project_dir, capture) {
     Ok(value) => value
@@ -1202,7 +1204,7 @@ pub fn reconcile_native_work_order_child(
   goal_id : @control.GoalId,
   now? : () -> Int64 = fn() { @env.now().reinterpret_as_int64() / 1000L },
 ) -> Result[@workflow.WorkOrderRecord?, @types.ChoirError] {
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   let adapters = @storage_host.local_part_workflow_repository_adapters()
   let execution = match
     @workflow.load_goal_execution_record(repository, adapters, goal_id) {
@@ -1220,13 +1222,13 @@ pub fn reconcile_native_work_order_child(
     Err(error) => return Err(error)
   }
   let stored = if stored.record.fencing_epoch.0 <
-    current_native_goal_fencing_epoch().0 {
+    @goal_host.current_native_goal_fencing_epoch().0 {
     match
       @workflow.persist_work_order_fencing_epoch_adoption(
         repository,
         adapters,
         stored,
-        current_native_goal_fencing_epoch(),
+        @goal_host.current_native_goal_fencing_epoch(),
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1270,20 +1272,20 @@ pub async fn run_native_work_order_execution_job_with_adapters(
     @types.ChoirError,
   ],
   admit_successor : async (@workflow.WorkOrderId) -> Result[
-    NativeConductorGoalSubmissionReport,
+    @goal_host.NativeConductorGoalSubmissionReport,
     @types.ChoirError,
   ],
 ) -> (
   Result[NativeWorkOrderExecutionTick, @types.ChoirError],
   Array[@workflow.ProviderSurfaceTickReport],
 ) {
-  if lease.fencing_epoch != current_native_goal_fencing_epoch() {
+  if lease.fencing_epoch != @goal_host.current_native_goal_fencing_epoch() {
     return (
       Err(native_work_order_planning_error("executor lease fence is stale")),
       [],
     )
   }
-  let repository = native_goal_repository(project_dir)
+  let repository = @goal_host.native_goal_repository(project_dir)
   let repository_adapters = @storage_host.local_part_workflow_repository_adapters()
   match
     @workflow.work_order_executor_lease_is_authorized(
@@ -1514,13 +1516,13 @@ pub async fn run_native_work_order_planning_tick(
     Err(error) => return Err(error)
   }
   let stored = if stored.record.fencing_epoch.0 <
-    current_native_goal_fencing_epoch().0 {
+    @goal_host.current_native_goal_fencing_epoch().0 {
     match
       @workflow.persist_work_order_fencing_epoch_adoption(
         repository,
         repository_adapters,
         stored,
-        current_native_goal_fencing_epoch(),
+        @goal_host.current_native_goal_fencing_epoch(),
       ) {
       Ok(value) => value
       Err(error) => return Err(error)

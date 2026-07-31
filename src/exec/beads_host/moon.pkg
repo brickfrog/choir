@@ -1,0 +1,16 @@
+import {
+  "choir/src/command",
+  "choir/src/control",
+  "choir/src/migration",
+  "choir/src/exec/process_host",
+  "choir/src/storage",
+  "choir/src/types",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+}
+
+options(
+  "is-main": false,
+  "max-concurrent-tests": 1,
+  targets: { "beads_native.mbt": [ "native" ] },
+)
