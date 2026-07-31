@@ -1,5 +1,5 @@
 ///|
-async test "interruptible provider runner kills its owned process group" {
+async test "real exec integration: interruptible provider runner kills its owned process group" {
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
     _ => fail("stdin pipe failed")
   }

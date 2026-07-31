@@ -766,7 +766,7 @@ async test "native Conductor submission rejects a detached checkout" {
 }
 
 ///|
-async test "durable Goal cancellation survives replay and starts no provider" {
+async test "real exec integration: durable Goal cancellation starts no provider" {
   let root = "/tmp/choir-goal-cancel-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))
   if !@sys.create_dir_all(root) {
@@ -855,22 +855,25 @@ async test "durable Goal cancellation survives replay and starts no provider" {
   ignore(
     run_native_goal_execution_tick_with_forge(
       root,
-      native_pull_request_forge_adapters(),
+      synthetic_pull_request_forge_adapters(),
       beads_capture=capture,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     ).unwrap(),
   )
   ignore(
     run_native_goal_execution_tick_with_forge(
       root,
-      native_pull_request_forge_adapters(),
+      synthetic_pull_request_forge_adapters(),
       beads_capture=capture,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     ).unwrap(),
   )
   let tick = match
     run_native_goal_execution_tick_with_forge(
       root,
-      native_pull_request_forge_adapters(),
+      synthetic_pull_request_forge_adapters(),
       beads_capture=capture,
+      reconcile_sources=fn(_, _, _) { Ok(()) },
     ) {
     Ok(value) => value
     Err(error) => fail(error.message())

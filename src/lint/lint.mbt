@@ -7,14 +7,22 @@ pub(all) struct LintFinding {
 }
 
 ///|
+pub(all) struct LintSourceInput {
+  file : String
+  source : String
+}
+
+///|
 priv struct LintEnv {
   file : String
+  package_spec : String
   findings : Array[LintFinding]
   aliases : Array[(String, DangerousCallKind)]
   direct_reference_aliases : Array[String]
   decl_stack : Array[String]
   test_rules_enabled : Bool
   forbidden_helpers : Array[ForbiddenHelper]
+  known_functions : Array[FunctionReference]
   package_aliases : Array[(String, String)]
 }
 
@@ -32,29 +40,43 @@ priv struct ForbiddenExecPackageRefSearch {
 ///|
 priv struct ForbiddenHelper {
   name : String
+  package_spec : String
   rule_id : String
+  file : String
   loc : @basic.Location
 }
 
 ///|
-let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(
-  Map([]),
-)
+priv struct ParsedLintSource {
+  file : String
+  package_spec : String
+  impls : @syntax.Impls
+  package_aliases : Array[(String, String)]
+}
 
 ///|
 priv struct FunctionCallInfo {
   name : String
+  package_spec : String
+  file : String
   loc : @basic.Location
-  called : Array[String]
+  called : Array[FunctionReference]
   mut forbidden_rule_id : String?
+}
+
+///|
+priv struct FunctionReference {
+  package_spec : String
+  name : String
 }
 
 ///|
 priv struct FunctionBodyCollector {
   file : String
+  package_spec : String
   mut direct_rule_id : String?
-  calls : Array[String]
-  known_functions : Array[String]
+  calls : Array[FunctionReference]
+  known_functions : Array[FunctionReference]
   shadowed_names : Array[String]
   aliases : Array[(String, DangerousCallKind)]
   package_aliases : Array[(String, String)]
@@ -64,7 +86,8 @@ priv struct FunctionBodyCollector {
 priv enum DangerousCallKind {
   ShellCommand
   ProcessCommand
-  ExecCapture
+  HostExec
+  NativeFilesystem
 } derive(Eq)
 
 ///|
@@ -106,7 +129,9 @@ fn canonical_file(file : String) -> String {
 ///|
 fn package_path_matches_short_name(path : String, short_name : String) -> Bool {
   // Resolve only canonical package specs; suffix lookalikes are unrelated.
-  path == short_name || path == "choir/src/" + short_name
+  path == short_name ||
+  path == "choir/src/" + short_name ||
+  (short_name == "process" && path == "moonbitlang/async/process")
 }
 
 ///|
@@ -169,13 +194,49 @@ fn dotted_ident_pkg(expr : @syntax.Expr) -> String? {
 }
 
 ///|
-fn callable_name(expr : @syntax.Expr) -> String? {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) => Some(name)
-    Ident(id={ name: Dot(id~, ..), .. }, ..) => Some(id)
-    Method(method_name~, ..) => Some(method_name.name)
-    Group(expr~, ..) => callable_name(expr)
+fn package_spec_for_file(file : String) -> String {
+  "choir/" + file_parent_dir(canonical_file(file))
+}
+
+///|
+fn function_reference_equal(
+  left : FunctionReference,
+  right : FunctionReference,
+) -> Bool {
+  left.package_spec == right.package_spec && left.name == right.name
+}
+
+///|
+fn function_reference_for_expr(
+  package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
+  expr : @syntax.Expr,
+) -> FunctionReference? {
+  let candidate = match expr {
+    Ident(id={ name: Ident(name~), .. }, ..) =>
+      Some(FunctionReference::{ package_spec: current_package, name })
+    Ident(id={ name: Dot(pkg~, id~), .. }, ..) =>
+      Some(FunctionReference::{
+        package_spec: resolved_package_path(package_aliases, pkg),
+        name: id,
+      })
+    Group(expr~, ..) =>
+      return function_reference_for_expr(
+        package_aliases, current_package, known_functions, expr,
+      )
     _ => None
+  }
+  match candidate {
+    Some(reference) =>
+      if known_functions.any(fn(known) {
+          function_reference_equal(known, reference)
+        }) {
+        Some(reference)
+      } else {
+        None
+      }
+    None => None
   }
 }
 
@@ -210,43 +271,6 @@ fn is_process_ref(
     expr_package_matches(package_aliases, expr, "process") &&
     dotted_ident_name(expr) == Some("run")
   )
-}
-
-///|
-fn is_exec_capture_ref(
-  _package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  match dotted_ident_name(expr) {
-    Some(id) => id.has_prefix("capture_")
-    None => false
-  }
-}
-
-///|
-fn is_unqualified_exec_capture_ref(file : String, expr : @syntax.Expr) -> Bool {
-  let file = canonical_file(file)
-  if !file.has_prefix("src/exec/") ||
-    !(file.has_suffix("_test.mbt") || file.has_suffix("_wbtest.mbt")) {
-    return false
-  }
-  if dotted_ident_pkg(expr) is Some(_) {
-    return false
-  }
-  match callable_name(expr) {
-    Some(id) => id.has_prefix("capture_")
-    None => false
-  }
-}
-
-///|
-fn is_exec_capture_ref_for_file_with_package_aliases(
-  file : String,
-  package_aliases : Array[(String, String)],
-  expr : @syntax.Expr,
-) -> Bool {
-  is_exec_capture_ref(package_aliases, expr) ||
-  is_unqualified_exec_capture_ref(file, expr)
 }
 
 ///|
@@ -379,25 +403,22 @@ fn is_forbidden_test_exec_package_ref(
 }
 
 ///|
-fn called_function_name(expr : @syntax.Expr) -> String? {
-  match expr {
-    Ident(id={ name: Ident(name~), .. }, ..) => Some(name)
-    _ => None
-  }
-}
-
-///|
 fn direct_forbidden_rule_for_apply(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
   package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
   func : @syntax.Expr,
   args : @list.List[@syntax.Argument],
 ) -> String? {
-  match dangerous_call_kind_with_aliases(file, aliases, package_aliases, func) {
+  match
+    dangerous_call_kind_with_aliases(
+      file, aliases, package_aliases, current_package, known_functions, func,
+    ) {
     Some(ShellCommand) => Some("test-shell-command")
     Some(ProcessCommand) => Some("test-direct-process")
-    Some(ExecCapture) =>
+    Some(HostExec) =>
       match first_argument(args) {
         Some(command) =>
           if expr_contains_git_program(command) {
@@ -407,8 +428,14 @@ fn direct_forbidden_rule_for_apply(
           }
         None => Some("test-exec-capture")
       }
+    Some(NativeFilesystem) => Some("native-ffi-bypass")
     None =>
-      if is_forbidden_test_exec_package_ref(package_aliases, func) {
+      if function_reference_for_expr(
+          package_aliases, current_package, known_functions, func,
+        )
+        is Some(_) {
+        None
+      } else if is_forbidden_test_exec_package_ref(package_aliases, func) {
         Some("test-exec-reference")
       } else {
         None
@@ -419,10 +446,19 @@ fn direct_forbidden_rule_for_apply(
 ///|
 fn direct_forbidden_rule_for_arg_refs(
   package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
   args : @list.List[@syntax.Argument],
 ) -> String? {
   for arg in args {
-    if is_forbidden_test_exec_package_ref(package_aliases, arg.value) {
+    if function_reference_for_expr(
+        package_aliases,
+        current_package,
+        known_functions,
+        arg.value,
+      )
+      is None &&
+      is_forbidden_test_exec_package_ref(package_aliases, arg.value) {
       return Some("test-exec-reference")
     }
   }
@@ -430,15 +466,16 @@ fn direct_forbidden_rule_for_arg_refs(
 }
 
 ///|
-fn function_call_info_from_body(
+fn new_function_body_collector(
   file : String,
+  package_spec : String,
   package_aliases : Array[(String, String)],
-  known_functions : Array[String],
+  known_functions : Array[FunctionReference],
   shadowed_names : Array[String],
-  body : @syntax.DeclBody,
-) -> (String?, Array[String]) {
-  let collector = FunctionBodyCollector::{
+) -> FunctionBodyCollector {
+  {
     file,
+    package_spec,
     direct_rule_id: None,
     calls: Array::new(capacity=4),
     known_functions,
@@ -446,7 +483,42 @@ fn function_call_info_from_body(
     aliases: Array::new(capacity=4),
     package_aliases,
   }
+}
+
+///|
+fn function_call_info_from_function(
+  file : String,
+  package_spec : String,
+  package_aliases : Array[(String, String)],
+  known_functions : Array[FunctionReference],
+  shadowed_names : Array[String],
+  fun_decl : @syntax.FunDecl,
+  body : @syntax.DeclBody,
+) -> (String?, Array[FunctionReference]) {
+  let collector = new_function_body_collector(
+    file, package_spec, package_aliases, known_functions, shadowed_names,
+  )
+  @syntax.IterVisitor::visit_FunDecl(collector, fun_decl)
   @syntax.IterVisitor::visit_DeclBody(collector, body)
+  (collector.direct_rule_id, collector.calls)
+}
+
+///|
+fn function_call_info_from_expr(
+  file : String,
+  package_spec : String,
+  package_aliases : Array[(String, String)],
+  known_functions : Array[FunctionReference],
+  expr : @syntax.Expr,
+) -> (String?, Array[FunctionReference]) {
+  let collector = new_function_body_collector(
+    file,
+    package_spec,
+    package_aliases,
+    known_functions,
+    Array::new(capacity=0),
+  )
+  @syntax.IterVisitor::visit_Expr(collector, expr)
   (collector.direct_rule_id, collector.calls)
 }
 
@@ -581,6 +653,37 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
 ) {
   let mut visit_children = true
   if self.direct_rule_id is None {
+    match direct_primitive_kind_for_expr(self.package_aliases, expr) {
+      Some(ShellCommand) => self.direct_rule_id = Some("test-shell-command")
+      Some(ProcessCommand) => self.direct_rule_id = Some("test-direct-process")
+      Some(HostExec) => self.direct_rule_id = Some("test-exec-reference")
+      Some(NativeFilesystem) => self.direct_rule_id = Some("native-ffi-bypass")
+      None =>
+        match
+          function_reference_for_expr(
+            self.package_aliases,
+            self.package_spec,
+            self.known_functions,
+            expr,
+          ) {
+          Some(reference) => {
+            let shadowed = dotted_ident_pkg(expr) is None &&
+              self.shadowed_names.any(fn(name) { name == reference.name })
+            if !shadowed &&
+              !self.calls.any(fn(existing) {
+                function_reference_equal(existing, reference)
+              }) {
+              self.calls.push(reference)
+            }
+          }
+          None =>
+            if is_forbidden_test_exec_package_ref(self.package_aliases, expr) {
+              self.direct_rule_id = Some("test-exec-reference")
+            }
+        }
+    }
+  }
+  if self.direct_rule_id is None {
     match expr {
       Apply(func~, args~, ..) =>
         match
@@ -588,21 +691,39 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
             self.file,
             self.aliases,
             self.package_aliases,
+            self.package_spec,
+            self.known_functions,
             func,
             args,
           ) {
           Some(rule_id) => self.direct_rule_id = Some(rule_id)
           None => {
-            match called_function_name(func) {
-              Some(name) =>
-                if self.known_functions.any(fn(f) { f == name }) &&
-                  !self.shadowed_names.any(fn(p) { p == name }) {
-                  self.calls.push(name)
+            match
+              function_reference_for_expr(
+                self.package_aliases,
+                self.package_spec,
+                self.known_functions,
+                func,
+              ) {
+              Some(reference) => {
+                let shadowed = dotted_ident_pkg(func) is None &&
+                  self.shadowed_names.any(fn(name) { name == reference.name })
+                if !shadowed &&
+                  !self.calls.any(fn(existing) {
+                    function_reference_equal(existing, reference)
+                  }) {
+                  self.calls.push(reference)
                 }
+              }
               None => ()
             }
             match
-              direct_forbidden_rule_for_arg_refs(self.package_aliases, args) {
+              direct_forbidden_rule_for_arg_refs(
+                self.package_aliases,
+                self.package_spec,
+                self.known_functions,
+                args,
+              ) {
               Some(rule_id) => self.direct_rule_id = Some(rule_id)
               None => ()
             }
@@ -633,11 +754,20 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
           bind_alias_with_aliases(
             self.aliases,
             self.package_aliases,
+            self.package_spec,
+            self.known_functions,
             self.file,
             pattern,
             value,
           )
-          if is_forbidden_test_exec_package_ref(self.package_aliases, value) {
+          if function_reference_for_expr(
+              self.package_aliases,
+              self.package_spec,
+              self.known_functions,
+              value,
+            )
+            is None &&
+            is_forbidden_test_exec_package_ref(self.package_aliases, value) {
             self.direct_rule_id = Some("test-exec-reference")
           } else {
             let shadowed_len = self.shadowed_names.length()
@@ -656,34 +786,90 @@ impl @syntax.IterVisitor for FunctionBodyCollector with fn visit_Expr(
 }
 
 ///|
-fn collect_forbidden_function_infos(
-  file : String,
-  package_aliases : Array[(String, String)],
-  impls : @syntax.Impls,
-) -> Array[FunctionCallInfo] {
-  let function_infos = Array::new(capacity=8)
+fn collect_known_functions(
+  sources : Array[ParsedLintSource],
+) -> Array[FunctionReference] {
   let known_functions = Array::new(capacity=8)
-  for impl_ in impls {
-    match impl_ {
-      TopFuncDef(fun_decl~, ..) => known_functions.push(fun_decl.name.name)
-      _ => ()
+  for source in sources {
+    for impl_ in source.impls {
+      match impl_ {
+        TopFuncDef(fun_decl~, ..) => {
+          let reference : FunctionReference = {
+            package_spec: source.package_spec,
+            name: fun_decl.name.name,
+          }
+          if !known_functions.any(fn(existing) {
+              function_reference_equal(existing, reference)
+            }) {
+            known_functions.push(reference)
+          }
+        }
+        TopLetDef(binder~, ..) => {
+          let reference : FunctionReference = {
+            package_spec: source.package_spec,
+            name: binder.name,
+          }
+          if !known_functions.any(fn(existing) {
+              function_reference_equal(existing, reference)
+            }) {
+            known_functions.push(reference)
+          }
+        }
+        _ => ()
+      }
     }
   }
-  for impl_ in impls {
-    match impl_ {
-      TopFuncDef(fun_decl~, decl_body~, loc~, ..) => {
-        let parameter_names = collect_parameter_names(fun_decl.decl_params)
-        let (direct_rule_id, called) = function_call_info_from_body(
-          file, package_aliases, known_functions, parameter_names, decl_body,
-        )
-        function_infos.push(FunctionCallInfo::{
-          name: fun_decl.name.name,
-          loc,
-          called,
-          forbidden_rule_id: direct_rule_id,
-        })
+  known_functions
+}
+
+///|
+fn collect_forbidden_function_infos(
+  sources : Array[ParsedLintSource],
+  known_functions : Array[FunctionReference],
+) -> Array[FunctionCallInfo] {
+  let function_infos = Array::new(capacity=8)
+  for source in sources {
+    for impl_ in source.impls {
+      match impl_ {
+        TopFuncDef(fun_decl~, decl_body~, loc~, ..) => {
+          let parameter_names = collect_parameter_names(fun_decl.decl_params)
+          let (direct_rule_id, called) = function_call_info_from_function(
+            source.file,
+            source.package_spec,
+            source.package_aliases,
+            known_functions,
+            parameter_names,
+            fun_decl,
+            decl_body,
+          )
+          function_infos.push(FunctionCallInfo::{
+            name: fun_decl.name.name,
+            package_spec: source.package_spec,
+            file: source.file,
+            loc,
+            called,
+            forbidden_rule_id: direct_rule_id,
+          })
+        }
+        TopLetDef(binder~, expr~, loc~, ..) => {
+          let (direct_rule_id, called) = function_call_info_from_expr(
+            source.file,
+            source.package_spec,
+            source.package_aliases,
+            known_functions,
+            expr,
+          )
+          function_infos.push(FunctionCallInfo::{
+            name: binder.name,
+            package_spec: source.package_spec,
+            file: source.file,
+            loc,
+            called,
+            forbidden_rule_id: direct_rule_id,
+          })
+        }
+        _ => ()
       }
-      _ => ()
     }
   }
 
@@ -714,13 +900,14 @@ fn collect_forbidden_function_infos(
 ///|
 fn lookup_forbidden_rule(
   function_infos : Array[FunctionCallInfo],
-  name : String,
+  reference : FunctionReference,
 ) -> String? {
   for info in function_infos {
-    if info.name == name {
+    if info.name == reference.name &&
+      info.package_spec == reference.package_spec {
       match info.forbidden_rule_id {
         Some(rule_id) => return Some(rule_id)
-        None => return None
+        None => ()
       }
     }
   }
@@ -737,7 +924,9 @@ fn build_forbidden_helpers(
       Some(rule_id) =>
         forbidden.push(ForbiddenHelper::{
           name: info.name,
+          package_spec: info.package_spec,
           rule_id,
+          file: info.file,
           loc: info.loc,
         })
       None => ()
@@ -749,14 +938,32 @@ fn build_forbidden_helpers(
 ///|
 fn forbidden_helper_info(
   forbidden_helpers : Array[ForbiddenHelper],
-  name : String,
+  reference : FunctionReference,
 ) -> ForbiddenHelper? {
   for helper in forbidden_helpers {
-    if helper.name == name {
+    if helper.name == reference.name &&
+      helper.package_spec == reference.package_spec {
       return Some(helper)
     }
   }
   None
+}
+
+///|
+fn forbidden_helper_for_expr(
+  env : LintEnv,
+  expr : @syntax.Expr,
+) -> ForbiddenHelper? {
+  match
+    function_reference_for_expr(
+      env.package_aliases,
+      env.package_spec,
+      env.known_functions,
+      expr,
+    ) {
+    Some(reference) => forbidden_helper_info(env.forbidden_helpers, reference)
+    None => None
+  }
 }
 
 ///|
@@ -789,17 +996,21 @@ fn alias_kind_for_expr(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
   package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
   expr : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match direct_alias_kind_for_expr(file, package_aliases, expr) {
+  match
+    direct_alias_kind_for_expr(
+      file, package_aliases, current_package, known_functions, expr,
+    ) {
     Some(kind) => Some(kind)
     None => alias_kind_for_identifier(aliases, expr, Array::new(capacity=4))
   }
 }
 
 ///|
-fn direct_alias_kind_for_expr(
-  file : String,
+fn direct_primitive_kind_for_expr(
   package_aliases : Array[(String, String)],
   expr : @syntax.Expr,
 ) -> DangerousCallKind? {
@@ -807,12 +1018,34 @@ fn direct_alias_kind_for_expr(
     Some(ShellCommand)
   } else if is_process_ref(package_aliases, expr) {
     Some(ProcessCommand)
-  } else if is_exec_capture_ref_for_file_with_package_aliases(
-      file, package_aliases, expr,
-    ) {
-    Some(ExecCapture)
+  } else if is_hazardous_native_ffi_ref(package_aliases, expr) {
+    Some(NativeFilesystem)
   } else {
     None
+  }
+}
+
+///|
+fn direct_alias_kind_for_expr(
+  _file : String,
+  package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
+  expr : @syntax.Expr,
+) -> DangerousCallKind? {
+  match direct_primitive_kind_for_expr(package_aliases, expr) {
+    Some(kind) => Some(kind)
+    None =>
+      if function_reference_for_expr(
+          package_aliases, current_package, known_functions, expr,
+        )
+        is Some(_) {
+        None
+      } else if is_forbidden_test_exec_package_ref(package_aliases, expr) {
+        Some(HostExec)
+      } else {
+        None
+      }
   }
 }
 
@@ -849,6 +1082,8 @@ fn dangerous_call_kind(
     env.file,
     env.aliases,
     env.package_aliases,
+    env.package_spec,
+    env.known_functions,
     func,
   )
 }
@@ -858,17 +1093,24 @@ fn dangerous_call_kind_with_aliases(
   file : String,
   aliases : Array[(String, DangerousCallKind)],
   package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
   func : @syntax.Expr,
 ) -> DangerousCallKind? {
-  match alias_kind_for_expr(file, aliases, package_aliases, func) {
+  match
+    alias_kind_for_expr(
+      file, aliases, package_aliases, current_package, known_functions, func,
+    ) {
     Some(kind) => Some(kind)
     None =>
       if is_named_alias_with_aliases(aliases, func, ShellCommand) {
         Some(ShellCommand)
       } else if is_named_alias_with_aliases(aliases, func, ProcessCommand) {
         Some(ProcessCommand)
-      } else if is_named_alias_with_aliases(aliases, func, ExecCapture) {
-        Some(ExecCapture)
+      } else if is_named_alias_with_aliases(aliases, func, HostExec) {
+        Some(HostExec)
+      } else if is_named_alias_with_aliases(aliases, func, NativeFilesystem) {
+        Some(NativeFilesystem)
       } else {
         None
       }
@@ -897,6 +1139,8 @@ fn bind_alias_if_needed(
   bind_alias_with_aliases(
     env.aliases,
     env.package_aliases,
+    env.package_spec,
+    env.known_functions,
     env.file,
     pattern,
     expr,
@@ -907,11 +1151,19 @@ fn bind_alias_if_needed(
 fn bind_alias_with_aliases(
   aliases : Array[(String, DangerousCallKind)],
   package_aliases : Array[(String, String)],
+  current_package : String,
+  known_functions : Array[FunctionReference],
   file : String,
   pattern : @syntax.Pattern,
   expr : @syntax.Expr,
 ) -> Unit {
-  match (pattern, alias_kind_for_expr(file, aliases, package_aliases, expr)) {
+  match
+    (
+      pattern,
+      alias_kind_for_expr(
+        file, aliases, package_aliases, current_package, known_functions, expr,
+      ),
+    ) {
     (Var({ name, .. }), Some(kind)) => aliases.push((name, kind))
     _ => ()
   }
@@ -978,7 +1230,7 @@ fn check_test_apply(
           loc,
         )
       }
-    Some(ExecCapture) =>
+    Some(HostExec) =>
       if is_reported_direct_reference_alias(env, func) ||
         is_explicit_real_exec_integration_test(env) {
         ()
@@ -997,8 +1249,19 @@ fn check_test_apply(
           loc,
         )
       }
+    // The dedicated native-FFI walker already reports direct calls. Keeping
+    // this arm inert avoids two findings at the same call site while still
+    // allowing the package effect closure to mark wrappers.
+    Some(NativeFilesystem) => ()
     None => {
-      if is_forbidden_test_exec_package_ref(env.package_aliases, func) &&
+      if function_reference_for_expr(
+          env.package_aliases,
+          env.package_spec,
+          env.known_functions,
+          func,
+        )
+        is None &&
+        is_forbidden_test_exec_package_ref(env.package_aliases, func) &&
         !is_explicit_real_exec_integration_test(env) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
@@ -1006,12 +1269,28 @@ fn check_test_apply(
         )
       }
       for arg in args {
-        if is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) &&
+        if function_reference_for_expr(
+            env.package_aliases,
+            env.package_spec,
+            env.known_functions,
+            arg.value,
+          )
+          is None &&
+          is_forbidden_test_exec_package_ref(env.package_aliases, arg.value) &&
           !is_explicit_real_exec_integration_test(env) {
           emit(
             env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
             loc,
           )
+        } else {
+          match forbidden_helper_for_expr(env, arg.value) {
+            Some(_) if !is_explicit_real_exec_integration_test(env) =>
+              emit(
+                env, "test-exec-reference", "test files must not reference effectful package helpers; inject a mock capability instead",
+                loc,
+              )
+            _ => ()
+          }
         }
       }
     }
@@ -1031,9 +1310,19 @@ fn forbidden_value_reference_rule(
   match dangerous_call_kind(env, value) {
     Some(ShellCommand) => Some("test-shell-command")
     Some(ProcessCommand) => Some("test-direct-process")
-    Some(ExecCapture) => Some("test-exec-reference")
+    Some(HostExec) => Some("test-exec-reference")
+    Some(NativeFilesystem) => Some("native-ffi-bypass")
     None =>
-      if is_forbidden_test_exec_package_ref(env.package_aliases, value) {
+      if forbidden_helper_for_expr(env, value) is Some(_) {
+        Some("test-exec-reference")
+      } else if function_reference_for_expr(
+          env.package_aliases,
+          env.package_spec,
+          env.known_functions,
+          value,
+        )
+        is None &&
+        is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         Some("test-exec-reference")
       } else {
         None
@@ -1075,14 +1364,13 @@ fn test_decl_name(name : @syntax.TestName) -> String {
 ///|
 fn scan_impls_with_package_aliases(
   file : String,
+  package_spec : String,
   impls : @syntax.Impls,
   package_aliases : Array[(String, String)],
+  forbidden_helpers : Array[ForbiddenHelper],
+  known_functions : Array[FunctionReference],
 ) -> Array[LintFinding] {
   let canonical = canonical_file(file)
-  let function_infos = collect_forbidden_function_infos(
-    canonical, package_aliases, impls,
-  )
-  let forbidden_helpers = build_forbidden_helpers(function_infos)
   let findings = Array::new(capacity=4)
   let test_file = canonical.has_suffix("_test.mbt") ||
     canonical.has_suffix("_wbtest.mbt")
@@ -1094,12 +1382,14 @@ fn scan_impls_with_package_aliases(
       })
     let env = LintEnv::{
       file: canonical,
+      package_spec,
       findings,
       aliases: Array::new(capacity=4),
       direct_reference_aliases: Array::new(capacity=4),
       decl_stack: Array::new(capacity=2),
       test_rules_enabled,
       forbidden_helpers,
+      known_functions,
       package_aliases,
     }
     match impl_ {
@@ -1180,21 +1470,19 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
       if env.test_rules_enabled &&
         current_decl_name(env).has_prefix("test:") &&
         !is_explicit_real_exec_integration_test(env) {
-        match called_function_name(func) {
-          Some(name) =>
-            match forbidden_helper_info(env.forbidden_helpers, name) {
-              Some(helper) =>
-                emit(
-                  env,
-                  helper.rule_id,
-                  "test calls helper `" +
-                  name +
-                  "` declared at " +
-                  helper.loc.to_string(),
-                  loc,
-                )
-              None => ()
-            }
+        match forbidden_helper_for_expr(env, func) {
+          Some(helper) =>
+            emit(
+              env,
+              helper.rule_id,
+              "test calls helper `" +
+              helper.name +
+              "` declared at " +
+              helper.file +
+              ":" +
+              helper.loc.to_string(),
+              loc,
+            )
           None => ()
         }
       }
@@ -1206,6 +1494,13 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
     Let(pattern~, expr=value, loc~, ..) => {
       check_native_ffi_bypass(env, value, loc)
       if env.test_rules_enabled &&
+        function_reference_for_expr(
+          env.package_aliases,
+          env.package_spec,
+          env.known_functions,
+          value,
+        )
+        is None &&
         is_forbidden_test_exec_package_ref(env.package_aliases, value) {
         emit(
           env, "test-exec-reference", "test files must not reference real exec helpers; inject a mock capture/runner instead",
@@ -1216,6 +1511,17 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Expr(env, expr) {
           _ => ()
         }
         bind_alias_if_needed(env, pattern, value)
+      } else if env.test_rules_enabled &&
+        !is_explicit_real_exec_integration_test(env) &&
+        forbidden_helper_for_expr(env, value) is Some(_) {
+        emit(
+          env, "test-exec-reference", "test files must not reference effectful package helpers; inject a mock capability instead",
+          loc,
+        )
+        match pattern {
+          Var({ name, .. }) => env.direct_reference_aliases.push(name)
+          _ => ()
+        }
       } else {
         bind_alias_if_needed(env, pattern, value)
       }
@@ -1232,14 +1538,25 @@ impl @syntax.IterVisitor for LintEnv with fn visit_Parameter_Optional(
   default~,
   ty~,
 ) {
-  // AUDIT: one-hop wrappers such as capture_command_output escape this static
-  // rule; Layer 1 backstops them at runtime, and full wrapper resolution is
-  // tracked by choir-lint-multilevel-aliases / choir-lint-package-aliases.
-  if expr_contains_forbidden_exec_package_ref(env.package_aliases, default) {
+  if function_reference_for_expr(
+      env.package_aliases,
+      env.package_spec,
+      env.known_functions,
+      default,
+    )
+    is None &&
+    expr_contains_forbidden_exec_package_ref(env.package_aliases, default) {
     emit(
       env,
       "exec-default-parameter",
       "optional parameters must not default to real exec helpers; require an injected capture/runner",
+      binder.loc,
+    )
+  } else if forbidden_helper_for_expr(env, default) is Some(_) {
+    emit(
+      env,
+      "exec-default-parameter",
+      "optional parameters must not default to effectful package helpers; require an injected capture/runner",
       binder.loc,
     )
   }
@@ -1967,25 +2284,52 @@ fn is_ident_start_byte(b : Int) -> Bool {
 }
 
 ///|
-pub fn lint_source(
-  file : String,
-  source : String,
+pub fn lint_sources(
+  sources : Array[LintSourceInput],
   read_file? : (String) -> String = @sys.read_file,
   path_exists? : (String) -> Bool = @sys.path_exists,
-  package_alias_cache? : @ref.Ref[Map[String, Array[(String, String)]]] = package_alias_cache,
 ) -> Result[Array[LintFinding], @types.ChoirError] {
-  let prepared = strip_with_fn_for_parser(source)
-  let (impls, reports) = @parser.parse_string(prepared, name=file)
-  if reports.length() > 0 {
-    return Err(@types.ChoirError::validation_error(reports[0].to_string()))
-  }
-  Ok(
-    scan_impls_with_package_aliases(
+  let package_alias_cache : @ref.Ref[Map[String, Array[(String, String)]]] = @ref.new(
+    Map([]),
+  )
+  let parsed_sources : Array[ParsedLintSource] = []
+  for source in sources {
+    let file = canonical_file(source.file)
+    let prepared = strip_with_fn_for_parser(source.source)
+    let (impls, reports) = @parser.parse_string(prepared, name=file)
+    if reports.length() > 0 {
+      return Err(
+        @types.ChoirError::validation_error(
+          file + ": " + reports[0].to_string(),
+        ),
+      )
+    }
+    parsed_sources.push({
       file,
+      package_spec: package_spec_for_file(file),
       impls,
-      package_aliases_for_file(
+      package_aliases: package_aliases_for_file(
         file, read_file, path_exists, package_alias_cache,
       ),
-    ),
+    })
+  }
+  let known_functions = collect_known_functions(parsed_sources)
+  let forbidden_helpers = build_forbidden_helpers(
+    collect_forbidden_function_infos(parsed_sources, known_functions),
   )
+  let findings : Array[LintFinding] = []
+  for source in parsed_sources {
+    for
+      finding in scan_impls_with_package_aliases(
+        source.file,
+        source.package_spec,
+        source.impls,
+        source.package_aliases,
+        forbidden_helpers,
+        known_functions,
+      ) {
+      findings.push(finding)
+    }
+  }
+  Ok(findings)
 }
