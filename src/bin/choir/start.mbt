@@ -461,7 +461,10 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     // discovering it from a Conductor that failed to start. Only the Claude
     // surface is declared, so the Codex Conductor does not require Claude.
     if options.conductor == StartClaudeConductor {
-      match @exec.validate_native_conductor_surface() {
+      match
+        @conductor_host.validate_native_conductor_surface(
+          probe=@exec.capture_harness_probe,
+        ) {
         Ok(_) => ()
         Err(error) => {
           @sys.write_stderr("choir start: " + error.message() + "\n")
@@ -507,7 +510,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     }
     let exit_code = match options.conductor {
       StartClaudeConductor => {
-        let command = @exec.conductor_launch_command(
+        let command = @conductor_host.conductor_launch_command(
           config.project_dir,
           executable,
           lean=options.lean,

@@ -83,7 +83,7 @@ fn init_materialize_conductor_files(
 ) -> Result[Unit, String] {
   ignore(@sys.rm_rf(project_dir + "/.choir/plugin"))
   let mcp_config = match
-    @exec.conductor_claude_project_mcp_config_json(
+    @conductor_host.conductor_claude_project_mcp_config_json(
       @sys.read_file(project_dir + "/.mcp.json"),
       choir_executable,
     ) {
@@ -92,7 +92,7 @@ fn init_materialize_conductor_files(
   }
   if !@sys.write_file_sync(
       project_dir + "/.choir/state/claude-settings.json",
-      @exec.conductor_claude_settings_json(choir_executable),
+      @conductor_host.conductor_claude_settings_json(choir_executable),
     ) ||
     !@sys.write_file_sync(project_dir + "/.mcp.json", mcp_config) ||
     !@sys.write_file_sync(

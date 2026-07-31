@@ -7,10 +7,10 @@ fn native_conductor_error(detail : String) -> @types.Response {
 /// Refuse to launch the Conductor against a Claude whose advertised surface no
 /// longer matches the launch it is about to receive.
 pub async fn validate_native_conductor_surface(
-  probe? : async (@harness.HarnessProbeProcess) -> Result[
+  probe~ : async (@harness.HarnessProbeProcess) -> Result[
     @harness.HarnessProbeCapture,
     @types.ChoirError,
-  ] = capture_harness_probe,
+  ],
 ) -> Result[Unit, @types.ChoirError] {
   let capture = match
     probe({

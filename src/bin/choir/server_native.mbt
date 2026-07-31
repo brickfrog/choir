@@ -622,7 +622,7 @@ async fn conductor_dispatch(
   state : ConductorServerState,
   request : @types.Request,
 ) -> @types.Response {
-  @exec.dispatch_native_conductor_request(
+  @conductor_host.dispatch_native_conductor_request(
     state.config.project_dir,
     conductor_authenticated_request(request),
     capture=@process_host.capture_command_merged,
@@ -1361,19 +1361,21 @@ async fn conductor_run_leased_work_order_job(
   config : @types.Config,
   lease : @workflow.WorkOrderExecutorLease,
 ) -> Unit {
-  let observed = @exec.run_native_work_order_execution_job(
+  let observed = @work_order_host.run_native_work_order_execution_job(
     config.project_dir,
     lease,
     config.provider_capacity,
   )
   let outcome = match observed.0 {
-    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) =>
+    Ok(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle
+    ) =>
       @workflow.WorkOrderExecutionJobTickOutcome::WorkOrderExecutionJobTickSucceeded(
         None,
         observed.1,
       )
     Ok(
-      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
         record
       )
     ) =>
@@ -1388,7 +1390,7 @@ async fn conductor_run_leased_work_order_job(
       )
   }
   let completed = match
-    @exec.complete_native_work_order_executor_dispatch(
+    @work_order_host.complete_native_work_order_executor_dispatch(
       config.project_dir,
       lease,
       outcome,
@@ -1407,7 +1409,7 @@ async fn conductor_run_leased_work_order_job(
   }
   match observed.0 {
     Ok(
-      @exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionAdvanced(
         record
       )
     ) => {
@@ -1417,7 +1419,9 @@ async fn conductor_run_leased_work_order_job(
       ])
       conductor_publish_work_order_record(config, record)
     }
-    Ok(@exec.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle) => ()
+    Ok(
+      @work_order_host.NativeWorkOrderExecutionTick::NativeWorkOrderExecutionIdle
+    ) => ()
     Err(error) =>
       @moontrace.error("WorkOrder execution job failed", fields=[
         @moontrace.field("work_order_id", lease.work_order_id.0),
@@ -1453,7 +1457,7 @@ async fn conductor_work_order_scheduler_loop(config : @types.Config) -> Unit {
     let mut consecutive_failures = 0
     for ;; {
       match
-        @exec.plan_native_work_order_executor_dispatches(
+        @work_order_host.plan_native_work_order_executor_dispatches(
           config.project_dir,
           config.work_order_executor_capacity,
         ) {
