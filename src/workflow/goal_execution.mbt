@@ -12,6 +12,61 @@ pub(all) enum GoalExecutionState {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum GoalRuntimeReclaimDecision {
+  GoalRuntimePreserveForeignRepository
+  GoalRuntimePreserveLiveGoal
+  GoalRuntimeReclaimOwnedStale
+} derive(Debug, Eq)
+
+///|
+pub fn plan_goal_runtime_reclamation(
+  current_repository : RepositoryId,
+  owner_repository : RepositoryId,
+  owner_state : GoalExecutionState?,
+) -> GoalRuntimeReclaimDecision {
+  if current_repository != owner_repository {
+    return GoalRuntimeReclaimDecision::GoalRuntimePreserveForeignRepository
+  }
+  match owner_state {
+    Some(
+      GoalExecutionState::GoalExecutionSucceeded
+      | GoalExecutionState::GoalExecutionCanceled
+    )
+    | None => GoalRuntimeReclaimDecision::GoalRuntimeReclaimOwnedStale
+    Some(_) => GoalRuntimeReclaimDecision::GoalRuntimePreserveLiveGoal
+  }
+}
+
+///|
+test "runtime reclamation requires repository ownership and stale state" {
+  let repo = RepositoryId("repo-a")
+  assert_eq(
+    plan_goal_runtime_reclamation(repo, RepositoryId("repo-b"), None),
+    GoalRuntimeReclaimDecision::GoalRuntimePreserveForeignRepository,
+  )
+  assert_eq(
+    plan_goal_runtime_reclamation(
+      repo,
+      repo,
+      Some(GoalExecutionState::GoalExecutionRunning),
+    ),
+    GoalRuntimeReclaimDecision::GoalRuntimePreserveLiveGoal,
+  )
+  assert_eq(
+    plan_goal_runtime_reclamation(
+      repo,
+      repo,
+      Some(GoalExecutionState::GoalExecutionSucceeded),
+    ),
+    GoalRuntimeReclaimDecision::GoalRuntimeReclaimOwnedStale,
+  )
+  assert_eq(
+    plan_goal_runtime_reclamation(repo, repo, None),
+    GoalRuntimeReclaimDecision::GoalRuntimeReclaimOwnedStale,
+  )
+}
+
+///|
 pub(all) enum GoalPauseReason {
   GoalPauseRecoveryUncertain
   GoalPauseRequested

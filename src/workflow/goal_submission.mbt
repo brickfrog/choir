@@ -32,7 +32,8 @@ pub(all) struct RepositoryId(String) derive (
 /// The durable identity of a repository, derived from its canonical root.
 ///
 /// One definition because this identity keys runtime roots
-/// (/tmp/choir-take-goal-<key>), Bead claim reconciliation, and publication.
+/// (/tmp/choir-take-goal-<repository>-<key>), Bead claim reconciliation, and
+/// publication.
 /// It was copy-pasted at four call sites across submission, publication, and
 /// execution — including the restart-reset path — and one of them already
 /// spelled the digest differently. A copy drifting to a v2 scheme would make

@@ -371,6 +371,82 @@ fn read_native_sandbox_resource(
 }
 
 ///|
+pub fn native_runtime_owned_box_ids(
+  runtime_root : String,
+  path_exists? : (String) -> Bool = @sys.path_exists,
+  canonicalize? : (String) -> String? = @sys.realpath_native,
+  list_dir? : (String) -> Array[String] = @sys.list_dir,
+  read_file? : (String) -> String = @sys.read_file,
+) -> Result[Array[String], @types.ChoirError] {
+  let registry = runtime_root + "/state/sandboxes"
+  if !path_exists(registry) {
+    return Ok([])
+  }
+  if canonicalize(runtime_root) != Some(runtime_root) ||
+    canonicalize(registry) != Some(registry) {
+    return Err(native_part_effect_error("sandbox registry is not canonical"))
+  }
+  let owned : Array[String] = []
+  for entry in list_dir(registry) {
+    let suffix = ".json"
+    if !entry.has_suffix(suffix) || entry.length() <= suffix.length() {
+      return Err(native_part_effect_error("sandbox registry entry is invalid"))
+    }
+    let generation = entry[:entry.length() - suffix.length()].to_owned()
+    if !@sandbox.valid_boxlite_state_token(generation) {
+      return Err(
+        native_part_effect_error("sandbox registry identity is invalid"),
+      )
+    }
+    let json = @json.parse(read_file(registry + "/" + entry)) catch {
+      _ => return Err(native_part_effect_error("sandbox registry is not JSON"))
+    }
+    let manifest : NativeSandboxResourceManifest = @json.from_json(json) catch {
+      _ =>
+        return Err(
+          native_part_effect_error("sandbox registry schema is invalid"),
+        )
+    }
+    if manifest.version != 2 ||
+      manifest.generation_id != @control.SandboxGenerationId(generation) ||
+      !@sandbox.valid_boxlite_state_token(manifest.base_box_id) ||
+      !@sandbox.valid_boxlite_state_token(manifest.box_id) ||
+      manifest.image_digest != @sandbox.boxlite_take_image_digest ||
+      manifest.tool_manifest_digest !=
+      @sandbox.boxlite_take_tool_manifest_digest() ||
+      manifest.runtime_policy_digest !=
+      @sandbox.boxlite_take_runtime_policy_digest() {
+      return Err(
+        native_part_effect_error("sandbox registry identity is invalid"),
+      )
+    }
+    if !owned.contains(manifest.box_id) {
+      owned.push(manifest.box_id)
+    }
+    if !owned.contains(manifest.base_box_id) {
+      owned.push(manifest.base_box_id)
+    }
+  }
+  Ok(owned)
+}
+
+///|
+test "runtime owned-box observation fails closed before returning IDs" {
+  let root = "/tmp/choir-take-owned-observation"
+  let registry = root + "/state/sandboxes"
+  assert_true(
+    native_runtime_owned_box_ids(
+      root,
+      path_exists=fn(path) { path == registry },
+      canonicalize=fn(path) { Some(path) },
+      list_dir=fn(_) { ["generation.json", "unexpected"] },
+      read_file=fn(_) { "{}" },
+    )
+    is Err(_),
+  )
+}
+
+///|
 pub async fn native_runtime_sandbox(
   runtime : NativePartEffectRuntime,
   generation_id : @control.SandboxGenerationId,
@@ -544,7 +620,10 @@ pub async fn prepare_native_source_sandbox(
   let sandbox = if read_only_subject {
     match @take_host.seal_native_boxlite_assurance_subject(mutable_sandbox) {
       Ok(value) => value
-      Err(error) => return Err(error)
+      Err(error) => {
+        ignore(@take_host.destroy_native_boxlite_take(mutable_sandbox))
+        return Err(error)
+      }
     }
   } else {
     mutable_sandbox
@@ -553,7 +632,10 @@ pub async fn prepare_native_source_sandbox(
   runtime.prepared.val = Some(sandbox.prepared)
   match store_native_sandbox_resource(runtime, lease.generation_id, sandbox) {
     Ok(_) => ()
-    Err(error) => return Err(error)
+    Err(error) => {
+      ignore(@take_host.destroy_native_boxlite_take(sandbox))
+      return Err(error)
+    }
   }
   runtime.sandboxes[lease.generation_id.0] = sandbox
   Ok({ ..lease, lifecycle: @control.SandboxLeaseLifecycle::SandboxLeaseActive })
@@ -1563,11 +1645,4 @@ pub fn native_part_effect_adapters(
       reconcile_unwitnessed_native_part_effect(runtime, snapshot, intent)
     },
   }
-}
-
-///|
-pub async fn cleanup_native_part_effect_runtime(
-  runtime : NativePartEffectRuntime,
-) -> Result[Unit, @types.ChoirError] {
-  @take_host.cleanup_native_boxlite_server(runtime.server.val)
 }

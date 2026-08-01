@@ -4447,7 +4447,9 @@ async fn run_boxlite_take_live() -> Int {
   )
   let owner_pid = active_server.val.owner_pid
   let runtime_pid = active_server.val.pid
-  let cleanup = @take_host.cleanup_native_boxlite_server(active_server.val)
+  let cleanup = @take_host.cleanup_native_boxlite_fixture_server(
+    active_server.val,
+  )
   let owner_stopped = !@sys.pgid_has_non_zombie_process(owner_pid)
   let runtime_stopped = !@sys.pgid_has_non_zombie_process(runtime_pid)
   let host_head_after = capture_live_git(repository_root, [
