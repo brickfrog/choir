@@ -264,13 +264,14 @@ pub async fn capture_native_claude_conductor_qualification(
     @process_host.command_to_shell_string(command),
   )
   match
-    @process_host.collect_interruptible_process(
+    @process_host.capture_bounded_process(
       command.program,
       command.args,
       native_claude_conductor_environment(config),
       stdin_read,
       config.project_dir,
       120000,
+      16 * 1024 * 1024,
       fn() { false },
     ) {
     Ok(@process_host.NativeProcessCompleted(0, output)) => Ok(output)
@@ -286,6 +287,12 @@ pub async fn capture_native_claude_conductor_qualification(
       Err(
         @types.ChoirError::provider_process_lost(
           "Claude Conductor qualification was interrupted",
+        ),
+      )
+    Ok(@process_host.NativeProcessOutputExceeded(_)) =>
+      Err(
+        @types.ChoirError::event_ingestion_overflow(
+          "Claude Conductor qualification output exceeded 16 MiB",
         ),
       )
     Err(error) => Err(error)

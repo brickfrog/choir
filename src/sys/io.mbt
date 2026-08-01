@@ -109,6 +109,9 @@ extern "C" fn c_kill_pid(pid : Int) -> Int = "choir_kill_pid"
 extern "C" fn c_kill_pgid(pgid : Int) -> Int = "choir_kill_pgid"
 
 ///|
+extern "C" fn c_force_kill_pgid(pgid : Int) -> Int = "choir_force_kill_pgid"
+
+///|
 extern "C" fn c_init_kill_server_pid_sequence(pid : Int) = "choir_init_kill_server_pid_sequence"
 
 ///|
@@ -559,6 +562,22 @@ pub fn kill_pid_best_effort(pid : Int) -> Unit {
 /// bounded-pgroup-cleanup intent.
 pub fn kill_pgid_best_effort(pgid : Int) -> Unit {
   ignore(c_kill_pgid(pgid))
+}
+
+///|
+/// Send `SIGTERM` to an exact owned process group and report whether the
+/// signal was delivered or the group was already absent. Unsafe group ids are
+/// rejected rather than treated as a successful no-op.
+pub fn terminate_pgid_checked(pgid : Int) -> Bool {
+  pgid > 1 && c_kill_pgid(pgid) == 0
+}
+
+///|
+/// Send `SIGKILL` to an exact owned process group and report whether the
+/// signal was delivered or the group was already absent. Unsafe group ids are
+/// rejected rather than treated as a successful no-op.
+pub fn force_kill_pgid_checked(pgid : Int) -> Bool {
+  pgid > 1 && c_force_kill_pgid(pgid) == 0
 }
 
 ///|

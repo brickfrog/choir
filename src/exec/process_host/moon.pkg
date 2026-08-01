@@ -18,8 +18,8 @@ options(
   targets: {
     "process_native.mbt": [ "native" ],
     "process_stub.mbt": [ "js", "wasm", "wasm-gc" ],
-    "interruptible_native.mbt": [ "native" ],
-    "interruptible_native_test.mbt": [ "native" ],
+    "bounded_native.mbt": [ "native" ],
+    "bounded_native_test.mbt": [ "native" ],
     "process_test.mbt": [ "native" ],
   },
 )

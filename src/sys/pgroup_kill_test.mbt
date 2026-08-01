@@ -28,6 +28,14 @@ fn parse_pid_file_for_test(path : String) -> Int {
 }
 
 ///|
+test "checked process-group signals reject unsafe group ids" {
+  for pgid in [-42, -1, 0, 1] {
+    assert_false(terminate_pgid_checked(pgid))
+    assert_false(force_kill_pgid_checked(pgid))
+  }
+}
+
+///|
 test "read_file_prefix reads zero-sized proc files with a hard bound" {
   let command = read_file_prefix("/proc/self/cmdline", 4096)
   assert_true(command.length() > 0)

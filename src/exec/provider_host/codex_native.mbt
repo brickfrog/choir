@@ -2363,27 +2363,34 @@ pub async fn run_native_codex_conductor_turn(
     }),
   )
   let collected = match
-    @process_host.collect_interruptible_process(
+    @process_host.capture_bounded_process(
       "/usr/bin/bwrap",
       bounded_args,
       native_codex_conductor_environment(provider_home, config),
       stdin_read,
       config.sterile_root,
       config.timeout_ms,
+      16 * 1024 * 1024,
       fn() { false },
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
   let (exit_code, output) = match collected {
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessCompleted(
+    @process_host.NativeBoundedProcessOutcome::NativeProcessCompleted(
       code,
       output
     ) => (code, output)
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+    @process_host.NativeBoundedProcessOutcome::NativeProcessInterrupted(_) =>
       return Err(@types.ChoirError::canceled("Codex Conductor interrupted"))
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
+    @process_host.NativeBoundedProcessOutcome::NativeProcessTimedOut(_) =>
       return Err(@types.ChoirError::timeout("Codex Conductor turn"))
+    @process_host.NativeProcessOutputExceeded(_) =>
+      return Err(
+        @types.ChoirError::event_ingestion_overflow(
+          "Codex Conductor output exceeded 16 MiB",
+        ),
+      )
   }
   @harness.evaluate_codex_conductor_capture(
     { exit_code, output },
