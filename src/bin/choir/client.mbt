@@ -32,6 +32,7 @@ fn goal_client_load_config_with(
   env_get? : (String) -> String? = fn(key) { @sys.getenv(key) },
   path_exists? : (String) -> Bool = fn(path) { @sys.path_exists(path) },
   read_file? : (String) -> String = fn(path) { @sys.read_file(path) },
+  canonicalize? : (String) -> String? = fn(path) { @sys.realpath_native(path) },
 ) -> Result[@types.Config, String] {
   if !path_exists(".choir/config.toml") {
     return Err("missing .choir/config.toml")
@@ -49,13 +50,19 @@ fn goal_client_load_config_with(
     Ok(config) => config
     Err(error) => return Err(error.message())
   }
+  let project_dir = match client_environment_value(env_get, "CHOIR_WORKSPACE") {
+    Some(path) => path
+    None =>
+      match canonicalize(".") {
+        Some(path) if path != "/" => path
+        _ => return Err("unable to authenticate the project directory")
+      }
+  }
   Ok({
     ..parsed,
-    project_dir: client_environment_value(env_get, "CHOIR_WORKSPACE").unwrap_or(
-      parsed.project_dir,
-    ),
+    project_dir,
     listen_uds: client_environment_value(env_get, "CHOIR_LISTEN_UDS").unwrap_or(
-      parsed.listen_uds,
+      project_dir + "/.choir/run/server.sock",
     ),
   })
 }
@@ -294,7 +301,7 @@ test "Goal client uses the fixed Conductor launch environment" {
 }
 
 ///|
-test "Goal client reads local launch settings outside a Conductor" {
+test "Goal client derives local launch authority from the canonical cwd" {
   let loaded = goal_client_load_config_with(
     env_get=fn(_) { None },
     path_exists=fn(_) { true },
@@ -305,9 +312,16 @@ test "Goal client reads local launch settings outside a Conductor" {
         "project_dir = \"/local/repo\"\nlisten_uds = \"/local/choir.sock\"\n"
       }
     },
+    canonicalize=fn(path) {
+      if path == "." {
+        Some("/local/repo")
+      } else {
+        None
+      }
+    },
   ).unwrap()
   assert_eq(loaded.project_dir, "/local/repo")
-  assert_eq(loaded.listen_uds, "/local/choir.sock")
+  assert_eq(loaded.listen_uds, "/local/repo/.choir/run/server.sock")
 }
 
 ///|

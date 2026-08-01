@@ -109,7 +109,7 @@ pub fn mint_local_token() -> String? {
 }
 
 ///|
-pub fn spawn_serve(_self_exe : String) -> Bool {
+pub fn spawn_serve(_self_exe : String, _log_fd : Int) -> Bool {
   false
 }
 
@@ -270,6 +270,21 @@ pub fn chmod_mode(_path : String, _mode : Int) -> Bool {
 ///|
 pub fn file_mode(_path : String) -> Int {
   -1
+}
+
+///|
+pub fn prepare_control_root(_project : String, _create : Bool) -> Bool {
+  false
+}
+
+///|
+pub fn open_control_log(_project : String) -> Int {
+  -1
+}
+
+///|
+pub fn append_control_log(_project : String, _content : String) -> Bool {
+  false
 }
 
 ///|

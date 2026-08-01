@@ -19,6 +19,35 @@ fn storage_test_path(name : String) -> String {
 }
 
 ///|
+test "SQLite state store rejects symlinked files and parent components" {
+  let root = storage_test_path("sqlite-path-guard")
+  let outside = storage_test_path("sqlite-path-guard-outside")
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(outside))
+  assert_true(@sys.create_dir_all(root + "/state"))
+  assert_true(@sys.create_dir_all(outside))
+  let sentinel = outside + "/sentinel"
+  assert_true(@sys.write_file_sync(sentinel, "unchanged"))
+
+  let linked_file = root + "/state/control.db"
+  assert_true(@sys.symlink_force(sentinel, linked_file))
+  let file_store : @storage.SqliteStateStore = { path: linked_file }
+  assert_true(initialize_state_store(file_store) is Err(_))
+  assert_eq(@sys.read_file(sentinel), "unchanged")
+
+  let linked_parent = root + "/linked"
+  assert_true(@sys.symlink_force(outside, linked_parent))
+  let parent_store : @storage.SqliteStateStore = {
+    path: linked_parent + "/control.db",
+  }
+  assert_true(initialize_state_store(parent_store) is Err(_))
+  assert_false(@sys.path_exists(outside + "/control.db"))
+
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(outside))
+}
+
+///|
 fn initial_state_request(
   semantic_suffix : String,
   fault_point : @storage.StateStoreFaultPoint?,

@@ -17,48 +17,10 @@ fn init_config_toml_content() -> String {
 }
 
 ///|
-fn init_toml_escape_string(value : String) -> String {
-  let out = StringBuilder::new()
-  for char in value {
-    match char {
-      '"' => out.write_string("\\\"")
-      '\\' => out.write_string("\\\\")
-      '\n' => out.write_string("\\n")
-      '\r' => out.write_string("\\r")
-      '\t' => out.write_string("\\t")
-      _ => out.write_char(char)
-    }
-  }
-  out.to_string()
-}
-
-///|
-fn init_local_config_content(project_dir : String) -> String {
-  let escaped_project = init_toml_escape_string(project_dir)
-  let escaped_socket = init_toml_escape_string(
-    project_dir + "/.choir/run/server.sock",
-  )
-  "project_dir = \"" +
-  escaped_project +
-  "\"\n" +
-  "listen_uds = \"" +
-  escaped_socket +
-  "\"\n"
-}
-
-///|
 fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
-  for
-    path in [
-      project_dir + "/.choir",
-      project_dir + "/.choir/logs",
-      project_dir + "/.choir/run",
-      project_dir + "/.choir/state",
-      project_dir + "/.choir/state/control",
-    ] {
-    if !@sys.create_dir_all(path) {
-      return Err("failed to create " + path)
-    }
+  match @control_root_host.native_project_control_root(project_dir, true) {
+    Err(error) => return Err(error.message())
+    Ok(_) => ()
   }
   let config_path = project_dir + "/.choir/config.toml"
   if !@sys.path_exists(config_path) &&
@@ -68,8 +30,7 @@ fn init_ensure_project_files(project_dir : String) -> Result[Unit, String] {
   let local_config_path = project_dir + "/.choir/config.local.toml"
   if !@sys.path_exists(local_config_path) &&
     !@sys.write_file_sync(
-      local_config_path,
-      init_local_config_content(project_dir),
+      local_config_path, "# Machine-local Choir policy overrides.\n",
     ) {
     return Err("failed to write " + local_config_path)
   }
@@ -114,15 +75,6 @@ test "init accepts the direct Conductor options" {
     StartOptions::{ lean: false, conductor: StartCodexConductor },
   )
   assert_true(init_parse_options(["choir", "init", "--recreate"]) is Err(_))
-}
-
-///|
-test "init writes only current local launch configuration" {
-  let content = init_local_config_content("/tmp/choir repo")
-  assert_true(content.contains("project_dir = \"/tmp/choir repo\""))
-  assert_true(
-    content.contains("listen_uds = \"/tmp/choir repo/.choir/run/server.sock\""),
-  )
 }
 
 ///|

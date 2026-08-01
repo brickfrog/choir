@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -78,39 +79,82 @@ static int choir_accept_cloexec(int server_fd) {
 }
 
 int choir_uds_server_create(const char *path, int path_len) {
+    static const char suffix[] = "/.choir/run/server.sock";
+    size_t suffix_len = sizeof(suffix) - 1U;
+    if (path_len <= (int)suffix_len ||
+        memcmp(path + path_len - (int)suffix_len, suffix, suffix_len) != 0) {
+        return -1;
+    }
+    char *project = strndup(path, (size_t)path_len - suffix_len);
+    if (project == NULL) return -1;
+    int project_fd = open(project, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    free(project);
+    if (project_fd < 0) return -1;
+    int choir_fd = openat(project_fd, ".choir", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    close(project_fd);
+    if (choir_fd < 0) return -1;
+    int run_fd = openat(choir_fd, "run", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    close(choir_fd);
+    if (run_fd < 0) return -1;
+    struct stat dir_info;
+    if (fstat(run_fd, &dir_info) != 0 || dir_info.st_uid != geteuid() ||
+        !S_ISDIR(dir_info.st_mode) || (dir_info.st_mode & 0777) != 0700) {
+        close(run_fd);
+        return -1;
+    }
+    struct sockaddr_un public_addr;
+    if (choir_copy_uds_path(&public_addr, path, path_len) != 0) {
+        close(run_fd);
+        return -1;
+    }
+    struct stat existing;
+    if (fstatat(run_fd, "server.sock", &existing, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!S_ISSOCK(existing.st_mode) || existing.st_uid != geteuid() ||
+            choir_uds_can_connect(&public_addr)) {
+            close(run_fd);
+            return -1;
+        }
+        if (unlinkat(run_fd, "server.sock", 0) != 0) {
+            close(run_fd);
+            return -1;
+        }
+    } else if (errno != ENOENT) {
+        close(run_fd);
+        return -1;
+    }
+    char anchored[64];
+    int anchored_len = snprintf(anchored, sizeof(anchored), "/proc/self/fd/%d/server.sock", run_fd);
     struct sockaddr_un addr;
-    if (choir_copy_uds_path(&addr, path, path_len) != 0) {
+    if (anchored_len <= 0 || anchored_len >= (int)sizeof(anchored) ||
+        choir_copy_uds_path(&addr, anchored, anchored_len) != 0) {
+        close(run_fd);
         return -1;
     }
-
-    if (choir_uds_can_connect(&addr)) {
-        return -1;
-    }
-
-    unlink(addr.sun_path);
-
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
+        close(run_fd);
         return -1;
     }
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(fd);
+        close(run_fd);
         return -1;
     }
-
-    if (chmod(addr.sun_path, 0600) != 0) {
+    if (fchmodat(run_fd, "server.sock", 0600, 0) != 0) {
         close(fd);
-        unlink(addr.sun_path);
+        unlinkat(run_fd, "server.sock", 0);
+        close(run_fd);
         return -1;
     }
 
     if (listen(fd, SOMAXCONN) != 0) {
         close(fd);
-        unlink(addr.sun_path);
+        unlinkat(run_fd, "server.sock", 0);
+        close(run_fd);
         return -1;
     }
-
+    close(run_fd);
     return fd;
 }
 

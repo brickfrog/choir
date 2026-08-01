@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sqlite3.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -115,6 +116,7 @@ static int choir_sqlite_exec(sqlite3 *db, const char *sql) {
 typedef struct {
     char *path;
     sqlite3 *db;
+    int directory_fd;
     /* Whether the schema batch has already run on this connection. Connections
      * are pooled, so re-executing PRAGMAs and CREATE TABLE IF NOT EXISTS on an
      * already-prepared one is pure per-tick work. A connection evicted from
@@ -129,6 +131,63 @@ typedef struct {
     choir_sqlite_cached *slot;
     sqlite3 *db;
 } choir_sqlite_lease;
+
+static int choir_open_sqlite_parent(const char *path, char **name_out) {
+    if (path == NULL || path[0] != '/' || name_out == NULL) return -1;
+    char *copy = strdup(path);
+    if (copy == NULL) return -1;
+    char *slash = strrchr(copy, '/');
+    if (slash == NULL || slash[1] == '\0') { free(copy); return -1; }
+    *name_out = strdup(slash + 1);
+    if (*name_out == NULL) { free(copy); return -1; }
+    *slash = '\0';
+    int fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char *cursor = copy + 1;
+    char *save = NULL;
+    for (char *part = strtok_r(cursor, "/", &save);
+         fd >= 0 && part != NULL;
+         part = strtok_r(NULL, "/", &save)) {
+        if (strcmp(part, ".") == 0 || strcmp(part, "..") == 0) {
+            close(fd);
+            fd = -1;
+            break;
+        }
+        int next = openat(fd, part,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        close(fd);
+        fd = next;
+    }
+    free(copy);
+    if (fd < 0) { free(*name_out); *name_out = NULL; return -1; }
+    struct stat parent;
+    if (fstat(fd, &parent) != 0 || !S_ISDIR(parent.st_mode)) {
+        close(fd); free(*name_out); *name_out = NULL; return -1;
+    }
+    struct stat existing;
+    int existing_rc = fstatat(fd, *name_out, &existing, AT_SYMLINK_NOFOLLOW);
+    if (existing_rc == 0 &&
+        (!S_ISREG(existing.st_mode) || existing.st_uid != geteuid() || existing.st_nlink != 1)) {
+        close(fd); free(*name_out); *name_out = NULL; return -1;
+    }
+    if (existing_rc != 0 && errno != ENOENT) {
+        close(fd); free(*name_out); *name_out = NULL; return -1;
+    }
+    return fd;
+}
+
+static int choir_sqlite_sidecars_are_owned(int dir_fd, const char *name) {
+    static const char *suffixes[] = {"-wal", "-shm", "-journal"};
+    for (unsigned i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+        char sidecar[NAME_MAX + 16];
+        if (snprintf(sidecar, sizeof(sidecar), "%s%s", name, suffixes[i]) >= (int)sizeof(sidecar)) return 0;
+        struct stat info;
+        if (fstatat(dir_fd, sidecar, &info, AT_SYMLINK_NOFOLLOW) == 0) {
+            if (!S_ISREG(info.st_mode) || info.st_uid != geteuid() || info.st_nlink != 1) return 0;
+            if (fchmodat(dir_fd, sidecar, 0600, 0) != 0) return 0;
+        } else if (errno != ENOENT) return 0;
+    }
+    return 1;
+}
 
 static choir_sqlite_cached choir_sqlite_cache[CHOIR_SQLITE_CACHE_SLOTS];
 static unsigned choir_sqlite_cache_next = 0;
@@ -240,27 +299,64 @@ static int choir_sqlite_acquire_internal(
             continue;
         }
 
+        char *database_name = NULL;
+        int directory_fd = choir_open_sqlite_parent(copy, &database_name);
+        if (directory_fd < 0 || !choir_sqlite_sidecars_are_owned(directory_fd, database_name)) {
+            if (directory_fd >= 0) close(directory_fd);
+            free(database_name);
+            pthread_mutex_unlock(&choir_sqlite_cache_mutex);
+            free(copy);
+            return -1;
+        }
+        int guarded_fd = openat(
+            directory_fd,
+            database_name,
+            O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+            0600
+        );
+        struct stat guarded_info;
+        if (guarded_fd < 0 || fstat(guarded_fd, &guarded_info) != 0 ||
+            !S_ISREG(guarded_info.st_mode) || guarded_info.st_uid != geteuid() ||
+            guarded_info.st_nlink != 1 || fchmod(guarded_fd, 0600) != 0) {
+            if (guarded_fd >= 0) close(guarded_fd);
+            close(directory_fd); free(database_name);
+            pthread_mutex_unlock(&choir_sqlite_cache_mutex); free(copy); return -1;
+        }
+        char anchored[96];
+        int anchored_len = snprintf(anchored, sizeof(anchored), "/proc/self/fd/%d/%s", directory_fd, database_name);
+        if (anchored_len <= 0 || anchored_len >= (int)sizeof(anchored)) {
+            close(guarded_fd); close(directory_fd); free(database_name);
+            pthread_mutex_unlock(&choir_sqlite_cache_mutex); free(copy); return -1;
+        }
         sqlite3 *opened = NULL;
         int rc = choir_sqlite.open_v2(
-            copy,
+            anchored,
             &opened,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
             NULL
         );
+        close(guarded_fd);
+        if (rc == SQLITE_OK &&
+            (fchmodat(directory_fd, database_name, 0600, 0) != 0 ||
+             !choir_sqlite_sidecars_are_owned(directory_fd, database_name))) rc = SQLITE_CANTOPEN;
+        free(database_name);
         if (rc != SQLITE_OK || choir_sqlite_configure(opened) != 0) {
             if (opened != NULL) {
                 choir_sqlite.close(opened);
             }
+            close(directory_fd);
             pthread_mutex_unlock(&choir_sqlite_cache_mutex);
             free(copy);
             return -1;
         }
         if (slot->path != NULL) {
             choir_sqlite.close(slot->db);
+            if (slot->directory_fd >= 0) close(slot->directory_fd);
             free(slot->path);
         }
         slot->path = copy;
         slot->db = opened;
+        slot->directory_fd = directory_fd;
         slot->schema_ready = 0;
         slot->borrowed = 1;
         lease->slot = slot;
@@ -310,9 +406,11 @@ int choir_state_store_forget(const char *path, int path_len) {
             if (choir_sqlite.close != NULL) {
                 choir_sqlite.close(choir_sqlite_cache[i].db);
             }
+            if (choir_sqlite_cache[i].directory_fd >= 0) close(choir_sqlite_cache[i].directory_fd);
             free(choir_sqlite_cache[i].path);
             choir_sqlite_cache[i].path = NULL;
             choir_sqlite_cache[i].db = NULL;
+            choir_sqlite_cache[i].directory_fd = -1;
             choir_sqlite_cache[i].schema_ready = 0;
             choir_sqlite_cache[i].retiring = 0;
             pthread_cond_broadcast(&choir_sqlite_cache_changed);

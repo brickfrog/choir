@@ -172,11 +172,23 @@ fn uds_unlink_test_path(path : String) -> Unit {
 
 ///|
 fn uds_test_socket_path(label : String) -> String {
-  "/tmp/choir-uds-" +
-  label +
-  "-" +
-  uds_getpid_for_test_ffi().to_string() +
-  ".sock"
+  let root = "/tmp/choir-uds-" +
+    label +
+    "-" +
+    uds_getpid_for_test_ffi().to_string()
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.create_dir_all(root + "/.choir/run"))
+  ignore(@sys.chmod_mode(root + "/.choir", 0o700))
+  ignore(@sys.chmod_mode(root + "/.choir/run", 0o700))
+  root + "/.choir/run/server.sock"
+}
+
+///|
+fn uds_cleanup_test_path(path : String) -> Unit {
+  let suffix = "/.choir/run/server.sock"
+  if path.has_suffix(suffix) {
+    ignore(@sys.rm_rf(path[:path.length() - suffix.length()].to_owned()))
+  }
 }
 
 ///|
@@ -221,7 +233,7 @@ fn uds_accept_for_cloexec_test(path : String, nonblocking : Bool) -> (Int, Int) 
   if server_fd >= 0 {
     close(server_fd)
   }
-  uds_unlink_test_path(path)
+  uds_cleanup_test_path(path)
   (listener_flags, flags)
 }
 
@@ -257,7 +269,7 @@ test "accepted UDS peer exposes the current user and process" {
     if server_fd >= 0 {
       close(server_fd)
     }
-    uds_unlink_test_path(path)
+    uds_cleanup_test_path(path)
     fail("failed to create peer-credential fixture")
   }
   assert_true(peer_is_current_user(accepted_fd))
@@ -265,5 +277,5 @@ test "accepted UDS peer exposes the current user and process" {
   close(accepted_fd)
   close(client_fd)
   close(server_fd)
-  uds_unlink_test_path(path)
+  uds_cleanup_test_path(path)
 }

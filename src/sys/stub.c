@@ -50,6 +50,7 @@ int choir_stdin_set_unbuffered(void) {
 static volatile sig_atomic_t choir_cleanup_runtime_native = 0;
 
 int choir_rm_rf(const char *path);
+static int choir_write_fd_all(int fd, const char* content, int content_len);
 static volatile sig_atomic_t choir_sigusr1_flag = 0;
 static struct sigaction choir_saved_sigpipe_for_test;
 static int choir_saved_sigpipe_for_test_valid = 0;
@@ -59,6 +60,111 @@ static int choir_saved_sigpipe_for_test_valid = 0;
 #else
 #define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME
 #endif
+
+static int choir_open_owned_directory_at(int parent_fd, const char *name, int create) {
+    int fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0 && create && errno == ENOENT) {
+        if (mkdirat(parent_fd, name, 0700) != 0 && errno != EEXIST) return -1;
+        fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    }
+    if (fd < 0) return -1;
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISDIR(info.st_mode) ||
+        info.st_uid != geteuid() || fchmod(fd, 0700) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static int choir_validate_owned_regular_at(int dir_fd, const char *name) {
+    struct stat info;
+    if (fstatat(dir_fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0) {
+        return errno == ENOENT ? 0 : -1;
+    }
+    if (!S_ISREG(info.st_mode) || info.st_uid != geteuid() || info.st_nlink != 1) {
+        return -1;
+    }
+    int fd = openat(dir_fd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    int ok = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) &&
+        info.st_uid == geteuid() && info.st_nlink == 1 && fchmod(fd, 0600) == 0;
+    close(fd);
+    return ok ? 0 : -1;
+}
+
+static int choir_open_control_subdir(const char *project, const char *first, const char *second) {
+    int project_fd = open(project, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (project_fd < 0) return -1;
+    struct stat info;
+    if (fstat(project_fd, &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) {
+        close(project_fd);
+        return -1;
+    }
+    int choir_fd = choir_open_owned_directory_at(project_fd, ".choir", 0);
+    close(project_fd);
+    if (choir_fd < 0) return -1;
+    int first_fd = choir_open_owned_directory_at(choir_fd, first, 0);
+    close(choir_fd);
+    if (first_fd < 0) return -1;
+    if (second == NULL) return first_fd;
+    int second_fd = choir_open_owned_directory_at(first_fd, second, 0);
+    close(first_fd);
+    return second_fd;
+}
+
+int choir_prepare_control_root(const char *project, int create) {
+    (void)umask(0077);
+    int project_fd = open(project, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (project_fd < 0) return -1;
+    struct stat info;
+    if (fstat(project_fd, &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) {
+        close(project_fd);
+        return -1;
+    }
+    int choir_fd = choir_open_owned_directory_at(project_fd, ".choir", create);
+    close(project_fd);
+    if (choir_fd < 0) return -1;
+    int logs_fd = choir_open_owned_directory_at(choir_fd, "logs", create);
+    int run_fd = choir_open_owned_directory_at(choir_fd, "run", create);
+    int state_fd = choir_open_owned_directory_at(choir_fd, "state", create);
+    int control_fd = state_fd < 0 ? -1 : choir_open_owned_directory_at(state_fd, "control", create);
+    int ok = logs_fd >= 0 && run_fd >= 0 && state_fd >= 0 && control_fd >= 0;
+    if (ok && choir_validate_owned_regular_at(logs_fd, "serve.log") != 0) ok = 0;
+    if (ok && choir_validate_owned_regular_at(run_fd, "server.lock") != 0) ok = 0;
+    if (ok && choir_validate_owned_regular_at(run_fd, "server.pid") != 0) ok = 0;
+    if (ok && choir_validate_owned_regular_at(control_fd, "workflow.db") != 0) ok = 0;
+    if (ok && choir_validate_owned_regular_at(control_fd, "workflow.db-wal") != 0) ok = 0;
+    if (ok && choir_validate_owned_regular_at(control_fd, "workflow.db-shm") != 0) ok = 0;
+    if (logs_fd >= 0) close(logs_fd);
+    if (run_fd >= 0) close(run_fd);
+    if (state_fd >= 0) close(state_fd);
+    if (control_fd >= 0) close(control_fd);
+    close(choir_fd);
+    return ok ? 0 : -1;
+}
+
+int choir_open_control_log(const char *project) {
+    int logs_fd = choir_open_control_subdir(project, "logs", NULL);
+    if (logs_fd < 0) return -1;
+    int fd = openat(logs_fd, "serve.log", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+    close(logs_fd);
+    if (fd < 0) return -1;
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+        info.st_uid != geteuid() || info.st_nlink != 1 || fchmod(fd, 0600) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int choir_append_control_log(const char *project, const char *content, int content_len) {
+    int fd = choir_open_control_log(project);
+    if (fd < 0) return -1;
+    int rc = content_len == 0 ? 0 : choir_write_fd_all(fd, content, content_len);
+    return close(fd) == 0 && rc == 0 ? 0 : -1;
+}
 
 int choir_mint_local_token(char *out, int out_size) {
     unsigned char random_bytes[32];
@@ -1112,7 +1218,7 @@ int choir_set_parent_death_signal_term(void) {
 #endif
 }
 
-int choir_spawn_serve(const char* exe, int exe_len) {
+int choir_spawn_serve(const char* exe, int exe_len, int log_fd) {
     (void)exe_len; // Ensure unused param warning is avoided
     pid_t pid = fork();
     if (pid < 0) {
@@ -1137,14 +1243,10 @@ int choir_spawn_serve(const char* exe, int exe_len) {
         if (setsid() < 0) {
             _exit(127);
         }
-        /* logs/ may not exist yet: detached child opens the log before serve boots. */
-        mkdir(".choir", 0755);
-        mkdir(".choir/logs", 0755);
-        int fd = open(".choir/logs/serve.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (fd >= 0) {
-            dup2(fd, STDOUT_FILENO);
-            dup2(fd, STDERR_FILENO);
-            close(fd);
+        if (log_fd >= 0) {
+            dup2(log_fd, STDOUT_FILENO);
+            dup2(log_fd, STDERR_FILENO);
+            close(log_fd);
         }
         char* argv[] = { (char*)exe, "serve", NULL };
         execvp(exe, argv);
@@ -1153,6 +1255,7 @@ int choir_spawn_serve(const char* exe, int exe_len) {
     // Parent waits for Child 1
     int st = 0;
     waitpid(pid, &st, 0);
+    if (log_fd >= 0) close(log_fd);
     return 0;
 }
 

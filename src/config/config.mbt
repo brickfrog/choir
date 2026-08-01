@@ -179,18 +179,8 @@ pub fn parse_config(
     Err(error) => return Err(error)
   }
   Ok({
-    project_dir: config_value(
-      primary,
-      machine,
-      "project_dir",
-      defaults.project_dir,
-    ),
-    listen_uds: config_value(
-      primary,
-      machine,
-      "listen_uds",
-      defaults.listen_uds,
-    ),
+    project_dir: defaults.project_dir,
+    listen_uds: defaults.listen_uds,
     pull_request_delivery: { mode: delivery_mode, merge_method },
     provider_capacity,
     goal_executor_capacity,

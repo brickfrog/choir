@@ -143,7 +143,11 @@ fn conductor_append_log_line(path : String, line : String) -> Unit {
   for step in plan.rotate {
     ignore(@sys.rename_file_sync(step.0, step.1))
   }
-  ignore(@sys.append_file_sync(path, line))
+  let suffix = "/.choir/logs/serve.log"
+  if path.has_suffix(suffix) {
+    let project = path[:path.length() - suffix.length()].to_owned()
+    ignore(@sys.append_control_log(project, line))
+  }
 }
 
 ///|
@@ -1716,9 +1720,27 @@ async fn conductor_supervise_goal_worker(
 fn goal_worker_run() -> Unit {
   let config_content = @sys.read_file(".choir/config.toml")
   let local_content = @sys.read_file(".choir/config.local.toml")
-  let config = match
+  let parsed_config = match
     @config.parse_config(config_content, local_content=Some(local_content)) {
     Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr("choir run-goals: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
+  let config = match
+    native_resolve_launch_config(parsed_config, @sys.realpath_native) {
+    Ok(value) => value
+    Err(error) => {
+      @sys.write_stderr("choir run-goals: " + error + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
+  match
+    @control_root_host.native_project_control_root(config.project_dir, false) {
+    Ok(_) => ()
     Err(error) => {
       @sys.write_stderr("choir run-goals: " + error.message() + "\n")
       @sys.exit(1)
@@ -1787,10 +1809,15 @@ fn serve_run() -> Unit {
       return
     }
   }
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
+  match
+    @control_root_host.native_project_control_root(config.project_dir, false) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir serve: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   // The instance lock must precede any runtime-artifact cleanup: a live
   // daemon holds it for its whole lifetime, so reaching the unlink below
   // proves the socket and pid file are stale rather than another daemon's.
@@ -2103,9 +2130,11 @@ test "Conductor replays a worker update that races Goal observation" {
 /// only half the problem: the renames also have to actually happen, and the
 /// live file has to come back afterwards.
 test "the daemon log rolls and keeps a bounded set of generations" {
-  let path = "/tmp/choir-log-rotation-test-" +
-    @sys.get_pid().to_string() +
-    ".log"
+  let root = "/tmp/choir-log-rotation-test-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.create_dir_all(root))
+  ignore(@control_root_host.native_project_control_root(root, true).unwrap())
+  let path = root + "/.choir/logs/serve.log"
   let generations = @command.default_log_rotation_policy().retained_generations
   ignore(@sys.delete_file_sync(path))
   for index = 1; index <= generations + 1; index = index + 1 {
@@ -2135,8 +2164,5 @@ test "the daemon log rolls and keeps a bounded set of generations" {
     @sys.path_exists(@command.log_generation_path(path, generations + 1)),
   )
   assert_true(@sys.path_exists(@command.log_generation_path(path, generations)))
-  ignore(@sys.delete_file_sync(path))
-  for index = 1; index <= generations + 1; index = index + 1 {
-    ignore(@sys.delete_file_sync(@command.log_generation_path(path, index)))
-  }
+  ignore(@sys.rm_rf(root))
 }
