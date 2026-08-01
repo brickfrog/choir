@@ -149,7 +149,6 @@ pub(all) struct SandboxNetworkProfileRef {
 ///|
 pub(all) enum SandboxOutputLimitDisposition {
   SandboxTerminateAndMarkExceeded
-  SandboxTruncateAndMarkIncomplete
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

@@ -15,11 +15,49 @@ enum NativeProcessFaultPoint {
 ///|
 priv struct NativeProcessExecutionAdapters {
   execute : async () -> Result[
-    @take_host.NativeSandboxProcessResult,
+    @take_host.NativeSandboxProcessOutcome,
     @types.ChoirError,
   ]
   retire_generation : async () -> Result[Unit, @types.ChoirError]
   fault_enabled : (NativeProcessFaultPoint) -> Bool
+}
+
+///|
+fn native_process_semantic_terminal_error(
+  disposition : @sandbox.ProcessExecutionDisposition,
+) -> @types.ChoirError {
+  match disposition {
+    @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded =>
+      @types.ChoirError::policy_blocked(
+        "native sandbox process output exceeded its admitted limit",
+      )
+    @sandbox.ProcessExecutionDisposition::ProcessTimedOut =>
+      @types.ChoirError::timeout(
+        "native sandbox process exceeded its admitted deadline",
+      )
+    @sandbox.ProcessExecutionDisposition::ProcessInterrupted =>
+      @types.ChoirError::canceled("native sandbox process was interrupted")
+    _ =>
+      @types.ChoirError::provider_process_lost(
+        "native sandbox process has no deterministic terminal result",
+      )
+  }
+}
+
+///|
+fn native_process_semantic_disposition(
+  outcome : @take_host.NativeSandboxProcessOutcome,
+) -> @sandbox.ProcessExecutionDisposition? {
+  match outcome {
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessInterrupted =>
+      Some(@sandbox.ProcessExecutionDisposition::ProcessInterrupted)
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessTimedOut =>
+      Some(@sandbox.ProcessExecutionDisposition::ProcessTimedOut)
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessOutputExceeded =>
+      Some(@sandbox.ProcessExecutionDisposition::ProcessLimitExceeded)
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessExited(_) =>
+      None
+  }
 }
 
 ///|
@@ -394,11 +432,17 @@ async fn execute_durable_native_process_with(
         finished_at: initial.execution.finished_at,
       })
     }
+    @sandbox.ProcessExecutionDisposition::ProcessTimedOut
+    | @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded
+    | @sandbox.ProcessExecutionDisposition::ProcessInterrupted as disposition => {
+      match (adapters.retire_generation)() {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      return Err(native_process_semantic_terminal_error(disposition))
+    }
     @sandbox.ProcessExecutionDisposition::ProcessStartMayHaveOccurred
     | @sandbox.ProcessExecutionDisposition::ProcessStartUncertain
-    | @sandbox.ProcessExecutionDisposition::ProcessTimedOut
-    | @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded
-    | @sandbox.ProcessExecutionDisposition::ProcessInterrupted
     | @sandbox.ProcessExecutionDisposition::ProcessSandboxLost =>
       return Err(
         @types.ChoirError::provider_process_lost(
@@ -426,7 +470,7 @@ async fn execute_durable_native_process_with(
   if (adapters.fault_enabled)(ProcessAfterAuthorizationBeforeDispatch) {
     return Err(native_process_execution_error("fault before process dispatch"))
   }
-  let result = match (adapters.execute)() {
+  let outcome = match (adapters.execute)() {
     Ok(value) => value
     // The dispatch error names why the guest process could not be observed —
     // a timeout, an output limit, a lost box. Collapsing it to a generic
@@ -464,6 +508,46 @@ async fn execute_durable_native_process_with(
   }
   if (adapters.fault_enabled)(ProcessAfterDispatchBeforeTerminalPersistence) {
     return Err(native_process_execution_error("fault after process dispatch"))
+  }
+  let result = match outcome {
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessExited(value) =>
+      value
+    _ => {
+      let disposition = match native_process_semantic_disposition(outcome) {
+        Some(value) => value
+        None =>
+          return Err(
+            native_process_execution_error(
+              "semantic process outcome is inconsistent",
+            ),
+          )
+      }
+      let terminal = match
+        @sandbox.record_process_nonexit_terminal(
+          authorized,
+          disposition,
+          (runtime.config.now)(),
+        ) {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+      match
+        persist_native_process_execution(
+          runtime,
+          goal_id,
+          fencing_epoch,
+          terminal,
+          Some(authorized_store.state_record.version),
+        ) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      match (adapters.retire_generation)() {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+      return Err(native_process_semantic_terminal_error(disposition))
+    }
   }
   match adopt_native_process_output(runtime, goal_id, result) {
     Ok(_) => ()
@@ -532,6 +616,7 @@ pub async fn execute_durable_native_process(
           persisted_process_spec_digest,
           process,
           fn(artifact) { native_artifact_exists(runtime, artifact) },
+          cancellation_requested=runtime.config.goal_cancellation_requested,
         )
       },
       retire_generation: async fn() {
@@ -583,6 +668,23 @@ async fn execute_durable_native_boxlite_process(
 }
 
 ///|
+async fn retire_native_process_generation(
+  runtime : NativePartEffectRuntime,
+  generation_id : @control.SandboxGenerationId,
+) -> Result[Unit, @types.ChoirError] {
+  let sandbox = match read_native_sandbox_resource(runtime, generation_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match @take_host.destroy_native_boxlite_take(sandbox) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  runtime.sandboxes.remove(generation_id.0)
+  Ok(())
+}
+
+///|
 async fn reconcile_unadoptable_native_process(
   runtime : NativePartEffectRuntime,
   snapshot : @workflow.PartWorkflowSnapshot,
@@ -619,15 +721,10 @@ pub async fn reconcile_unadoptable_native_process_id(
     @sandbox.ProcessRecoveryAction::ProcessRetireSandboxGeneration(
       generation_id
     ) => {
-      let sandbox = match read_native_sandbox_resource(runtime, generation_id) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-      match @take_host.destroy_native_boxlite_take(sandbox) {
+      match retire_native_process_generation(runtime, generation_id) {
         Ok(_) => ()
         Err(error) => return Err(error)
       }
-      runtime.sandboxes.remove(generation_id.0)
       let uncertain = match
         @sandbox.record_unadoptable_process_start(
           stored.execution,
@@ -648,7 +745,23 @@ pub async fn reconcile_unadoptable_native_process_id(
         Err(error) => Err(error)
       }
     }
-    @sandbox.ProcessRecoveryAction::ProcessRecoveryBlocked => Ok(true)
+    @sandbox.ProcessRecoveryAction::ProcessRecoveryBlocked =>
+      match stored.execution.disposition {
+        @sandbox.ProcessExecutionDisposition::ProcessTimedOut
+        | @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded
+        | @sandbox.ProcessExecutionDisposition::ProcessInterrupted as disposition => {
+          match
+            retire_native_process_generation(
+              runtime,
+              stored.execution.sandbox_generation_id,
+            ) {
+            Ok(_) => ()
+            Err(error) => return Err(error)
+          }
+          Err(native_process_semantic_terminal_error(disposition))
+        }
+        _ => Ok(true)
+      }
     @sandbox.ProcessRecoveryAction::ProcessAdoptRuntimeKey(_) =>
       Err(
         native_process_execution_error(
@@ -827,18 +940,20 @@ async test "process execution state persists and recovers every start boundary" 
     let calls = @ref.new(0)
     let effect_id = @control.EffectId("process-fault-" + index.to_string())
     let runner : async () -> Result[
-      @take_host.NativeSandboxProcessResult,
+      @take_host.NativeSandboxProcessOutcome,
       @types.ChoirError,
     ] = async fn() {
       @async.sleep(0)
       calls.val = calls.val + 1
-      Ok({
-        exit_code: 0,
-        output: "bounded",
-        output_digest: digest("bounded"),
-        started_at: None,
-        finished_at: None,
-      })
+      Ok(
+        @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessExited({
+          exit_code: 0,
+          output: "bounded",
+          output_digest: digest("bounded"),
+          started_at: None,
+          finished_at: None,
+        }),
+      )
     }
     let first = execute_durable_native_process_with(
       runtime,
@@ -893,6 +1008,102 @@ async test "process execution state persists and recovers every start boundary" 
         Err(error) => fail(error.message())
       }
     }
+  }
+  let semantic_cases : Array[
+    (
+      @take_host.NativeSandboxProcessOutcome,
+      @sandbox.ProcessExecutionDisposition,
+      String,
+    ),
+  ] = [
+    (
+      @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessOutputExceeded,
+      @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded,
+      "policy_blocked",
+    ),
+    (
+      @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessTimedOut,
+      @sandbox.ProcessExecutionDisposition::ProcessTimedOut,
+      "timeout",
+    ),
+    (
+      @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessInterrupted,
+      @sandbox.ProcessExecutionDisposition::ProcessInterrupted,
+      "canceled",
+    ),
+  ]
+  for index = 0; index < semantic_cases.length(); index = index + 1 {
+    let (outcome, disposition, wire_error) = semantic_cases[index]
+    let calls = @ref.new(0)
+    let retirements = @ref.new(0)
+    let effect_id = @control.EffectId("process-semantic-" + index.to_string())
+    let adapters : NativeProcessExecutionAdapters = {
+      execute: async fn() {
+        @async.sleep(0)
+        calls.val = calls.val + 1
+        Ok(outcome)
+      },
+      retire_generation: async fn() {
+        @async.sleep(0)
+        let stored = load_native_process_execution(
+          runtime,
+          native_process_execution_id(effect_id, ""),
+        ).unwrap()
+        assert_true(
+          stored is Some({ execution: { disposition: observed, .. }, .. }) &&
+          observed == disposition,
+        )
+        retirements.val = retirements.val + 1
+        Ok(())
+      },
+      fault_enabled: fn(_) { false },
+    }
+    let first = execute_durable_native_process_with(
+      runtime,
+      goal_id,
+      fence,
+      effect_id,
+      "",
+      take_id,
+      lease,
+      digest("fault-spec"),
+      process,
+      adapters,
+    )
+    assert_true(first is Err(error) && error.to_wire_string() == wire_error)
+    let second = execute_durable_native_process_with(
+      runtime,
+      goal_id,
+      fence,
+      effect_id,
+      "",
+      take_id,
+      lease,
+      digest("fault-spec"),
+      process,
+      adapters,
+    )
+    assert_true(second is Err(error) && error.to_wire_string() == wire_error)
+    assert_eq(calls.val, 1)
+    assert_eq(retirements.val, 2)
+    let stored = load_native_process_execution(
+      runtime,
+      native_process_execution_id(effect_id, ""),
+    ).unwrap()
+    assert_true(
+      stored
+      is Some(
+        {
+          execution: {
+            disposition: observed,
+            output_artifact_set_digest: None,
+            ..,
+          },
+          ..,
+        }
+      ) &&
+      observed == disposition,
+    )
   }
   let retired = @ref.new(false)
   let failed = execute_durable_native_process_with(

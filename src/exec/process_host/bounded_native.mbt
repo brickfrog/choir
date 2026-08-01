@@ -184,7 +184,7 @@ pub async fn capture_bounded_process(
     !cwd.has_prefix("/") ||
     timeout_ms < 1000 ||
     timeout_ms > 3600000 ||
-    output_limit_bytes <= 0 {
+    output_limit_bytes < 0 {
     return Err(
       @types.ChoirError::validation_error(
         "bounded process specification is invalid",

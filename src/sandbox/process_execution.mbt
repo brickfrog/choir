@@ -131,8 +131,10 @@ pub fn validate_process_execution(
     | ProcessInterrupted
     | ProcessSandboxLost
     | ProcessStartUncertain =>
-      if execution.started_at is None || execution.finished_at is None {
-        return Err(process_execution_error("terminal state lacks timestamps"))
+      if execution.started_at is None ||
+        execution.finished_at is None ||
+        execution.output_artifact_set_digest is Some(_) {
+        return Err(process_execution_error("terminal state is inconsistent"))
       }
   }
   Ok(())
@@ -202,6 +204,39 @@ pub fn record_process_exit(
     output_artifact_set_digest: Some(output_digest),
     finished_at: Some(finished_at),
     disposition: ProcessExited(exit_code, output_digest),
+  })
+}
+
+///|
+pub fn record_process_nonexit_terminal(
+  execution : ProcessExecution,
+  disposition : ProcessExecutionDisposition,
+  finished_at : Int64,
+) -> Result[ProcessExecution, @types.ChoirError] {
+  match validate_process_execution(execution) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match disposition {
+    ProcessTimedOut | ProcessLimitExceeded | ProcessInterrupted => ()
+    _ =>
+      return Err(
+        process_execution_error("non-exit disposition is not semantic"),
+      )
+  }
+  if execution.disposition != ProcessStartMayHaveOccurred ||
+    finished_at <= execution.started_at.unwrap_or(0L) {
+    return Err(
+      process_execution_error(
+        "cannot record non-exit terminal from current state",
+      ),
+    )
+  }
+  Ok({
+    ..execution,
+    output_artifact_set_digest: None,
+    finished_at: Some(finished_at),
+    disposition,
   })
 }
 
