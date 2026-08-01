@@ -1,4 +1,5 @@
 import {
+  "choir/src/sys",
   "moonbitlang/core/encoding/utf8",
 }
 

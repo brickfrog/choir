@@ -92,25 +92,15 @@ test "machine-local capacity overrides the checked-in capacity" {
 }
 
 ///|
-test "machine-local launch settings override checked-in settings" {
+test "repository path settings are obsolete and ignored" {
   let config = parse_config(
     "project_dir = \"/checked-in\"\nlisten_uds = \"/checked-in.sock\"\n",
     local_content=Some(
       "project_dir = \"/local repo\"\nlisten_uds = \"/local.sock\"\n",
     ),
   ).unwrap()
-  assert_eq(config.project_dir, "/local repo")
-  assert_eq(config.listen_uds, "/local.sock")
-}
-
-///|
-test "empty local settings do not erase checked-in settings" {
-  let config = parse_config(
-    "project_dir = \"/repo\"\nlisten_uds = \"/repo/choir.sock\"\n",
-    local_content=Some("project_dir = \"\"\nlisten_uds = \"\"\n"),
-  ).unwrap()
-  assert_eq(config.project_dir, "/repo")
-  assert_eq(config.listen_uds, "/repo/choir.sock")
+  assert_eq(config.project_dir, ".")
+  assert_eq(config.listen_uds, ".choir/run/server.sock")
 }
 
 ///|

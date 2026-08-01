@@ -43,6 +43,22 @@ extern "C" fn c_read_file_prefix(
 extern "C" fn c_file_mode(path : Bytes) -> Int = "choir_file_mode"
 
 ///|
+#borrow(project)
+extern "C" fn c_prepare_control_root(project : Bytes, create : Int) -> Int = "choir_prepare_control_root"
+
+///|
+#borrow(project)
+extern "C" fn c_open_control_log(project : Bytes) -> Int = "choir_open_control_log"
+
+///|
+#borrow(project, content)
+extern "C" fn c_append_control_log(
+  project : Bytes,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_append_control_log"
+
+///|
 #borrow(path, buf)
 extern "C" fn c_read_file_range(
   path : Bytes,
@@ -130,7 +146,7 @@ extern "C" fn c_mint_local_token(out : Bytes, out_size : Int) -> Int = "choir_mi
 
 ///|
 #borrow(exe)
-extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int) -> Int = "choir_spawn_serve"
+extern "C" fn c_spawn_serve(exe : Bytes, exe_len : Int, log_fd : Int) -> Int = "choir_spawn_serve"
 
 ///|
 #borrow(exe, cwd)
@@ -694,9 +710,9 @@ pub fn mint_local_token() -> String? {
 }
 
 ///|
-pub fn spawn_serve(self_exe : String) -> Bool {
+pub fn spawn_serve(self_exe : String, log_fd : Int) -> Bool {
   let exe_bytes = string_to_null_terminated_bytes(self_exe)
-  c_spawn_serve(exe_bytes, exe_bytes.length() - 1) == 0
+  c_spawn_serve(exe_bytes, exe_bytes.length() - 1, log_fd) == 0
 }
 
 ///|
@@ -937,6 +953,35 @@ pub fn chmod_mode(path : String, mode : Int) -> Bool {
 /// symlinks, so the mode reported is the one the caller created.
 pub fn file_mode(path : String) -> Int {
   c_file_mode(string_to_null_terminated_bytes(path))
+}
+
+///|
+pub fn prepare_control_root(project : String, create : Bool) -> Bool {
+  c_prepare_control_root(
+    string_to_null_terminated_bytes(project),
+    if create {
+      1
+    } else {
+      0
+    },
+  ) ==
+  0
+}
+
+///|
+pub fn open_control_log(project : String) -> Int {
+  c_open_control_log(string_to_null_terminated_bytes(project))
+}
+
+///|
+pub fn append_control_log(project : String, content : String) -> Bool {
+  let bytes = @utf8.encode(content)
+  c_append_control_log(
+    string_to_null_terminated_bytes(project),
+    bytes,
+    bytes.length(),
+  ) ==
+  0
 }
 
 ///|

@@ -43,22 +43,16 @@ fn native_resolve_launch_config(
   config : @types.Config,
   resolve : (String) -> String?,
 ) -> Result[@types.Config, String] {
-  let project_dir = match resolve(config.project_dir) {
+  let project_dir = match resolve(".") {
     Some(path) if path.has_prefix("/") => path
     _ => return Err("failed to resolve the project directory")
   }
-  let listen_uds = if config.listen_uds.has_prefix("/") {
-    config.listen_uds
-  } else if project_dir == "/" {
-    "/" + config.listen_uds
-  } else {
-    project_dir + "/" + config.listen_uds
-  }
+  let listen_uds = project_dir + "/.choir/run/server.sock"
   Ok({ ..config, project_dir, listen_uds })
 }
 
 ///|
-test "native launch config gives the Goal worker absolute project and socket paths" {
+test "native launch config ignores repository path authority" {
   assert_eq(
     native_resolve_launch_config(
       {
@@ -81,12 +75,12 @@ test "native launch config gives the Goal worker absolute project and socket pat
         project_dir: "/work/repo",
         listen_uds: "/tmp/choir.sock",
       },
-      fn(path) { Some(path) },
+      fn(path) { if path == "." { Some("/work/repo") } else { None } },
     ),
     Ok({
       ..@types.Config::default(),
       project_dir: "/work/repo",
-      listen_uds: "/tmp/choir.sock",
+      listen_uds: "/work/repo/.choir/run/server.sock",
     }),
   )
 }
@@ -276,6 +270,7 @@ fn start_probe_daemon_identity(fd : Int) -> String? {
 
 ///|
 async fn start_ensure_daemon(
+  project_dir : String,
   socket_path : String,
   self_identity : String,
   self_executable : String,
@@ -313,7 +308,12 @@ async fn start_ensure_daemon(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.spawn_serve(self_executable) {
+  let log_fd = match
+    @control_root_host.open_native_control_log({ project_dir, socket_path }) {
+    Ok(value) => value
+    Err(error) => return Err(error.message())
+  }
+  if !@sys.spawn_serve(self_executable, log_fd) {
     return Err("failed to start choird")
   }
   if !@sys.wait_for_socket(socket_path, 100) {
@@ -405,10 +405,15 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
       return
     }
   }
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/logs"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/run"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state"))
-  ignore(@sys.create_dir_all(config.project_dir + "/.choir/state/control"))
+  match
+    @control_root_host.native_project_control_root(config.project_dir, false) {
+    Ok(_) => ()
+    Err(error) => {
+      @sys.write_stderr("choir start: " + error.message() + "\n")
+      @sys.exit(1)
+      return
+    }
+  }
   let executable = match
     start_resolve_executable(self_executable, @sys.realpath_native) {
     Some(value) => value
@@ -516,6 +521,7 @@ fn start_with_options(options : StartOptions, self_executable : String) -> Unit 
     }
     match
       start_ensure_daemon(
+        config.project_dir,
         config.listen_uds,
         self_identity,
         executable,
