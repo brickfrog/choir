@@ -831,8 +831,8 @@ pub async fn stop_native_boxlite_server(
 /// Remove one server's Goal-scoped runtime root without touching the
 /// repository-scoped BoxLite home or any boxes registered in it.
 ///
-/// Goal terminal cleanup must use this operation: multiple live Goals share
-/// one home, so `boxlite rm --all` is repository-wide rather than Goal-wide.
+/// Goal terminal cleanup must use this operation because multiple live Goals
+/// share one repository home.
 async fn make_native_boxlite_runtime_root_writable(root : String) -> Bool {
   let writable = @process.collect_output_merged(
     "/usr/bin/chmod",
@@ -850,6 +850,7 @@ async fn make_native_boxlite_runtime_root_writable(root : String) -> Bool {
 pub async fn cleanup_native_boxlite_runtime_root(
   config : NativeBoxLiteServerConfig,
   path_exists? : (String) -> Bool = @sys.path_exists,
+  canonicalize? : (String) -> String? = @sys.realpath_native,
   make_writable? : async (String) -> Bool = make_native_boxlite_runtime_root_writable,
   remove? : (String) -> Bool = @sys.rm_rf,
 ) -> Result[Unit, @types.ChoirError] {
@@ -859,6 +860,11 @@ pub async fn cleanup_native_boxlite_runtime_root(
   }
   if !path_exists(config.root) {
     return Ok(())
+  }
+  if canonicalize(config.root) != Some(config.root) {
+    return Err(
+      native_boxlite_take_error("runtime root cleanup is not canonical"),
+    )
   }
   if !make_writable(config.root) {
     return Err(native_boxlite_take_error("runtime root cleanup failed"))
@@ -890,6 +896,7 @@ async test "runtime root cleanup authorizes only the exact configured root" {
       existence_checks.val = existence_checks.val + 1
       existence_checks.val == 1
     },
+    canonicalize=fn(path) { Some(path) },
     make_writable=async fn(path) {
       @async.sleep(0)
       calls.push("writable:" + path)
@@ -941,19 +948,12 @@ pub async fn cleanup_native_boxlite_fixture_home(
 }
 
 ///|
-pub async fn cleanup_native_boxlite_server(
+pub async fn cleanup_native_boxlite_fixture_server(
   server : NativeBoxLiteServerHandle,
 ) -> Result[Unit, @types.ChoirError] {
   stop_native_boxlite_server(server)
   @async.sleep(400)
-  cleanup_native_boxlite_runtime(server.config)
-}
-
-///|
-pub async fn cleanup_native_boxlite_fixture_server(
-  server : NativeBoxLiteServerHandle,
-) -> Result[Unit, @types.ChoirError] {
-  match cleanup_native_boxlite_server(server) {
+  match cleanup_native_boxlite_runtime_root(server.config) {
     Ok(_) => cleanup_native_boxlite_fixture_home(server.config)
     Err(error) => {
       ignore(cleanup_native_boxlite_fixture_home(server.config))
@@ -963,30 +963,117 @@ pub async fn cleanup_native_boxlite_fixture_server(
 }
 
 ///|
-pub async fn cleanup_native_boxlite_runtime(
+pub async fn cleanup_native_boxlite_owned_runtime(
   config : NativeBoxLiteServerConfig,
+  box_ids : Array[String],
+  capture? : async (NativeBoxLiteServerConfig, Array[String], Int) -> Result[
+    @sandbox.BoxLiteProbeCapture,
+    @types.ChoirError,
+  ] = capture_native_boxlite_local_cli,
 ) -> Result[Unit, @types.ChoirError] {
   match validate_native_boxlite_server_config(config) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.path_exists(config.root) {
-    return Ok(())
+  let owned : Array[String] = []
+  for box_id in box_ids {
+    if !valid_native_boxlite_token(box_id, 180) {
+      return Err(
+        @types.ChoirError::validation_error("owned BoxLite box ID is invalid"),
+      )
+    }
+    if !owned.contains(box_id) {
+      owned.push(box_id)
+    }
   }
-  let removed = match
-    capture_native_boxlite_local_cli(config, ["rm", "--all", "--force"], 120000) {
-    Ok(value) => value
-    Err(error) => return Err(error)
+  for box_id in owned {
+    let removed = match capture(config, ["rm", "-f", box_id], 60000) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    if removed.exit_code != 0 {
+      return Err(native_boxlite_take_error("owned box cleanup failed"))
+    }
   }
-  if removed.exit_code == 0 {
-    cleanup_native_boxlite_runtime_root(config)
-  } else {
-    Err(
-      native_boxlite_take_error(
-        "runtime cleanup failed: " + removed.output.trim().to_owned(),
-      ),
-    )
+  cleanup_native_boxlite_runtime_root(config)
+}
+
+///|
+async test "owned runtime cleanup validates every ID before exact mutation" {
+  let config : NativeBoxLiteServerConfig = {
+    binary: "/unused/boxlite",
+    runtime_dir: "/unused/runtime",
+    root: "/tmp/choir-take-owned-cleanup",
+    home: "/tmp/choir-boxlite-owned-cleanup",
+    port: 22000,
+    api_key: "owned-cleanup",
   }
+  let calls : Array[Array[String]] = []
+  assert_true(
+    cleanup_native_boxlite_owned_runtime(config, ["owned-a", "bad/id"], capture=async fn(
+      _,
+      args,
+      _,
+    ) {
+      @async.sleep(0)
+      calls.push(args)
+      Ok({ exit_code: 0, output: "" })
+    })
+    is Err(_),
+  )
+  assert_eq(calls, [])
+}
+
+///|
+async test "owned runtime cleanup emits only deduplicated exact removals" {
+  let config : NativeBoxLiteServerConfig = {
+    binary: "/unused/boxlite",
+    runtime_dir: "/unused/runtime",
+    root: "/tmp/choir-take-owned-cleanup-absent",
+    home: "/tmp/choir-boxlite-owned-cleanup",
+    port: 22000,
+    api_key: "owned-cleanup",
+  }
+  let calls : Array[Array[String]] = []
+  cleanup_native_boxlite_owned_runtime(
+    config,
+    ["owned-a", "owned-b", "owned-a"],
+    capture=async fn(_, args, _) {
+      @async.sleep(0)
+      calls.push(args)
+      Ok({ exit_code: 0, output: "" })
+    },
+  ).unwrap()
+  assert_eq(calls, [["rm", "-f", "owned-a"], ["rm", "-f", "owned-b"]])
+}
+
+///|
+async test "owned runtime cleanup preserves its root when exact removal fails" {
+  let root = "/tmp/choir-take-owned-cleanup-failure-" +
+    @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root))
+  let config : NativeBoxLiteServerConfig = {
+    binary: "/unused/boxlite",
+    runtime_dir: "/unused/runtime",
+    root,
+    home: "/tmp/choir-boxlite-owned-cleanup",
+    port: 22000,
+    api_key: "owned-cleanup",
+  }
+  assert_true(
+    cleanup_native_boxlite_owned_runtime(config, ["owned-a"], capture=async fn(
+      _,
+      _,
+      _,
+    ) {
+      @async.sleep(0)
+      Ok({ exit_code: 1, output: "failed" })
+    })
+    is Err(_),
+  )
+  assert_true(@sys.path_entry_exists(root))
+  ignore(@sys.rm_rf(root))
 }
 
 ///|
@@ -1096,12 +1183,38 @@ async fn create_and_start_native_boxlite(
       None,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      ignore(capture_native_boxlite_cli(server, ["rm", "-f", box_id], 60000))
+      return Err(error)
+    }
   }
   if started.exit_code != 0 {
+    ignore(capture_native_boxlite_cli(server, ["rm", "-f", box_id], 60000))
     Err(native_boxlite_take_error("box start failed"))
   } else {
     Ok(box_id)
+  }
+}
+
+///|
+async fn rollback_native_boxlite_prepared_id(
+  config : NativeBoxLiteServerConfig,
+  box_id : String,
+) -> Unit {
+  if valid_native_boxlite_token(box_id, 180) {
+    ignore(
+      capture_native_boxlite_local_cli(config, ["rm", "-f", box_id], 60000),
+    )
+  }
+}
+
+///|
+async fn rollback_native_boxlite_take_id(
+  server : NativeBoxLiteServerHandle,
+  box_id : String,
+) -> Unit {
+  if valid_native_boxlite_token(box_id, 180) {
+    ignore(capture_native_boxlite_cli(server, ["rm", "-f", box_id], 60000))
   }
 }
 
@@ -1443,9 +1556,13 @@ pub async fn prepare_native_boxlite_environment(
         None,
       ) {
       Ok(value) => value
-      Err(error) => return Err(error)
+      Err(error) => {
+        rollback_native_boxlite_prepared_id(server.config, base_box_id)
+        return Err(error)
+      }
     }
     if stopped_before_transfer.exit_code != 0 {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
       return Err(native_boxlite_take_error("prepared base stop failed"))
     }
   }
@@ -1462,11 +1579,13 @@ pub async fn prepare_native_boxlite_environment(
       !@sys.path_exists(toolchain + "/include") ||
       !@sys.path_exists(toolchain + "/registry/cache") ||
       !@sys.path_exists(toolchain + "/registry/index") {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
       return Err(native_boxlite_take_error("staged toolchain is invalid"))
     }
   } else {
     if !@sys.create_dir_all(toolchain) ||
       !@sys.write_file_sync(toolchain_marker, toolchain_digest) {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
       return Err(native_boxlite_take_error("toolchain staging root failed"))
     }
     for directory in ["bin", "lib", "include", "registry"] {
@@ -1477,15 +1596,20 @@ pub async fn prepare_native_boxlite_environment(
           toolchain + "/" + directory,
         ) {
         Ok(_) => ()
-        Err(error) => return Err(error)
+        Err(error) => {
+          rollback_native_boxlite_prepared_id(server.config, base_box_id)
+          return Err(error)
+        }
       }
     }
     let nfc_library = match @process_host.native_path_nfc_library_path() {
       Some(value) => value
-      None =>
+      None => {
+        rollback_native_boxlite_prepared_id(server.config, base_box_id)
         return Err(
           native_boxlite_take_error("NFC library source is unavailable"),
         )
+      }
     }
     match
       copy_native_toolchain_nfc_library(
@@ -1494,7 +1618,10 @@ pub async fn prepare_native_boxlite_environment(
         toolchain + "/lib/libutf8proc.so.3",
       ) {
       Ok(_) => ()
-      Err(error) => return Err(error)
+      Err(error) => {
+        rollback_native_boxlite_prepared_id(server.config, base_box_id)
+        return Err(error)
+      }
     }
   }
   stop_native_boxlite_server(server)
@@ -1507,7 +1634,10 @@ pub async fn prepare_native_boxlite_environment(
         toolchain,
       ) {
       Ok(_) => ()
-      Err(error) => return Err(error)
+      Err(error) => {
+        rollback_native_boxlite_prepared_id(server.config, base_box_id)
+        return Err(error)
+      }
     }
   }
   let verified = match
@@ -1526,9 +1656,13 @@ pub async fn prepare_native_boxlite_environment(
       60000,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
+      return Err(error)
+    }
   }
   if verified.exit_code != 0 {
+    rollback_native_boxlite_prepared_id(server.config, base_box_id)
     return Err(native_boxlite_take_error("toolchain verification failed"))
   }
   let stopped = match
@@ -1538,14 +1672,21 @@ pub async fn prepare_native_boxlite_environment(
       60000,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
+      return Err(error)
+    }
   }
   if stopped.exit_code != 0 {
+    rollback_native_boxlite_prepared_id(server.config, base_box_id)
     return Err(native_boxlite_take_error("prepared environment stop failed"))
   }
   let restarted = match start_native_boxlite_server(server.config) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_prepared_id(server.config, base_box_id)
+      return Err(error)
+    }
   }
   Ok({
     server: restarted,
@@ -1680,9 +1821,13 @@ pub async fn clone_native_boxlite_take(
       None,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_take_id(prepared.server, box_id)
+      return Err(error)
+    }
   }
   if started.exit_code != 0 {
+    rollback_native_boxlite_take_id(prepared.server, box_id)
     return Err(native_boxlite_take_error("Take clone start failed"))
   }
   match
@@ -1694,7 +1839,10 @@ pub async fn clone_native_boxlite_take(
       ".choir-source-root",
     ) {
     Ok(_) => ()
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_take_id(prepared.server, box_id)
+      return Err(error)
+    }
   }
   let checked = match
     capture_native_boxlite_cli(
@@ -1712,9 +1860,13 @@ pub async fn clone_native_boxlite_take(
       30000,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_take_id(prepared.server, box_id)
+      return Err(error)
+    }
   }
   if checked.exit_code != 0 {
+    rollback_native_boxlite_take_id(prepared.server, box_id)
     return Err(native_boxlite_take_error("Take isolation check failed"))
   }
   let dependency_setup = match
@@ -1731,9 +1883,13 @@ pub async fn clone_native_boxlite_take(
       60000,
     ) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      rollback_native_boxlite_take_id(prepared.server, box_id)
+      return Err(error)
+    }
   }
   if dependency_setup.exit_code != 0 {
+    rollback_native_boxlite_take_id(prepared.server, box_id)
     return Err(
       native_boxlite_take_error(
         "dependency cache installation failed with exit " +
@@ -2825,9 +2981,8 @@ pub async fn destroy_native_boxlite_take(
 }
 
 ///|
-/// Remove the one prepared base owned by this runtime. Unlike `rm --all`, this
-/// cannot touch boxes belonging to concurrently executing Goals or
-/// WorkOrders that share the repository-scoped BoxLite home.
+/// Remove the one prepared base owned by this runtime without touching boxes
+/// belonging to concurrent Goals or WorkOrders in the shared home.
 pub async fn destroy_native_boxlite_prepared_environment(
   prepared : NativeBoxLitePreparedEnvironment,
 ) -> Result[Unit, @types.ChoirError] {

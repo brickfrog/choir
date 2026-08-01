@@ -1530,70 +1530,187 @@ fn native_goal_runtime_key(
 }
 
 ///|
+fn native_goal_repository_runtime_key(
+  repository_id : @workflow.RepositoryId,
+) -> String {
+  @storage.artifact_digest(@utf8.encode(repository_id.0)).0[:20].to_owned()
+}
+
+///|
+fn native_goal_runtime_entry_prefix(
+  repository_id : @workflow.RepositoryId,
+) -> String {
+  "choir-take-goal-" + native_goal_repository_runtime_key(repository_id) + "-"
+}
+
+///|
 fn native_goal_runtime_root(
   repository_id : @workflow.RepositoryId,
   goal_id : @control.GoalId,
 ) -> String {
-  "/tmp/choir-take-goal-" + native_goal_runtime_key(repository_id, goal_id)
+  "/tmp/" +
+  native_goal_runtime_entry_prefix(repository_id) +
+  native_goal_runtime_key(repository_id, goal_id)
 }
 
 ///|
-pub let native_goal_runtime_root_prefix : String = "choir-take-goal-"
+priv struct NativeGoalRuntimeOwnershipReceipt {
+  version : Int
+  repository_id : @workflow.RepositoryId
+  goal_id : @control.GoalId
+  base_box_id : String?
+} derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-/// Which Goal runtime roots under the temporary directory no longer belong to
-/// a live Goal.
+fn native_goal_runtime_owner_path(root : String) -> String {
+  root + "/state/owner.json"
+}
+
+///|
+fn native_goal_runtime_receipt(
+  repository_id : @workflow.RepositoryId,
+  goal_id : @control.GoalId,
+  base_box_id : String?,
+) -> NativeGoalRuntimeOwnershipReceipt {
+  { version: 1, repository_id, goal_id, base_box_id }
+}
+
+///|
+fn write_native_goal_runtime_receipt(
+  root : String,
+  receipt : NativeGoalRuntimeOwnershipReceipt,
+) -> Result[Unit, @types.ChoirError] {
+  let state = root + "/state"
+  if !@sys.create_dir_all(state) || @sys.realpath_native(root) != Some(root) {
+    return Err(
+      native_goal_execution_error("runtime ownership root is unavailable"),
+    )
+  }
+  let content = ToJson::to_json(receipt).stringify(indent=0) + "\n"
+  let path = native_goal_runtime_owner_path(root)
+  if !@sys.write_file_atomic(path, content) || @sys.read_file(path) != content {
+    return Err(native_goal_execution_error("runtime ownership receipt failed"))
+  }
+  Ok(())
+}
+
+///|
+fn read_native_goal_runtime_receipt(
+  root : String,
+) -> NativeGoalRuntimeOwnershipReceipt? {
+  if @sys.realpath_native(root) != Some(root) {
+    return None
+  }
+  let json = @json.parse(@sys.read_file(native_goal_runtime_owner_path(root))) catch {
+    _ => return None
+  }
+  let receipt : NativeGoalRuntimeOwnershipReceipt = @json.from_json(json) catch {
+    _ => return None
+  }
+  let invalid_base = match receipt.base_box_id {
+    Some(value) => !@sandbox.valid_boxlite_state_token(value)
+    None => false
+  }
+  let expected_entry = native_goal_runtime_entry_prefix(receipt.repository_id) +
+    native_goal_runtime_key(receipt.repository_id, receipt.goal_id)
+  if receipt.version != 1 ||
+    !root.has_suffix("/" + expected_entry) ||
+    invalid_base {
+    None
+  } else {
+    Some(receipt)
+  }
+}
+
+///|
+test "runtime ownership receipt binds one canonical repository and Goal" {
+  let repository = @workflow.RepositoryId("receipt-test-repository")
+  let goal = @control.GoalId("receipt-test-goal")
+  let root = native_goal_runtime_root(repository, goal)
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root))
+  write_native_goal_runtime_receipt(
+    root,
+    native_goal_runtime_receipt(repository, goal, Some("base-owned")),
+  ).unwrap()
+  assert_eq(
+    read_native_goal_runtime_receipt(root),
+    Some(native_goal_runtime_receipt(repository, goal, Some("base-owned"))),
+  )
+  assert_true(
+    @sys.write_file_atomic(native_goal_runtime_owner_path(root), "{}\n"),
+  )
+  assert_eq(read_native_goal_runtime_receipt(root), None)
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+/// Which Goal runtime roots under the temporary directory use this repository's
+/// namespace. The pure workflow policy decides whether each owner is live.
 ///
 /// Reclaiming by Bead claim alone misses every Goal whose claim was already
 /// released, so an abandoned root survived until the machine rebooted. These
 /// roots hold a BoxLite home and a staged toolchain, so a handful of them is
 /// gigabytes; on a tmpfs that is memory. Matching on the exact root shape and
-/// keeping every live key means the sweep can only remove roots this
-/// repository owns and no longer references.
-pub fn native_reclaimable_goal_runtime_roots(
+/// matching the repository namespace keeps the host enumeration separate from
+/// the durable lifecycle decision.
+pub fn native_repository_goal_runtime_roots(
+  repository_id : @workflow.RepositoryId,
   entries : Array[String],
-  live_keys : Array[String],
 ) -> Array[String] {
-  let reclaimable : Array[String] = []
+  let owned : Array[String] = []
+  let prefix = native_goal_runtime_entry_prefix(repository_id)
   for entry in entries {
-    if !entry.has_prefix(native_goal_runtime_root_prefix) {
+    if !entry.has_prefix(prefix) {
       continue
     }
-    let key = entry[native_goal_runtime_root_prefix.length():].to_owned()
-    if key == "" || key.contains("/") || live_keys.contains(key) {
+    let key = entry[prefix.length():].to_owned()
+    if key == "" || key.contains("/") {
       continue
     }
-    reclaimable.push(entry)
+    owned.push(entry)
   }
-  reclaimable
+  owned
 }
 
 ///|
-test "a runtime sweep keeps live roots and only matches its own shape" {
+test "a runtime sweep only selects its repository namespace" {
+  let repository = @workflow.RepositoryId("repo-a")
+  let prefix = native_goal_runtime_entry_prefix(repository)
   let entries = [
-    "choir-take-goal-live", "choir-take-goal-dead", "choir-take-goal-", "choir-boxlite-take-live-1",
-    "unrelated", "choir-take-goal-a/b",
+    prefix + "live",
+    prefix + "dead",
+    prefix,
+    "choir-take-goal-foreign-dead",
+    "unrelated",
+    prefix + "a/b",
   ]
-  assert_eq(native_reclaimable_goal_runtime_roots(entries, ["live"]), [
-    "choir-take-goal-dead",
+  assert_eq(native_repository_goal_runtime_roots(repository, entries), [
+    prefix + "live",
+    prefix + "dead",
   ])
-  assert_eq(native_reclaimable_goal_runtime_roots(entries, ["live", "dead"]), [])
 }
 
 ///|
-fn native_runtime_sweep_may_remove_repository_boxes(
-  live_keys : Array[String],
-) -> Bool {
-  live_keys.length() == 0
-}
-
-///|
-test "a runtime sweep preserves shared-home boxes while any Goal is live" {
-  assert_false(native_runtime_sweep_may_remove_repository_boxes(["goal-b"]))
-  assert_false(
-    native_runtime_sweep_may_remove_repository_boxes(["goal-a", "goal-b"]),
-  )
-  assert_true(native_runtime_sweep_may_remove_repository_boxes([]))
+test "restarting either repository preserves the other's runtime namespace" {
+  let repo_a = @workflow.RepositoryId("/repo/a")
+  let repo_b = @workflow.RepositoryId("/repo/b")
+  let prefix_a = native_goal_runtime_entry_prefix(repo_a)
+  let prefix_b = native_goal_runtime_entry_prefix(repo_b)
+  let entries = [
+    prefix_a + "active-a",
+    prefix_a + "stale-a",
+    prefix_b + "active-b",
+    prefix_b + "stale-b",
+  ]
+  let selected_a = native_repository_goal_runtime_roots(repo_a, entries)
+  assert_eq(selected_a, [prefix_a + "active-a", prefix_a + "stale-a"])
+  assert_false(selected_a.contains(prefix_b + "active-b"))
+  assert_false(selected_a.contains(prefix_b + "stale-b"))
+  let selected_b = native_repository_goal_runtime_roots(repo_b, entries)
+  assert_eq(selected_b, [prefix_b + "active-b", prefix_b + "stale-b"])
+  assert_false(selected_b.contains(prefix_a + "active-a"))
+  assert_false(selected_b.contains(prefix_a + "stale-a"))
 }
 
 ///|
@@ -2033,14 +2150,31 @@ async fn cleanup_native_goal_runtime_identity(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  @take_host.cleanup_native_boxlite_runtime_root({
-    binary,
-    runtime_dir,
-    root: runtime_root,
-    home,
-    port: 40000 + @sys.get_pid() % 10000,
-    api_key: "choir-goal-" + native_goal_runtime_key(repository_id, goal_id),
-  })
+  let receipt = match read_native_goal_runtime_receipt(runtime_root) {
+    Some(value) if value.repository_id == repository_id &&
+      value.goal_id == goal_id => value
+    _ =>
+      return Err(native_goal_execution_error("runtime ownership is unproven"))
+  }
+  let box_ids = match @part_host.native_runtime_owned_box_ids(runtime_root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.base_box_id {
+    Some(value) => if !box_ids.contains(value) { box_ids.push(value) }
+    None => ()
+  }
+  @take_host.cleanup_native_boxlite_owned_runtime(
+    {
+      binary,
+      runtime_dir,
+      root: runtime_root,
+      home,
+      port: 40000 + @sys.get_pid() % 10000,
+      api_key: "choir-goal-" + native_goal_runtime_key(repository_id, goal_id),
+    },
+    box_ids,
+  )
 }
 
 ///|
@@ -2055,6 +2189,94 @@ async fn finish_native_goal_runtime(
     }
   }
   Ok(terminal_ready)
+}
+
+///|
+async fn cleanup_failed_native_goal_setup_with(
+  server : @take_host.NativeBoxLiteServerHandle,
+  prepared : @take_host.NativeBoxLitePreparedEnvironment?,
+  stop : async (@take_host.NativeBoxLiteServerHandle) -> Unit,
+  settle : async () -> Unit,
+  cleanup : async (@take_host.NativeBoxLiteServerConfig, Array[String]) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
+) -> Unit {
+  stop(server)
+  settle()
+  let box_ids : Array[String] = match prepared {
+    Some(value) => [value.base_box_id]
+    None => []
+  }
+  ignore(cleanup(server.config, box_ids))
+}
+
+///|
+async fn cleanup_failed_native_goal_setup(
+  server : @take_host.NativeBoxLiteServerHandle,
+  prepared : @take_host.NativeBoxLitePreparedEnvironment?,
+) -> Unit {
+  cleanup_failed_native_goal_setup_with(
+    server,
+    prepared,
+    @take_host.stop_native_boxlite_server,
+    async fn() { @async.sleep(400) },
+    async fn(config, ids) {
+      @take_host.cleanup_native_boxlite_owned_runtime(config, ids)
+    },
+  )
+}
+
+///|
+async test "a failed Goal setup preserves a sibling in the shared home" {
+  let config_a : @take_host.NativeBoxLiteServerConfig = {
+    binary: "/unused/boxlite",
+    runtime_dir: "/unused/runtime",
+    root: "/tmp/choir-take-goal-a",
+    home: "/tmp/choir-boxlite-shared-goals",
+    port: 22000,
+    api_key: "goal-a",
+  }
+  let server_a : @take_host.NativeBoxLiteServerHandle = {
+    config: config_a,
+    pid: 10,
+    url: "http://127.0.0.1:22000",
+    owner_pid: 11,
+    owner_socket_root: config_a.root + "/owner",
+    owner_socket: config_a.root + "/owner/socket",
+    owner_token: "owner-a",
+  }
+  let prepared_a : @take_host.NativeBoxLitePreparedEnvironment = {
+    server: server_a,
+    base_box_id: "base-a",
+    image_digest: @sandbox.boxlite_take_image_digest,
+    tool_manifest_digest: @sandbox.boxlite_take_tool_manifest_digest(),
+    runtime_policy_digest: @sandbox.boxlite_take_runtime_policy_digest(),
+  }
+  let sibling_boxes = ["base-b", "take-b"]
+  let removed : Array[String] = []
+  let stopped : Array[String] = []
+  cleanup_failed_native_goal_setup_with(
+    server_a,
+    Some(prepared_a),
+    async fn(server) {
+      @async.sleep(0)
+      stopped.push(server.config.api_key)
+    },
+    async fn() { @async.sleep(0) },
+    async fn(config, owned) {
+      @async.sleep(0)
+      assert_eq(config.home, "/tmp/choir-boxlite-shared-goals")
+      assert_eq(owned, ["base-a"])
+      for id in owned {
+        removed.push(id)
+      }
+      Ok(())
+    },
+  )
+  assert_eq(stopped, ["goal-a"])
+  assert_eq(removed, ["base-a"])
+  assert_eq(sibling_boxes, ["base-b", "take-b"])
 }
 
 ///|
@@ -3118,7 +3340,7 @@ async fn execute_native_goal_record(
   // A runtime that has registered nothing yet is the normal state right after a
   // rebuild, and discarding it there rebuilds it again on the next tick forever.
   if disposition is NativeGoalRuntimeStale {
-    match @take_host.cleanup_native_boxlite_runtime(server_config) {
+    match cleanup_native_goal_runtime(record) {
       Ok(_) => ()
       Err(error) => return Err(error)
     }
@@ -3126,6 +3348,30 @@ async fn execute_native_goal_record(
   if !@sys.create_dir_all(runtime_root) ||
     @sys.realpath_native(runtime_root) != Some(runtime_root) {
     return Err(native_goal_execution_error("runtime root is unavailable"))
+  }
+  let initial_receipt = native_goal_runtime_receipt(
+    record.repository_id,
+    record.goal.id,
+    None,
+  )
+  match read_native_goal_runtime_receipt(runtime_root) {
+    Some(receipt) if receipt.repository_id == record.repository_id &&
+      receipt.goal_id == record.goal.id => ()
+    Some(_) =>
+      return Err(native_goal_execution_error("runtime ownership conflicts"))
+    None => {
+      if @sys.path_entry_exists(native_goal_runtime_owner_path(runtime_root)) {
+        return Err(native_goal_execution_error("runtime ownership is invalid"))
+      }
+      if !(disposition is NativeGoalRuntimeAbsent) &&
+        !(disposition is NativeGoalRuntimeStale) {
+        return Err(native_goal_execution_error("runtime ownership is unproven"))
+      }
+      match write_native_goal_runtime_receipt(runtime_root, initial_receipt) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    }
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value
@@ -3158,10 +3404,29 @@ async fn execute_native_goal_record(
         ) {
         Ok(value) => (value.server, Some(value))
         Err(error) => {
-          ignore(@take_host.cleanup_native_boxlite_server(server))
+          cleanup_failed_native_goal_setup(server, None)
           return Err(error)
         }
       }
+  }
+  match initial_prepared {
+    Some(value) =>
+      match
+        write_native_goal_runtime_receipt(
+          runtime_root,
+          native_goal_runtime_receipt(
+            record.repository_id,
+            record.goal.id,
+            Some(value.base_box_id),
+          ),
+        ) {
+        Ok(_) => ()
+        Err(error) => {
+          cleanup_failed_native_goal_setup(active_server, Some(value))
+          return Err(error)
+        }
+      }
+    None => ()
   }
   let clock = @ref.new(100000L)
   let now = fn() {
@@ -3187,7 +3452,8 @@ async fn execute_native_goal_record(
     if snapshot.identities.audit_session.surface != surface {
       match existing_generation {
         Some(_) => @take_host.stop_native_boxlite_server(active_server)
-        None => ignore(@take_host.cleanup_native_boxlite_server(active_server))
+        None =>
+          cleanup_failed_native_goal_setup(active_server, initial_prepared)
       }
       return Err(
         native_goal_execution_error("Part provider assignment drifted"),
@@ -3214,7 +3480,7 @@ async fn execute_native_goal_record(
         match existing_generation {
           Some(_) => @take_host.stop_native_boxlite_server(active_server)
           None =>
-            ignore(@take_host.cleanup_native_boxlite_server(active_server))
+            cleanup_failed_native_goal_setup(active_server, initial_prepared)
         }
         return Err(error)
       }
@@ -3224,7 +3490,7 @@ async fn execute_native_goal_record(
   if parts.length() == 0 {
     match existing_generation {
       Some(_) => @take_host.stop_native_boxlite_server(active_server)
-      None => ignore(@take_host.cleanup_native_boxlite_server(active_server))
+      None => cleanup_failed_native_goal_setup(active_server, initial_prepared)
     }
     return Err(native_goal_execution_error("Goal has no Part runtimes"))
   }
@@ -6724,7 +6990,6 @@ async fn cleanup_native_goal_runtime_at_key(
   repository_id : @workflow.RepositoryId,
   temporary_root : String,
   key : String,
-  repository_boxes_may_be_removed : Bool,
 ) -> Result[Unit, @types.ChoirError] {
   let binary = match @process_host.native_boxlite_binary_path() {
     Ok(value) => value
@@ -6741,16 +7006,31 @@ async fn cleanup_native_goal_runtime_at_key(
   let config : @take_host.NativeBoxLiteServerConfig = {
     binary,
     runtime_dir,
-    root: temporary_root + "/" + native_goal_runtime_root_prefix + key,
+    root: temporary_root +
+    "/" +
+    native_goal_runtime_entry_prefix(repository_id) +
+    key,
     home,
     port: 40000 + @sys.get_pid() % 10000,
     api_key: "choir-goal-" + key,
   }
-  if repository_boxes_may_be_removed {
-    @take_host.cleanup_native_boxlite_runtime(config)
-  } else {
-    @take_host.cleanup_native_boxlite_runtime_root(config)
+  let root = config.root
+  let receipt = match read_native_goal_runtime_receipt(root) {
+    Some(value) if value.repository_id == repository_id &&
+      native_goal_runtime_key(value.repository_id, value.goal_id) == key =>
+      value
+    _ =>
+      return Err(native_goal_execution_error("runtime ownership is unproven"))
   }
+  let box_ids = match @part_host.native_runtime_owned_box_ids(root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match receipt.base_box_id {
+    Some(value) => if !box_ids.contains(value) { box_ids.push(value) }
+    None => ()
+  }
+  @take_host.cleanup_native_boxlite_owned_runtime(config, box_ids)
 }
 
 ///|
@@ -6770,7 +7050,9 @@ pub async fn reclaim_native_goal_runtime_roots(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let live_keys : Array[String] = []
+  let goal_states : Array[
+    (@workflow.RepositoryId, @control.GoalId, @workflow.GoalExecutionState),
+  ] = []
   match
     @workflow.list_goal_execution_records(
       native_goal_repository(project_dir),
@@ -6778,50 +7060,61 @@ pub async fn reclaim_native_goal_runtime_roots(
     ) {
     Ok(records) =>
       for stored in records {
-        if !@workflow.goal_execution_state_is_terminal(stored.record.state) {
-          live_keys.push(
-            native_goal_runtime_key(
-              stored.record.repository_id,
-              stored.record.goal.id,
-            ),
-          )
-        }
+        goal_states.push(
+          (
+            stored.record.repository_id,
+            stored.record.goal.id,
+            stored.record.state,
+          ),
+        )
       }
     // An unreadable Goal store cannot prove which roots are live, and removing
     // a root a running Goal still owns is worse than leaving it behind.
     Err(_) => return Ok(0)
   }
   let mut removed = 0
-  // A repository-wide BoxLite sweep is safe only when the durable store proves
-  // there is no nonterminal Goal. With any live Goal, stale roots are removed
-  // without touching the shared home: its boxes may be exactly what that live
-  // Goal's sandbox manifests name for reuse on the next tick.
-  let repository_boxes_may_be_removed = native_runtime_sweep_may_remove_repository_boxes(
-    live_keys,
-  )
-  let repository_boxes_removed = @ref.new(false)
   for
-    entry in native_reclaimable_goal_runtime_roots(
+    entry in native_repository_goal_runtime_roots(
+      repository_id,
       list_dir(temporary_root),
-      live_keys,
     ) {
-    let key = entry[native_goal_runtime_root_prefix.length():].to_owned()
-    if !@sys.path_entry_exists(temporary_root + "/" + entry) {
+    let prefix = native_goal_runtime_entry_prefix(repository_id)
+    let key = entry[prefix.length():].to_owned()
+    let root = temporary_root + "/" + entry
+    if !@sys.path_entry_exists(root) {
+      continue
+    }
+    let receipt = match read_native_goal_runtime_receipt(root) {
+      Some(value) if value.repository_id == repository_id &&
+        native_goal_runtime_key(value.repository_id, value.goal_id) == key =>
+        value
+      _ => continue
+    }
+    let mut owner_state : @workflow.GoalExecutionState? = None
+    let mut owner_matches = 0
+    for stored in goal_states {
+      let (stored_repository, stored_goal, stored_state) = stored
+      if stored_repository == receipt.repository_id &&
+        stored_goal == receipt.goal_id {
+        owner_matches = owner_matches + 1
+        owner_state = Some(stored_state)
+      }
+    }
+    if owner_matches > 1 {
       continue
     }
     match
-      cleanup_native_goal_runtime_at_key(
+      @workflow.plan_goal_runtime_reclamation(
         repository_id,
-        temporary_root,
-        key,
-        repository_boxes_may_be_removed && !repository_boxes_removed.val,
+        receipt.repository_id,
+        owner_state,
       ) {
-      Ok(_) => {
-        removed = removed + 1
-        if repository_boxes_may_be_removed {
-          repository_boxes_removed.val = true
-        }
-      }
+      @workflow.GoalRuntimeReclaimDecision::GoalRuntimeReclaimOwnedStale => ()
+      _ => continue
+    }
+    match
+      cleanup_native_goal_runtime_at_key(repository_id, temporary_root, key) {
+      Ok(_) => removed = removed + 1
       Err(error) => return Err(error)
     }
   }
@@ -7307,10 +7600,8 @@ async fn delete_native_goal_archived_git_refs(
 /// `reclaim_native_goal_runtime_roots` removes whatever a crash left behind on
 /// every daemon start.
 ///
-/// Terminal cleanup removes only the Goal-scoped runtime root. Daemon-start
-/// reclamation likewise removes only stale roots whenever the durable store
-/// names a nonterminal Goal; it runs `boxlite rm --all --force` against the
-/// repository-scoped home only after proving there are zero nonterminal Goals.
+/// Terminal cleanup and daemon-start reclamation remove only receipt-proven
+/// boxes and the exact Goal-scoped runtime root.
 ///
 /// What this function does about it is refuse to add a third: an archive is
 /// operator-invoked at an arbitrary moment, so it releases no boxes at all.
