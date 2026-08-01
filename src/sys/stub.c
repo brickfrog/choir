@@ -1047,6 +1047,19 @@ int choir_kill_pgid(int pgid) {
     return -1;
 }
 
+int choir_force_kill_pgid(int pgid) {
+    if (pgid <= 1) {
+        return -1;
+    }
+    if (kill(-(pid_t)pgid, SIGKILL) == 0) {
+        return 0;
+    }
+    if (errno == ESRCH) {
+        return 0;
+    }
+    return -1;
+}
+
 /**
  * Init-time server shutdown: SIGTERM, brief delay, then SIGKILL. Ignores ESRCH (matches former
  * `kill ... 2>/dev/null` best-effort semantics).

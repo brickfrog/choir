@@ -338,6 +338,16 @@ pub fn kill_pgid_best_effort(_pgid : Int) -> Unit {
 }
 
 ///|
+pub fn terminate_pgid_checked(_pgid : Int) -> Bool {
+  false
+}
+
+///|
+pub fn force_kill_pgid_checked(_pgid : Int) -> Bool {
+  false
+}
+
+///|
 pub fn kill_server_pid_sequence_best_effort(_pid : Int) -> Unit {
 
 }

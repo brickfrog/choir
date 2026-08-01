@@ -640,7 +640,7 @@ pub async fn run_native_claude_take(
     }),
   )
   let collected = match
-    @process_host.collect_interruptible_process(
+    @process_host.capture_bounded_process(
       "/usr/bin/bwrap",
       bounded_args,
       native_claude_environment(
@@ -651,6 +651,7 @@ pub async fn run_native_claude_take(
       stdin_read,
       config.sterile_root,
       config.timeout_ms,
+      16 * 1024 * 1024,
       cancellation_requested,
       started=fn(pid) {
         write_native_claude_pid_witness(config.sterile_root, pid)
@@ -664,18 +665,24 @@ pub async fn run_native_claude_take(
     Err(error) => return Err(error)
   }
   let (exit_code, data) = match collected {
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessCompleted(
+    @process_host.NativeBoundedProcessOutcome::NativeProcessCompleted(
       code,
       output
     ) => (code, output)
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessInterrupted(_) =>
+    @process_host.NativeBoundedProcessOutcome::NativeProcessInterrupted(_) =>
       return Err(
         @types.ChoirError::canceled(
           "Claude Take interrupted at the Goal cutoff",
         ),
       )
-    @process_host.NativeInterruptibleProcessOutcome::NativeProcessTimedOut(_) =>
+    @process_host.NativeBoundedProcessOutcome::NativeProcessTimedOut(_) =>
       return Err(@types.ChoirError::timeout("Claude Take"))
+    @process_host.NativeProcessOutputExceeded(_) =>
+      return Err(
+        @types.ChoirError::event_ingestion_overflow(
+          "Claude Take output exceeded 16 MiB",
+        ),
+      )
   }
   let output = data
   if exit_code != 0 {
