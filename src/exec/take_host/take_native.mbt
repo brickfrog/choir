@@ -60,6 +60,30 @@ pub(all) struct NativeSandboxProcessResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum NativeBoxLiteHttpMethod {
+  NativeBoxLiteHttpGet
+  NativeBoxLiteHttpPost
+  NativeBoxLiteHttpPut
+  NativeBoxLiteHttpDelete
+} derive(Debug, Eq)
+
+///|
+pub(all) enum NativeBoxLiteHttpBody {
+  NativeBoxLiteHttpNoBody
+  NativeBoxLiteHttpJson(String)
+  NativeBoxLiteHttpTarFile(String)
+} derive(Debug, Eq)
+
+///|
+/// A curl invocation whose bearer capability is deliberately kept out of
+/// argv. Do not derive a printable or serializable representation: `stdin`
+/// contains the live BoxLite API capability.
+pub(all) struct NativeBoxLiteHttpInvocation {
+  arguments : Array[String]
+  stdin : String
+}
+
+///|
 pub fn native_sandbox_process_evidence(
   result : NativeSandboxProcessResult,
 ) -> Json {
@@ -109,6 +133,82 @@ pub async fn capture_boxlite_fixed_process(
       args,
       extra_env~,
       inherit_env=false,
+      cwd=root,
+    )
+  }) catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite lifecycle process failed to start or collect output",
+        ),
+      )
+  }
+  match collected {
+    None => Ok({ exit_code: -2, output: "" })
+    Some((exit_code, data)) => {
+      let output = data.text() catch {
+        _ =>
+          return Err(
+            @types.ChoirError::transport_error(
+              "BoxLite lifecycle output was not UTF-8",
+            ),
+          )
+      }
+      Ok({ exit_code, output })
+    }
+  }
+}
+
+///|
+/// Capture one fixed BoxLite helper while providing a small secret input over
+/// an inherited stdin pipe. The pipe is closed before collection so curl sees
+/// EOF after the single authorization header.
+pub async fn capture_boxlite_fixed_process_input(
+  program : String,
+  args : Array[String],
+  root : String,
+  extra_env : Map[String, String],
+  timeout_ms : Int,
+  input : String,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  if input == "" || input.length() > 4096 || input.contains("\u{0000}") {
+    return Err(
+      @types.ChoirError::validation_error(
+        "BoxLite lifecycle process input is invalid",
+      ),
+    )
+  }
+  @process_host.abort_if_hermetic_test_exec(
+    @process_host.command_for_program(program, args, Some(root)),
+  )
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "BoxLite lifecycle stdin pipe failed",
+        ),
+      )
+  }
+  ignore(
+    stdin_write.write(input) catch {
+      _ => {
+        stdin_write.close()
+        return Err(
+          @types.ChoirError::transport_error(
+            "BoxLite lifecycle stdin write failed",
+          ),
+        )
+      }
+    },
+  )
+  stdin_write.close()
+  let collected = @async.with_timeout_opt(timeout_ms, () => {
+    @process.collect_output_merged(
+      program,
+      args,
+      extra_env~,
+      inherit_env=false,
+      stdin=stdin_read,
       cwd=root,
     )
   }) catch {
@@ -382,42 +482,103 @@ test "remote BoxLite clients get deterministic isolated homes" {
 }
 
 ///|
-/// The curl invocation for one BoxLite REST call.
-///
-/// Shared because this is where the wire contract lives — the bearer header,
-/// the JSON content type, the body flag. The live probe and the runtime Take
-/// path each built it independently, so a protocol change had to be made twice
-/// and the probe could silently stop exercising what the runtime actually does.
-/// They still differ in timeout and in which process runner executes the call;
-/// only the argv is shared.
-pub fn boxlite_http_arguments(
+/// Whether a BoxLite URL names the exact loopback HTTP authority shape used by
+/// the native runtime.
+fn valid_native_boxlite_loopback_url(url : String) -> Bool {
+  let prefix = "http://127.0.0.1:"
+  if !url.has_prefix(prefix) || url.length() <= prefix.length() {
+    return false
+  }
+  let port = url[prefix.length():].to_owned()
+  if port.length() > 5 {
+    return false
+  }
+  for char in port {
+    if char < '0' || char > '9' {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn native_boxlite_http_method_text(
+  request_method : NativeBoxLiteHttpMethod,
+) -> String {
+  match request_method {
+    NativeBoxLiteHttpGet => "GET"
+    NativeBoxLiteHttpPost => "POST"
+    NativeBoxLiteHttpPut => "PUT"
+    NativeBoxLiteHttpDelete => "DELETE"
+  }
+}
+
+///|
+/// The curl invocation for one BoxLite REST call. The reusable bearer
+/// capability travels only through the returned stdin payload; argv contains
+/// the special `@-` header source and never the credential itself.
+pub fn native_boxlite_http_invocation(
   api_key : String,
   url : String,
-  http_method : String,
+  request_method : NativeBoxLiteHttpMethod,
   path : String,
-  body : String?,
+  body : NativeBoxLiteHttpBody,
   max_seconds : Int,
-) -> Array[String] {
+) -> Result[NativeBoxLiteHttpInvocation, @types.ChoirError] {
+  if !valid_native_boxlite_token(api_key, 180) ||
+    !valid_native_boxlite_loopback_url(url) ||
+    !path.has_prefix("/v1/") ||
+    path.contains("\u{0000}") ||
+    max_seconds < 1 ||
+    max_seconds > 180 {
+    return Err(
+      @types.ChoirError::validation_error("BoxLite HTTP invocation is invalid"),
+    )
+  }
   let args : Array[String] = [
     "-fsS",
     "--max-time",
     max_seconds.to_string(),
     "-X",
-    http_method,
-    "-H",
-    "Authorization: Bearer " + api_key,
+    native_boxlite_http_method_text(request_method),
+    "--header",
+    "@-",
   ]
   match body {
-    Some(value) => {
+    NativeBoxLiteHttpNoBody => ()
+    NativeBoxLiteHttpJson(value) => {
       args.push("-H")
       args.push("Content-Type: application/json")
       args.push("--data-binary")
       args.push(value)
     }
-    None => ()
+    NativeBoxLiteHttpTarFile(value) => {
+      if !value.has_prefix("/") || value.contains("\u{0000}") {
+        return Err(
+          @types.ChoirError::validation_error(
+            "BoxLite HTTP archive path is invalid",
+          ),
+        )
+      }
+      args.push("-H")
+      args.push("Content-Type: application/x-tar")
+      args.push("--data-binary")
+      args.push("@" + value)
+    }
   }
   args.push(url + path)
-  args
+  Ok({ arguments: args, stdin: "Authorization: Bearer " + api_key + "\n" })
+}
+
+///|
+/// The secret-free argv shared by production and live conformance server
+/// launches. Authentication is supplied separately through
+/// `BOXLITE_SERVE_API_KEY`.
+pub fn native_boxlite_serve_arguments(
+  home : String,
+  port : Int,
+) -> Array[String] {
+  ["--home", home, "serve", "--host", "127.0.0.1", "--port", port.to_string()]
 }
 
 ///|
@@ -431,24 +592,29 @@ pub fn boxlite_clone_request_body(name : String) -> String {
 ///|
 async fn capture_native_boxlite_http(
   server : NativeBoxLiteServerHandle,
-  http_method : String,
+  request_method : NativeBoxLiteHttpMethod,
   path : String,
-  body : String?,
+  body : NativeBoxLiteHttpBody,
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  let args = boxlite_http_arguments(
-    server.config.api_key,
-    server.url,
-    http_method,
-    path,
-    body,
-    30,
-  )
-  capture_boxlite_fixed_process(
+  let invocation = match
+    native_boxlite_http_invocation(
+      server.config.api_key,
+      server.url,
+      request_method,
+      path,
+      body,
+      30,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  capture_boxlite_fixed_process_input(
     "/usr/bin/curl",
-    args,
+    invocation.arguments,
     server.config.root,
     native_boxlite_environment(server, false),
     40000,
+    invocation.stdin,
   )
 }
 
@@ -668,26 +834,16 @@ pub async fn start_native_boxlite_server(
     )
   }
   let url = "http://127.0.0.1:" + config.port.to_string()
-  let args = [
-    "--home",
-    config.home,
-    "serve",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    config.port.to_string(),
-    "--api-key",
-    config.api_key,
-  ]
+  let args = native_boxlite_serve_arguments(config.home, config.port)
   @process_host.abort_if_hermetic_test_exec(
     @process_host.command_for_program(config.binary, args, Some(config.root)),
   )
   let pid = @process.spawn_orphan(
     config.binary,
     args[:],
-    extra_env=@sandbox.boxlite_probe_environment_with_runtime(
+    extra_env=@sandbox.boxlite_serve_environment_with_runtime(
       config.root,
-      None,
+      config.api_key,
       Some(config.runtime_dir),
     ),
     inherit_env=false,
@@ -1115,9 +1271,9 @@ pub async fn stop_native_boxlite_take(
   let stopped = match
     capture_native_boxlite_http(
       take.prepared.server,
-      "POST",
+      NativeBoxLiteHttpPost,
       "/v1/boxes/" + take.box_id + "/stop",
-      None,
+      NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1163,9 +1319,9 @@ async fn create_and_start_native_boxlite(
   let created = match
     capture_native_boxlite_http(
       server,
-      "POST",
+      NativeBoxLiteHttpPost,
       "/v1/boxes",
-      Some(native_boxlite_create_body(name)),
+      NativeBoxLiteHttpJson(native_boxlite_create_body(name)),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1178,9 +1334,9 @@ async fn create_and_start_native_boxlite(
   let started = match
     capture_native_boxlite_http(
       server,
-      "POST",
+      NativeBoxLiteHttpPost,
       "/v1/boxes/" + box_id + "/start",
-      None,
+      NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => {
@@ -1401,30 +1557,26 @@ async fn copy_native_boxlite_input_online(
     if wrapped.exit_code != 0 || !@sys.path_exists(upload_archive) {
       return Err(native_boxlite_take_error("transfer chunk wrapping failed"))
     }
+    let upload_invocation = match
+      native_boxlite_http_invocation(
+        server.config.api_key,
+        server.url,
+        NativeBoxLiteHttpPut,
+        "/v1/boxes/" + box_id + "/files?path=" + encoded_upload_root,
+        NativeBoxLiteHttpTarFile(upload_archive),
+        180,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
     let uploaded = match
-      capture_boxlite_fixed_process(
+      capture_boxlite_fixed_process_input(
         "/usr/bin/curl",
-        [
-          "-fsS",
-          "--max-time",
-          "180",
-          "-X",
-          "PUT",
-          "-H",
-          "Authorization: Bearer " + server.config.api_key,
-          "-H",
-          "Content-Type: application/x-tar",
-          "--data-binary",
-          "@" + upload_archive,
-          server.url +
-          "/v1/boxes/" +
-          box_id +
-          "/files?path=" +
-          encoded_upload_root,
-        ],
+        upload_invocation.arguments,
         server.config.root,
         native_boxlite_environment(server, false),
         180000,
+        upload_invocation.stdin,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1551,9 +1703,9 @@ pub async fn prepare_native_boxlite_environment(
     let stopped_before_transfer = match
       capture_native_boxlite_http(
         server,
-        "POST",
+        NativeBoxLiteHttpPost,
         "/v1/boxes/" + base_box_id + "/stop",
-        None,
+        NativeBoxLiteHttpNoBody,
       ) {
       Ok(value) => value
       Err(error) => {
@@ -1801,9 +1953,9 @@ pub async fn clone_native_boxlite_take(
   let cloned = match
     capture_native_boxlite_http(
       prepared.server,
-      "POST",
+      NativeBoxLiteHttpPost,
       "/v1/boxes/" + prepared.base_box_id + "/clone",
-      Some(native_boxlite_clone_body(name)),
+      NativeBoxLiteHttpJson(native_boxlite_clone_body(name)),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1816,9 +1968,9 @@ pub async fn clone_native_boxlite_take(
   let started = match
     capture_native_boxlite_http(
       prepared.server,
-      "POST",
+      NativeBoxLiteHttpPost,
       "/v1/boxes/" + box_id + "/start",
-      None,
+      NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => {

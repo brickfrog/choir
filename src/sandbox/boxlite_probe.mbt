@@ -25,7 +25,7 @@ pub let boxlite_runtime_bundle_digest : String = "66364c9b629315a2f3c0f5ab341fa1
 ///|
 pub fn boxlite_probe_environment_with_runtime(
   root : String,
-  api_key : String?,
+  client_api_key : String?,
   runtime_dir : String?,
 ) -> Map[String, String] {
   let environment : Map[String, String] = {
@@ -34,7 +34,7 @@ pub fn boxlite_probe_environment_with_runtime(
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "NO_COLOR": "1",
   }
-  match api_key {
+  match client_api_key {
     Some(value) => environment["BOXLITE_API_KEY"] = value
     None => ()
   }
@@ -42,6 +42,24 @@ pub fn boxlite_probe_environment_with_runtime(
     Some(value) => environment["BOXLITE_RUNTIME_DIR"] = value
     None => ()
   }
+  environment
+}
+
+///|
+/// Sterile environment for `boxlite serve`. The server capability uses the
+/// admitted BoxLite environment contract and is intentionally distinct from
+/// the remote-client `BOXLITE_API_KEY` variable.
+pub fn boxlite_serve_environment_with_runtime(
+  root : String,
+  api_key : String,
+  runtime_dir : String?,
+) -> Map[String, String] {
+  let environment = boxlite_probe_environment_with_runtime(
+    root,
+    None,
+    runtime_dir,
+  )
+  environment["BOXLITE_SERVE_API_KEY"] = api_key
   environment
 }
 
@@ -151,6 +169,7 @@ pub(all) enum BoxLiteProbeCase {
   BoxLitePinnedImagePreparation
   BoxLiteSecureGuestBoot
   BoxLiteInsecureDiagnosticControl
+  BoxLiteApiCapabilityIsolation
   BoxLiteCloneIsolation
   BoxLiteTransferLifecycle
   BoxLiteAttachSignalKill

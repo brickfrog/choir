@@ -1,5 +1,6 @@
 ///|
 pub(all) struct BoxLiteDownstreamEvidence {
+  api_capability_isolation : BoxLiteProbeCapture
   clone_isolation : BoxLiteProbeCapture
   transfer_lifecycle : BoxLiteProbeCapture
   attach_signal_kill : BoxLiteProbeCapture
@@ -19,6 +20,7 @@ pub(all) struct BoxLiteDownstreamEvidence {
 pub fn boxlite_downstream_not_run_evidence() -> BoxLiteDownstreamEvidence {
   let not_run : BoxLiteProbeCapture = { exit_code: -3, output: "" }
   {
+    api_capability_isolation: not_run,
     clone_isolation: not_run,
     transfer_lifecycle: not_run,
     attach_signal_kill: not_run,
@@ -40,6 +42,11 @@ fn boxlite_downstream_cases(
   evidence : BoxLiteDownstreamEvidence,
 ) -> Array[(BoxLiteProbeCase, BoxLiteProbeCapture, String)] {
   [
+    (
+      BoxLiteApiCapabilityIsolation,
+      evidence.api_capability_isolation,
+      "CHOIR_BOXLITE_API_CAPABILITY_ISOLATED",
+    ),
     (BoxLiteCloneIsolation, evidence.clone_isolation, "CHOIR_BOXLITE_CLONE_OK"),
     (
       BoxLiteTransferLifecycle,
