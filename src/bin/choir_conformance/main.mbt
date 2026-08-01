@@ -3956,6 +3956,95 @@ async fn run_boxlite_live() -> Int {
 }
 
 ///|
+async fn exercise_boxlite_output_limit(
+  prepared : @take_host.NativeBoxLitePreparedEnvironment,
+  moon_home : String,
+  source : @git_host.NativeGitWorkspaceSource,
+) -> Result[Bool, @types.ChoirError] {
+  let name = "choir-output-limit-live-" + @sys.get_pid().to_string()
+  let take = match
+    @take_host.clone_native_boxlite_take(
+      prepared,
+      moon_home,
+      name,
+      source.root,
+      source.source_digest,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let process : @sandbox.SandboxProcessSpec = {
+    authority: @sandbox.SandboxProcessAuthority::SandboxImplementationTool(
+      @control.TakeId("output-limit-live-take"),
+      @storage.artifact_digest(@utf8.encode("output-limit-live-profile")),
+    ),
+    executable: @sandbox.SandboxExecutable::SandboxRegisteredTool(
+      @sandbox.SandboxRegisteredToolId("moon"),
+      prepared.tool_manifest_digest,
+    ),
+    arguments: ["version"],
+    working_directory: @sandbox.SandboxWorkingDirectory::SandboxWorkspaceRoot,
+    environment: [],
+    stdin: @sandbox.SandboxStdinPolicy::SandboxStdinClosed,
+    timeout_ms: 30000L,
+    resources: {
+      cpu_millis: 1000L,
+      memory_bytes: 268435456L,
+      process_count: 32,
+      file_bytes: 1048576L,
+    },
+    network: {
+      profile: @sandbox.SandboxNetworkProfile::NetworkDisabled,
+      version: 1L,
+      policy_digest: prepared.runtime_policy_digest,
+    },
+    output: {
+      stdout_limit_bytes: 0L,
+      stderr_limit_bytes: 0L,
+      on_limit: @sandbox.SandboxOutputLimitDisposition::SandboxTerminateAndMarkExceeded,
+    },
+  }
+  let process_digest = @storage.artifact_digest(
+    @utf8.encode(process.to_json().stringify(indent=0)),
+  )
+  let outcome = @take_host.execute_native_boxlite_process(
+    take,
+    {
+      goal_id: @control.GoalId("output-limit-live-goal"),
+      take_id: @control.TakeId("output-limit-live-take"),
+      fencing_epoch: @control.FencingEpoch(1L),
+    },
+    process_digest,
+    process,
+    fn(_) { false },
+  )
+  let cleanup = @take_host.destroy_native_boxlite_take(take)
+  match cleanup {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let absent = match
+    @take_host.lookup_native_boxlite_named_box(prepared.server, name) {
+    Ok(@take_host.NativeBoxLiteNamedBoxLookup::NativeBoxLiteNamedBoxAbsent) =>
+      true
+    Ok(_) => false
+    Err(error) => return Err(error)
+  }
+  match outcome {
+    Ok(
+      @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessOutputExceeded
+    ) if absent => Ok(true)
+    Ok(_) =>
+      Err(
+        @types.ChoirError::workspace_error(
+          "live sandbox output limit did not produce its typed terminal",
+        ),
+      )
+    Err(error) => Err(error)
+  }
+}
+
+///|
 async fn exercise_boxlite_take(
   server : @take_host.NativeBoxLiteServerHandle,
   active_server : @ref.Ref[@take_host.NativeBoxLiteServerHandle],
@@ -4239,7 +4328,7 @@ async fn exercise_boxlite_take(
   let assurance_process_digest = @storage.artifact_digest(
     @utf8.encode(assurance_process.to_json().stringify(indent=0)),
   )
-  let assurance_process_result = match
+  let assurance_process_outcome = match
     @take_host.execute_native_boxlite_process(
       assurance,
       {
@@ -4253,6 +4342,16 @@ async fn exercise_boxlite_take(
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
+  }
+  let assurance_process_result = match assurance_process_outcome {
+    @take_host.NativeSandboxProcessOutcome::NativeSandboxProcessExited(value) =>
+      value
+    _ =>
+      return Err(
+        @types.ChoirError::workspace_error(
+          "read-only typed verification did not exit",
+        ),
+      )
   }
   if assurance_process_result.exit_code != 0 {
     return Err(
@@ -4292,6 +4391,11 @@ async fn exercise_boxlite_take(
       @types.ChoirError::workspace_error("read-only assurance subject changed"),
     )
   }
+  let output_limit_enforced = match
+    exercise_boxlite_output_limit(prepared, moon_home, source) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   match @take_host.destroy_native_boxlite_take(take) {
     Ok(_) => ()
     Err(error) => return Err(error)
@@ -4323,6 +4427,9 @@ async fn exercise_boxlite_take(
     "assurance_subject_read_only": true.to_json(),
     "assurance_scratch_output_persisted": true.to_json(),
     "assurance_typed_process_exit": assurance_process_result.exit_code.to_json(),
+    "sandbox_output_limit_enforced": output_limit_enforced.to_json(),
+    "sandbox_output_limit_exact_box_cleanup": true.to_json(),
+    "sandbox_output_limit_provider_slots_acquired": (0 : Int).to_json(),
     "result_round_trip": true.to_json(),
     "candidate_retry_stable": true.to_json(),
     "candidate_commit": candidate.commit_oid.to_json(),

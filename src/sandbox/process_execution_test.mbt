@@ -47,6 +47,70 @@ test "process start becomes terminal only from durable authorization" {
 }
 
 ///|
+test "semantic non-exit outcomes become distinct terminals without output" {
+  for
+    disposition in [
+      @sandbox.ProcessExecutionDisposition::ProcessTimedOut,
+      @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded,
+      @sandbox.ProcessExecutionDisposition::ProcessInterrupted,
+    ] {
+    let authorized = @sandbox.authorize_process_start(process_fixture(), 10L).unwrap()
+    let terminal = @sandbox.record_process_nonexit_terminal(
+      authorized, disposition, 11L,
+    ).unwrap()
+    assert_eq(terminal.disposition, disposition)
+    assert_eq(terminal.output_artifact_set_digest, None)
+    assert_eq(terminal.started_at, Some(10L))
+    assert_eq(terminal.finished_at, Some(11L))
+    assert_eq(
+      @sandbox.decode_process_execution(
+        @utf8.encode(terminal.to_json().stringify(indent=0)),
+      ).unwrap(),
+      terminal,
+    )
+  }
+}
+
+///|
+test "semantic non-exit transition rejects false output and invalid sources" {
+  let authorized = @sandbox.authorize_process_start(process_fixture(), 10L).unwrap()
+  assert_true(
+    @sandbox.record_process_nonexit_terminal(
+      authorized,
+      @sandbox.ProcessExecutionDisposition::ProcessExited(
+        1,
+        @control.Digest(
+          "5555555555555555555555555555555555555555555555555555555555555555",
+        ),
+      ),
+      11L,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @sandbox.record_process_nonexit_terminal(
+      process_fixture(),
+      @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded,
+      11L,
+    )
+    is Err(_),
+  )
+  let invalid = {
+    ..@sandbox.record_process_nonexit_terminal(
+      authorized,
+      @sandbox.ProcessExecutionDisposition::ProcessLimitExceeded,
+      11L,
+    ).unwrap(),
+    output_artifact_set_digest: Some(
+      @control.Digest(
+        "5555555555555555555555555555555555555555555555555555555555555555",
+      ),
+    ),
+  }
+  assert_true(@sandbox.validate_process_execution(invalid) is Err(_))
+}
+
+///|
 test "ambiguous unkeyed start becomes terminal uncertainty" {
   let authorized = @sandbox.authorize_process_start(process_fixture(), 10L).unwrap()
   let uncertain = @sandbox.record_unadoptable_process_start(authorized, 11L).unwrap()

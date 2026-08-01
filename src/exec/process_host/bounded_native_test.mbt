@@ -13,13 +13,13 @@ fn bounded_process_test_environment() -> Map[String, String] {
 }
 
 ///|
-async test "real exec integration: bounded process rejects a non-positive output cap before spawn" {
+async test "real exec integration: bounded process accepts empty output at a zero-byte cap" {
   if !@test_support.real_exec_integration_enabled() {
     return
   }
   let result = capture_bounded_process(
     "/usr/bin/printf",
-    ["unreachable"],
+    [""],
     bounded_process_test_environment(),
     closed_process_stdin_for_test(),
     "/tmp",
@@ -27,10 +27,31 @@ async test "real exec integration: bounded process rejects a non-positive output
     0,
     fn() { false },
   )
-  match result {
-    Err(error) => assert_true(error.message().contains("specification"))
-    Ok(_) => fail("invalid output cap reached process execution")
+  assert_eq(result.unwrap(), NativeProcessCompleted(0, ""))
+}
+
+///|
+async test "real exec integration: bounded process exceeds a zero-byte cap on the first byte" {
+  if !@test_support.real_exec_integration_enabled() {
+    return
   }
+  let witnessed_pid = @ref.new(0)
+  let outcome = capture_bounded_process(
+    "/usr/bin/printf",
+    ["x"],
+    bounded_process_test_environment(),
+    closed_process_stdin_for_test(),
+    "/tmp",
+    5000,
+    0,
+    fn() { false },
+    started=fn(pid) {
+      witnessed_pid.val = pid
+      Ok(())
+    },
+  ).unwrap()
+  assert_true(outcome is NativeProcessOutputExceeded(_))
+  assert_false(@sys.pgid_has_non_zombie_process(witnessed_pid.val))
 }
 
 ///|

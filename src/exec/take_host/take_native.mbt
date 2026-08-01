@@ -60,6 +60,14 @@ pub(all) struct NativeSandboxProcessResult {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum NativeSandboxProcessOutcome {
+  NativeSandboxProcessExited(NativeSandboxProcessResult)
+  NativeSandboxProcessInterrupted
+  NativeSandboxProcessTimedOut
+  NativeSandboxProcessOutputExceeded
+} derive(Debug, Eq)
+
+///|
 pub(all) enum NativeBoxLiteHttpMethod {
   NativeBoxLiteHttpGet
   NativeBoxLiteHttpPost
@@ -639,6 +647,44 @@ async fn capture_native_boxlite_cli(
     server.config.root,
     native_boxlite_environment(server, true),
     timeout_ms,
+  )
+}
+
+///|
+async fn capture_native_boxlite_bounded_cli(
+  server : NativeBoxLiteServerHandle,
+  command : Array[String],
+  timeout_ms : Int,
+  output_limit_bytes : Int,
+  cancellation_requested : () -> Bool,
+) -> Result[@process_host.NativeBoundedProcessOutcome, @types.ChoirError] {
+  let args : Array[String] = [
+    "--home",
+    native_boxlite_remote_client_home(server, command.join("\u{00}")),
+    "--url",
+    server.url,
+  ]
+  for item in command {
+    args.push(item)
+  }
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error(
+          "bounded BoxLite client stdin pipe failed",
+        ),
+      )
+  }
+  stdin_write.close()
+  @process_host.capture_bounded_process(
+    server.config.binary,
+    args,
+    native_boxlite_environment(server, true),
+    stdin_read,
+    server.config.root,
+    timeout_ms,
+    output_limit_bytes,
+    cancellation_requested,
   )
 }
 
@@ -2384,13 +2430,60 @@ test "assurance process requires a nonempty scratch target" {
 }
 
 ///|
+let native_sandbox_max_output_bytes : Int64 = 2L * 1024L * 1024L
+
+///|
+fn native_sandbox_aggregate_output_limit(
+  output : @sandbox.SandboxOutputPolicy,
+) -> Result[Int, @types.ChoirError] {
+  if output.stdout_limit_bytes < 0L ||
+    output.stderr_limit_bytes < 0L ||
+    output.stdout_limit_bytes > native_sandbox_max_output_bytes ||
+    output.stderr_limit_bytes >
+    native_sandbox_max_output_bytes - output.stdout_limit_bytes {
+    return Err(
+      @types.ChoirError::policy_blocked(
+        "native sandbox process exceeds the admitted output bound",
+      ),
+    )
+  }
+  Ok((output.stdout_limit_bytes + output.stderr_limit_bytes).to_int())
+}
+
+///|
+test "native sandbox aggregate output limit is overflow safe" {
+  let policy = fn(stdout_limit_bytes, stderr_limit_bytes) {
+    @sandbox.SandboxOutputPolicy::{
+      stdout_limit_bytes,
+      stderr_limit_bytes,
+      on_limit: @sandbox.SandboxOutputLimitDisposition::SandboxTerminateAndMarkExceeded,
+    }
+  }
+  assert_eq(
+    native_sandbox_aggregate_output_limit(policy(1048576L, 1048576L)).unwrap(),
+    2097152,
+  )
+  assert_eq(native_sandbox_aggregate_output_limit(policy(0L, 0L)).unwrap(), 0)
+  assert_true(
+    native_sandbox_aggregate_output_limit(policy(2097152L, 1L)) is Err(_),
+  )
+  assert_true(
+    native_sandbox_aggregate_output_limit(
+      policy(0x7fffffffffffffffL, 0x7fffffffffffffffL),
+    )
+    is Err(_),
+  )
+}
+
+///|
 pub async fn execute_native_boxlite_process(
   take : NativeBoxLiteTakeSandbox,
   capability : @sandbox.SandboxEffectCapability,
   persisted_process_spec_digest : @control.Digest,
   process : @sandbox.SandboxProcessSpec,
   artifact_exists : (@control.ArtifactReference) -> Bool,
-) -> Result[NativeSandboxProcessResult, @types.ChoirError] {
+  cancellation_requested? : () -> Bool = fn() { false },
+) -> Result[NativeSandboxProcessOutcome, @types.ChoirError] {
   match
     validate_native_persisted_process_spec(
       persisted_process_spec_digest, process,
@@ -2413,14 +2506,17 @@ pub async fn execute_native_boxlite_process(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if process.timeout_ms > 600000L ||
-    process.output.stdout_limit_bytes + process.output.stderr_limit_bytes >
-    2097152L {
+  if process.timeout_ms > 600000L {
     return Err(
       @types.ChoirError::policy_blocked(
         "native sandbox process exceeds the admitted runtime bound",
       ),
     )
+  }
+  let output_limit = match
+    native_sandbox_aggregate_output_limit(process.output) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
   let assurance_process = match process.authority {
     @sandbox.SandboxProcessAuthority::SandboxImplementationTool(_, _) => false
@@ -2512,30 +2608,37 @@ pub async fn execute_native_boxlite_process(
     command.push(argument)
   }
   let capture = match
-    capture_native_boxlite_cli(
+    capture_native_boxlite_bounded_cli(
       take.prepared.server,
       command,
       process.timeout_ms.to_int(),
+      output_limit,
+      cancellation_requested,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let output_limit = process.output.stdout_limit_bytes +
-    process.output.stderr_limit_bytes
-  if capture.output.length().to_int64() > output_limit {
-    return Err(
-      @types.ChoirError::policy_blocked(
-        "native sandbox process output exceeded its admitted limit",
-      ),
-    )
+  match capture {
+    @process_host.NativeBoundedProcessOutcome::NativeProcessCompleted(
+      exit_code,
+      output
+    ) => {
+      let result : NativeSandboxProcessResult = {
+        exit_code,
+        output,
+        output_digest: @storage.artifact_digest(@utf8.encode(output)),
+        started_at: None,
+        finished_at: None,
+      }
+      Ok(NativeSandboxProcessExited(result))
+    }
+    @process_host.NativeBoundedProcessOutcome::NativeProcessInterrupted(_) =>
+      Ok(NativeSandboxProcessInterrupted)
+    @process_host.NativeBoundedProcessOutcome::NativeProcessTimedOut(_) =>
+      Ok(NativeSandboxProcessTimedOut)
+    @process_host.NativeBoundedProcessOutcome::NativeProcessOutputExceeded(_) =>
+      Ok(NativeSandboxProcessOutputExceeded)
   }
-  Ok({
-    exit_code: capture.exit_code,
-    output: capture.output,
-    output_digest: @storage.artifact_digest(@utf8.encode(capture.output)),
-    started_at: None,
-    finished_at: None,
-  })
 }
 
 ///|
@@ -3117,18 +3220,20 @@ pub async fn destroy_native_boxlite_take(
   take : NativeBoxLiteTakeSandbox,
 ) -> Result[Unit, @types.ChoirError] {
   let removed = match
-    capture_native_boxlite_cli(
+    capture_native_boxlite_bounded_cli(
       take.prepared.server,
       ["rm", "-f", take.box_id],
       60000,
+      64 * 1024,
+      fn() { false },
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  if removed.exit_code == 0 {
-    Ok(())
-  } else {
-    Err(native_boxlite_take_error("Take cleanup failed"))
+  match removed {
+    @process_host.NativeBoundedProcessOutcome::NativeProcessCompleted(0, _) =>
+      Ok(())
+    _ => Err(native_boxlite_take_error("Take cleanup failed"))
   }
 }
 
