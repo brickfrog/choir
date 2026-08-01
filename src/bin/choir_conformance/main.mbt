@@ -363,9 +363,13 @@ fn unavailable_sandbox_mcp_launch(
     (
       node,
       [
-        script, "--binary", "/bin/false", "--runtime-dir", root, "--url", "http://127.0.0.1:29999",
-        "--api-key", "sandbox-capability-dead", "--home", root, "--box", "sandbox-capability-dead",
-        "--access", "mutable",
+        script,
+        "--owner-socket",
+        root + "/unavailable-owner.sock",
+        "--box",
+        "sandbox-capability-dead",
+        "--access",
+        "mutable",
       ],
     ),
   )

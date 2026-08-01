@@ -57,6 +57,14 @@ the CLI and all six runtime files before booting a guest. The accepted
 identities are defined in `src/sandbox/boxlite_probe.mbt`; a missing or altered
 runtime artifact blocks KVM execution.
 
+The reusable API capability is never a process argument or credential file.
+Choir launches `boxlite serve` with `BOXLITE_SERVE_API_KEY`, authenticates
+remote BoxLite CLI calls with `BOXLITE_API_KEY`, and supplies direct curl
+authorization through an inherited stdin pipe using `--header @-`. The
+per-Take owner execution capability remains environment-only and scoped to its
+owner-only Unix socket. Live qualification reads the server's `/proc` command
+line and requires both authenticated success and unauthenticated rejection.
+
 Verify the installed bundle:
 
 ```sh

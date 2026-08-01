@@ -1,40 +1,118 @@
 ///|
-/// The live probe and the runtime Take path each built this argv independently,
-/// so a protocol change had to be made twice and the probe could silently stop
-/// exercising what the runtime actually does. One builder now, and this pins
-/// the wire contract it produces.
-test "a BoxLite request carries its auth and body exactly once" {
-  let with_body = @take_host.boxlite_http_arguments(
+/// The live probe and runtime Take path share one invocation contract. The
+/// reusable capability is paired with argv but can only travel over stdin.
+test "a BoxLite request keeps auth out of argv for every body shape" {
+  let with_body = @take_host.native_boxlite_http_invocation(
     "secret-key",
     "http://127.0.0.1:22000",
-    "POST",
+    @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
     "/v1/boxes",
-    Some("{\"name\":\"box-1\"}"),
+    @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+      "{\"name\":\"box-1\"}",
+    ),
     30,
-  )
-  @debug.assert_eq(with_body, [
-    "-fsS", "--max-time", "30", "-X", "POST", "-H", "Authorization: Bearer secret-key",
-    "-H", "Content-Type: application/json", "--data-binary", "{\"name\":\"box-1\"}",
-    "http://127.0.0.1:22000/v1/boxes",
+  ).unwrap()
+  @debug.assert_eq(with_body.arguments, [
+    "-fsS", "--max-time", "30", "-X", "POST", "--header", "@-", "-H", "Content-Type: application/json",
+    "--data-binary", "{\"name\":\"box-1\"}", "http://127.0.0.1:22000/v1/boxes",
   ])
-  let without_body = @take_host.boxlite_http_arguments(
+  assert_eq(with_body.stdin, "Authorization: Bearer secret-key\n")
+  assert_false(with_body.arguments.join("\u{0000}").contains("secret-key"))
+  let without_body = @take_host.native_boxlite_http_invocation(
     "secret-key",
     "http://127.0.0.1:22000",
-    "GET",
+    @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
     "/v1/boxes/box-1",
-    None,
+    @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
     20,
-  )
-  @debug.assert_eq(without_body, [
-    "-fsS", "--max-time", "20", "-X", "GET", "-H", "Authorization: Bearer secret-key",
-    "http://127.0.0.1:22000/v1/boxes/box-1",
+  ).unwrap()
+  @debug.assert_eq(without_body.arguments, [
+    "-fsS", "--max-time", "20", "-X", "GET", "--header", "@-", "http://127.0.0.1:22000/v1/boxes/box-1",
   ])
-  assert_true(with_body.contains("30"))
-  assert_true(without_body.contains("20"))
+  let tar = @take_host.native_boxlite_http_invocation(
+    "secret-key",
+    "http://127.0.0.1:22000",
+    @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPut,
+    "/v1/boxes/box-1/files?path=%2Froot%2Fupload",
+    @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpTarFile(
+      "/tmp/choir-take-test/upload.tar",
+    ),
+    180,
+  ).unwrap()
+  assert_true(tar.arguments.contains("Content-Type: application/x-tar"))
+  assert_true(tar.arguments.contains("@/tmp/choir-take-test/upload.tar"))
+  assert_false(tar.arguments.join("\u{0000}").contains("secret-key"))
+  assert_true(
+    @take_host.native_boxlite_http_invocation(
+      "bad\nkey",
+      "http://127.0.0.1:22000",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
+      "/v1/boxes",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
+      20,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @take_host.native_boxlite_http_invocation(
+      "secret-key",
+      "http://example.invalid:22000",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
+      "/v1/boxes",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
+      20,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @take_host.native_boxlite_http_invocation(
+      "secret-key",
+      "http://127.0.0.1:22000",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
+      "/outside",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
+      20,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @take_host.native_boxlite_http_invocation(
+      "secret-key",
+      "http://127.0.0.1:22000",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
+      "/v1/boxes",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
+      181,
+    )
+    is Err(_),
+  )
+  assert_true(
+    @take_host.native_boxlite_http_invocation(
+      "secret-key",
+      "http://127.0.0.1:22000",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPut,
+      "/v1/boxes/box-1/files",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpTarFile("relative.tar"),
+      20,
+    )
+    is Err(_),
+  )
   assert_eq(
     @take_host.boxlite_clone_request_body("box-2"),
     "{\"name\":\"box-2\"}",
   )
+}
+
+///|
+test "BoxLite serve argv is secret-free" {
+  let arguments = @take_host.native_boxlite_serve_arguments(
+    "/tmp/choir-boxlite-home", 22000,
+  )
+  assert_eq(arguments, [
+    "--home", "/tmp/choir-boxlite-home", "serve", "--host", "127.0.0.1", "--port",
+    "22000",
+  ])
+  assert_false(arguments.contains("--api-key"))
 }
 
 ///|

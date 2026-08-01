@@ -342,20 +342,29 @@ async fn capture_boxlite_curl(
 async fn capture_boxlite_authorized_http(
   server : BoxLiteProbeServer,
   root : String,
-  http_method : String,
+  request_method : @take_host.NativeBoxLiteHttpMethod,
   path : String,
-  body : String?,
+  body : @take_host.NativeBoxLiteHttpBody,
 ) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
-  capture_boxlite_curl(
-    root,
-    @take_host.boxlite_http_arguments(
+  let invocation = match
+    @take_host.native_boxlite_http_invocation(
       server.api_key,
       server.url,
-      http_method,
+      request_method,
       path,
       body,
       20,
-    ),
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  @take_host.capture_boxlite_fixed_process_input(
+    "/usr/bin/curl",
+    invocation.arguments,
+    root,
+    boxlite_probe_environment(root, None),
+    30000,
+    invocation.stdin,
   )
 }
 
@@ -375,24 +384,18 @@ async fn start_boxlite_probe_server(
       ),
     )
   }
-  let args = [
-    "--home",
-    home,
-    "serve",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    port.to_string(),
-    "--api-key",
-    api_key,
-  ]
+  let args = @take_host.native_boxlite_serve_arguments(home, port)
   @process_host.abort_if_hermetic_test_exec(
     @process_host.command_for_program(binary, args, Some(root)),
   )
   let pid = @process.spawn_orphan(
     binary,
     args[:],
-    extra_env=boxlite_probe_environment(root, None),
+    extra_env=@sandbox.boxlite_serve_environment_with_runtime(
+      root,
+      api_key,
+      @sys.getenv("CHOIR_BOXLITE_RUNTIME_DIR"),
+    ),
     inherit_env=false,
     cwd=root,
   ) catch {
@@ -427,6 +430,100 @@ async fn start_boxlite_probe_server(
 ///|
 fn stop_boxlite_probe_server(server : BoxLiteProbeServer) -> Unit {
   @sys.kill_server_pid_sequence_best_effort(server.pid)
+}
+
+///|
+/// Prove the reusable API capability is absent from the live server command
+/// line while the stdin-authenticated client succeeds and an unauthenticated
+/// client is denied.
+async fn capture_boxlite_api_capability_isolation(
+  binary : String,
+  root : String,
+) -> Result[@sandbox.BoxLiteProbeCapture, @types.ChoirError] {
+  let server = match start_boxlite_probe_server(binary, root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  defer stop_boxlite_probe_server(server)
+  let command_line = @sys.read_file_prefix(
+    "/proc/" + server.pid.to_string() + "/cmdline",
+    4096,
+  )
+  if command_line == "" {
+    @sys.write_stderr("BoxLite capability probe: server argv was unreadable\n")
+    return Ok({ exit_code: 1, output: "BoxLite server argv was unreadable" })
+  }
+  if command_line.contains(server.api_key) {
+    @sys.write_stderr(
+      "BoxLite capability probe: server argv exposed capability\n",
+    )
+    return Ok({ exit_code: 1, output: "BoxLite server argv exposed capability" })
+  }
+  if command_line.contains("--api-key") {
+    @sys.write_stderr(
+      "BoxLite capability probe: server argv retained --api-key\n",
+    )
+    return Ok({ exit_code: 1, output: "BoxLite server argv retained --api-key" })
+  }
+  let unauthenticated = match
+    capture_boxlite_curl(root, [
+      "-sS",
+      "--max-time",
+      "5",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      server.url + "/v1/boxes",
+    ]) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if unauthenticated.exit_code != 0 ||
+    unauthenticated.output.trim().to_owned() != "401" {
+    @sys.write_stderr(
+      "BoxLite capability probe: unauthenticated exit=" +
+      unauthenticated.exit_code.to_string() +
+      " status=" +
+      unauthenticated.output.trim().to_owned() +
+      "\n",
+    )
+    return Ok({
+      exit_code: if unauthenticated.exit_code == 0 {
+        1
+      } else {
+        unauthenticated.exit_code
+      },
+      output: "BoxLite unauthenticated request was not denied: exit=" +
+      unauthenticated.exit_code.to_string() +
+      " status=" +
+      unauthenticated.output.trim().to_owned(),
+    })
+  }
+  let authenticated = match
+    capture_boxlite_authorized_http(
+      server,
+      root,
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
+      "/v1/boxes",
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if authenticated.exit_code != 0 {
+    @sys.write_stderr(
+      "BoxLite capability probe: authenticated exit=" +
+      authenticated.exit_code.to_string() +
+      "\n",
+    )
+    return Ok({
+      exit_code: authenticated.exit_code,
+      output: "BoxLite stdin-authenticated request failed: exit=" +
+      authenticated.exit_code.to_string(),
+    })
+  }
+  Ok(boxlite_pass_capture("CHOIR_BOXLITE_API_CAPABILITY_ISOLATED"))
 }
 
 ///|
@@ -614,9 +711,11 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes",
-      Some(boxlite_create_body(base_name, network_disabled)),
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+        boxlite_create_body(base_name, network_disabled),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -633,9 +732,9 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + base_id + "/start",
-      None,
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -682,9 +781,9 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + base_id + "/stop",
-      None,
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -698,9 +797,11 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + base_id + "/clone",
-      Some(boxlite_clone_body("choir-clone-a-" + @sys.get_pid().to_string())),
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+        boxlite_clone_body("choir-clone-a-" + @sys.get_pid().to_string()),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -717,9 +818,11 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + base_id + "/clone",
-      Some(boxlite_clone_body("choir-clone-b-" + @sys.get_pid().to_string())),
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+        boxlite_clone_body("choir-clone-b-" + @sys.get_pid().to_string()),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -737,9 +840,9 @@ async fn capture_boxlite_lifecycle_evidence(
       capture_boxlite_authorized_http(
         server,
         root,
-        "POST",
+        @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
         "/v1/boxes/" + clone_id + "/start",
-        None,
+        @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -899,9 +1002,9 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + clone_a + "/exec",
-      Some(
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
         boxlite_exec_body("/bin/sh", [
           "-c", "trap 'exit 0' TERM; while :; do sleep 1; done",
         ]),
@@ -922,9 +1025,11 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + clone_a + "/executions/" + execution_id + "/signal",
-      Some(boxlite_signal_body(15)),
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+        boxlite_signal_body(15),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -933,9 +1038,11 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "POST",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
       "/v1/boxes/" + clone_a + "/exec",
-      Some(boxlite_exec_body("/bin/sh", ["-c", "while :; do sleep 1; done"])),
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpJson(
+        boxlite_exec_body("/bin/sh", ["-c", "while :; do sleep 1; done"]),
+      ),
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -954,9 +1061,9 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       server,
       root,
-      "DELETE",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpDelete,
       "/v1/boxes/" + clone_a + "/executions/" + kill_execution_id,
-      None,
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1010,9 +1117,9 @@ async fn capture_boxlite_lifecycle_evidence(
       capture_boxlite_authorized_http(
         server,
         root,
-        "POST",
+        @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpPost,
         "/v1/boxes/" + clone_id + "/stop",
-        None,
+        @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1032,9 +1139,9 @@ async fn capture_boxlite_lifecycle_evidence(
     capture_boxlite_authorized_http(
       restarted_server,
       root,
-      "GET",
+      @take_host.NativeBoxLiteHttpMethod::NativeBoxLiteHttpGet,
       "/v1/boxes/" + clone_a,
-      None,
+      @take_host.NativeBoxLiteHttpBody::NativeBoxLiteHttpNoBody,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1058,9 +1165,11 @@ async fn capture_boxlite_lifecycle_evidence(
 fn merge_boxlite_downstream_evidence(
   lifecycle : @sandbox.BoxLiteDownstreamEvidence,
   network : @sandbox.BoxLiteDownstreamEvidence,
+  api_capability_isolation : @sandbox.BoxLiteProbeCapture,
 ) -> @sandbox.BoxLiteDownstreamEvidence {
   {
     ..lifecycle,
+    api_capability_isolation,
     network_disabled: network.network_disabled,
     network_dns: network.network_dns,
     network_tcp: network.network_tcp,
@@ -1221,6 +1330,11 @@ pub async fn capture_boxlite_live_evidence(
     Ok(capture) => capture
     Err(error) => return Err(error)
   }
+  let api_capability_isolation = match
+    capture_boxlite_api_capability_isolation(binary, dedicated_root) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let downstream = if secure_boot.exit_code == 0 &&
     secure_boot.output.contains("CHOIR_BOXLITE_SECURE_OK") {
     let lifecycle = match
@@ -1233,7 +1347,9 @@ pub async fn capture_boxlite_live_evidence(
       Ok(value) => value
       Err(error) => return Err(error)
     }
-    merge_boxlite_downstream_evidence(lifecycle, network)
+    merge_boxlite_downstream_evidence(
+      lifecycle, network, api_capability_isolation,
+    )
   } else {
     let lifecycle = match
       capture_boxlite_lifecycle_evidence(binary, dedicated_root, false) {
@@ -1245,7 +1361,9 @@ pub async fn capture_boxlite_live_evidence(
       Ok(value) => value
       Err(_) => @sandbox.boxlite_downstream_not_run_evidence()
     }
-    merge_boxlite_downstream_evidence(lifecycle, network)
+    merge_boxlite_downstream_evidence(
+      lifecycle, network, api_capability_isolation,
+    )
   }
   Ok({
     executable_hash,

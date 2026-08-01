@@ -9,6 +9,21 @@ fn no_downstream() -> @sandbox.BoxLiteDownstreamEvidence {
 }
 
 ///|
+test "BoxLite serve capability uses only the admitted server environment" {
+  let environment = @sandbox.boxlite_serve_environment_with_runtime(
+    "/tmp/choir-conformance-boxlite-environment",
+    "serve-secret",
+    Some("/opt/boxlite-runtime"),
+  )
+  assert_eq(environment.get("BOXLITE_SERVE_API_KEY"), Some("serve-secret"))
+  assert_eq(
+    environment.get("BOXLITE_RUNTIME_DIR"),
+    Some("/opt/boxlite-runtime"),
+  )
+  assert_eq(environment.get("BOXLITE_API_KEY"), None)
+}
+
+///|
 fn runtime_bundle_hashes_capture() -> @sandbox.BoxLiteProbeCapture {
   capture(
     0,
@@ -66,7 +81,7 @@ test "release report records secure seccomp failure without weakening policy" {
     ),
   )
   assert_eq(
-    report.cases[5].status,
+    report.cases[6].status,
     @sandbox.BoxLiteProbeCaseStatus::BoxLiteCaseNotRun(
       @sandbox.BoxLiteBlockReason::BoxLiteNotRunAfterSecureBootFailure,
     ),
@@ -93,7 +108,7 @@ test "downstream diagnostic failures remain visible after secure boot failure" {
     },
   })
   assert_eq(
-    report.cases[6].status,
+    report.cases[7].status,
     @sandbox.BoxLiteProbeCaseStatus::BoxLiteCaseDiagnosticFailed(
       @sandbox.BoxLiteBlockReason::BoxLiteDownstreamProbeFailed(
         @sandbox.BoxLiteProbeCase::BoxLiteTransferLifecycle,
@@ -102,6 +117,39 @@ test "downstream diagnostic failures remain visible after secure boot failure" {
     ),
   )
   assert_eq(report.blocking_reasons.length(), 1)
+}
+
+///|
+test "API capability isolation is a blocking live conformance case" {
+  let downstream = no_downstream()
+  let report = @sandbox.evaluate_boxlite_live_evidence({
+    executable_hash: capture(
+      0,
+      @sandbox.boxlite_release_executable_sha256 + "  /tmp/boxlite\n",
+    ),
+    runtime_bundle_hashes: runtime_bundle_hashes_capture(),
+    version: capture(0, "boxlite 0.9.7\n"),
+    info: capture(0, "virtualization: available\n"),
+    image_pull: capture(0, "pulled\n"),
+    secure_boot: capture(0, "CHOIR_BOXLITE_SECURE_OK\n"),
+    insecure_boot_diagnostic: capture(0, "CHOIR_BOXLITE_INSECURE_CONTROL_OK\n"),
+    downstream: {
+      ..downstream,
+      api_capability_isolation: capture(41, "capability exposed"),
+    },
+  })
+  assert_true(
+    report.blocking_reasons.contains(
+      @sandbox.BoxLiteBlockReason::BoxLiteDownstreamProbeFailed(
+        @sandbox.BoxLiteProbeCase::BoxLiteApiCapabilityIsolation,
+        41,
+      ),
+    ),
+  )
+  assert_eq(
+    report.support,
+    @sandbox.SandboxRuntimeSupport::SandboxRuntimeBlockedByConformance,
+  )
 }
 
 ///|
@@ -175,6 +223,7 @@ test "all downstream evidence admits the pinned runtime" {
     secure_boot: capture(0, "CHOIR_BOXLITE_SECURE_OK\n"),
     insecure_boot_diagnostic: capture(0, "CHOIR_BOXLITE_INSECURE_CONTROL_OK\n"),
     downstream: {
+      api_capability_isolation: passed("CHOIR_BOXLITE_API_CAPABILITY_ISOLATED"),
       clone_isolation: passed("CHOIR_BOXLITE_CLONE_OK"),
       transfer_lifecycle: passed("CHOIR_BOXLITE_TRANSFER_OK"),
       attach_signal_kill: passed("CHOIR_BOXLITE_PROCESS_CONTROL_OK"),
@@ -195,7 +244,7 @@ test "all downstream evidence admits the pinned runtime" {
     @sandbox.SandboxRuntimeSupport::SandboxRuntimeSupported,
   )
   assert_eq(report.blocking_reasons.length(), 0)
-  assert_eq(report.cases.length(), 18)
+  assert_eq(report.cases.length(), 19)
 }
 
 ///|
@@ -213,6 +262,7 @@ test "one failed downstream case blocks otherwise passing evidence" {
     secure_boot: capture(0, "CHOIR_BOXLITE_SECURE_OK\n"),
     insecure_boot_diagnostic: capture(0, "CHOIR_BOXLITE_INSECURE_CONTROL_OK\n"),
     downstream: {
+      api_capability_isolation: passed("CHOIR_BOXLITE_API_CAPABILITY_ISOLATED"),
       clone_isolation: capture(9, "clone leaked mutable state"),
       transfer_lifecycle: passed("CHOIR_BOXLITE_TRANSFER_OK"),
       attach_signal_kill: passed("CHOIR_BOXLITE_PROCESS_CONTROL_OK"),
