@@ -108,6 +108,12 @@ async fn dispatch_native_goal_submit(
   project_dir : String,
   request : @types.Request,
   capture : async (@process_host.Command) -> (Int, String),
+  dependency_delivery_observer : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState,
 ) -> @types.Response {
   let token = match @sys.mint_local_token() {
     Some(value) => value
@@ -125,6 +131,7 @@ async fn dispatch_native_goal_submit(
       capture,
       nfc_available=@process_host.native_path_nfc_available,
       is_nfc=@process_host.native_path_is_nfc,
+      dependency_delivery_observer~,
     ) {
     Ok(report) => native_conductor_goal_action_ok_json(report.to_json())
     Err(error) => @types.Response::err(error)
@@ -574,9 +581,18 @@ pub async fn dispatch_native_goal_request(
   request : @types.Request,
   now : Int64,
   capture~ : async (@process_host.Command) -> (Int, String),
+  dependency_delivery_observer? : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState = unobserved_native_goal_dependency_delivery,
 ) -> @types.Response {
   match request.name {
-    "goal_submit" => dispatch_native_goal_submit(project_dir, request, capture)
+    "goal_submit" =>
+      dispatch_native_goal_submit(
+        project_dir, request, capture, dependency_delivery_observer,
+      )
     "goal_list" => dispatch_native_goal_list(project_dir)
     "goal_status" => dispatch_native_goal_status(project_dir, request)
     "goal_cancel" => dispatch_native_goal_cancel(project_dir, request, now)

@@ -3468,6 +3468,7 @@ async fn run_conductor_reconnect_live() -> Int {
     capture,
     nfc_available=@process_host.native_path_nfc_available,
     is_nfc=@process_host.native_path_is_nfc,
+    dependency_delivery_observer=@goal_host.observe_native_goal_dependency_delivery,
   )
   let paused = match submitted {
     Ok(report) if report.accepted =>
@@ -4666,6 +4667,7 @@ async fn run_end_to_end_command(args : Array[String]) -> Unit {
         @process_host.capture_command_merged,
         nfc_available=@process_host.native_path_nfc_available,
         is_nfc=@process_host.native_path_is_nfc,
+        dependency_delivery_observer=@goal_host.observe_native_goal_dependency_delivery,
       ) {
       Ok(value) => value
       Err(error) => {

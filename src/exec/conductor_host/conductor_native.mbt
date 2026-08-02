@@ -305,12 +305,24 @@ pub async fn dispatch_native_conductor_request(
   request : @types.Request,
   now? : Int64 = @env.now().reinterpret_as_int64() / 1000L,
   capture~ : async (@process_host.Command) -> (Int, String),
+  dependency_delivery_observer? : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState = @goal_host.unobserved_native_goal_dependency_delivery,
 ) -> @types.Response {
   if request.req_method != @types.WireMethod::WireToolsCall {
     return native_conductor_error("authenticated Conductor required")
   }
   if request.name.has_prefix("goal_") {
-    @goal_host.dispatch_native_goal_request(project_dir, request, now, capture~)
+    @goal_host.dispatch_native_goal_request(
+      project_dir,
+      request,
+      now,
+      capture~,
+      dependency_delivery_observer~,
+    )
   } else if request.name.has_prefix("task_") {
     @beads_host.dispatch_native_beads_request(project_dir, request, capture~)
   } else {

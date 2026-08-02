@@ -3697,14 +3697,9 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   }
   assert_eq(
     edited_title_pull_request.intent.state,
-    @workflow.PullRequestIntentState::PullRequestReceipted,
-  )
-  guard edited_title_pull_request.receipt is Some(edited_title_receipt) else {
-    fail("edited-title pull request receipt is absent")
-  }
-  assert_eq(
-    edited_title_receipt.observed_title_digest,
-    @storage.artifact_digest(@utf8.encode("edited title")),
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
+    ),
   )
   let edited_body_pull_request = match
     @workflow.authorize_goal_pull_request(
@@ -3726,14 +3721,9 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   }
   assert_eq(
     edited_body_pull_request.intent.state,
-    @workflow.PullRequestIntentState::PullRequestReceipted,
-  )
-  guard edited_body_pull_request.receipt is Some(edited_body_receipt) else {
-    fail("edited-body pull request receipt is absent")
-  }
-  assert_eq(
-    edited_body_receipt.observed_body_digest,
-    @storage.artifact_digest(@utf8.encode("edited body\n" + pr_marker.0)),
+    @workflow.PullRequestIntentState::PullRequestNeedsInput(
+      @workflow.PullRequestNeedsInputReason::PullRequestRemoteDrift,
+    ),
   )
   let retargeted_pull_request = match
     @workflow.authorize_goal_pull_request(

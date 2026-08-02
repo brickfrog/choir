@@ -2104,8 +2104,12 @@ fn scale_terminal_projection(
     draft: false,
     auto_merge_enabled: false,
     marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
-    title_digest: @storage.artifact_digest(@utf8.encode("scale-title")),
-    body_digest: @storage.artifact_digest(@utf8.encode("scale-body")),
+    title_digest: @storage.artifact_digest(
+      @utf8.encode(pull_request.intent.document.title),
+    ),
+    body_digest: @storage.artifact_digest(
+      @utf8.encode(pull_request.intent.document.body),
+    ),
   }
   let adopted = match
     @workflow.authorize_goal_pull_request(

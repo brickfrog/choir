@@ -27,6 +27,18 @@ pub(all) struct NativePullRequestForgeAdapters {
 }
 
 ///|
+let native_github_timeout_ms : Int = 30000
+
+///|
+let native_github_output_limit_bytes : Int = 4 * 1024 * 1024
+
+///|
+let native_pull_request_page_limit : Int = 5
+
+///|
+let native_pull_request_page_size : Int = 100
+
+///|
 fn native_pull_request_error(detail : String) -> @types.ChoirError {
   @types.ChoirError::workspace_error("native Goal pull request: " + detail)
 }
@@ -42,29 +54,68 @@ fn pull_request_short_ref(reference : @workflow.GitRefName) -> String? {
 }
 
 ///|
-async fn native_gh_capture(
-  repository_root : String,
-  arguments : Array[String],
-) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
+fn native_gh_environment(getenv : (String) -> String?) -> Map[String, String] {
   let environment : Map[String, String] = {
+    "PATH": "/usr/bin:/bin",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
     "GH_PROMPT_DISABLED": "1",
     "GH_PAGER": "cat",
     "PAGER": "cat",
     "GIT_TERMINAL_PROMPT": "0",
   }
-  let captured = @process.collect_output_merged(
-    "/usr/bin/timeout",
-    ["30s", "/usr/bin/gh"] + arguments,
-    extra_env=environment,
-    inherit_env=true,
-    cwd=repository_root,
-  ) catch {
-    _ => return Err(native_pull_request_error("GitHub CLI process failed"))
+  let inherited = [
+    "HOME", "GH_CONFIG_DIR", "GH_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+  ]
+  for name in inherited {
+    match getenv(name) {
+      Some(value) if value != "" && !value.contains("\u{00}") =>
+        environment[name] = value
+      _ => ()
+    }
   }
-  let output = captured.1.text() catch {
-    _ => return Err(native_pull_request_error("GitHub CLI output is not UTF-8"))
+  environment
+}
+
+///|
+async fn native_gh_capture(
+  repository_root : String,
+  arguments : Array[String],
+) -> Result[@process_host.NativeBoundedProcessOutcome, @types.ChoirError] {
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return Err(native_pull_request_error("GitHub CLI input pipe failed"))
   }
-  Ok({ exit_code: captured.0, output })
+  stdin_write.close()
+  @process_host.capture_bounded_process(
+    "/usr/bin/gh",
+    arguments,
+    native_gh_environment(@sys.getenv),
+    stdin_read,
+    repository_root,
+    native_github_timeout_ms,
+    native_github_output_limit_bytes,
+    fn() { false },
+  )
+}
+
+///|
+test "GitHub CLI environment retains only explicit host inputs" {
+  let environment = native_gh_environment(fn(name) {
+    match name {
+      "HOME" => Some("/home/provider")
+      "GH_TOKEN" => Some("secret")
+      "HTTPS_PROXY" => Some("https://proxy.invalid")
+      "SHELL" => Some("/bin/host-shell")
+      _ => None
+    }
+  })
+  assert_eq(environment["PATH"], "/usr/bin:/bin")
+  assert_eq(environment["HOME"], "/home/provider")
+  assert_eq(environment["GH_TOKEN"], "secret")
+  assert_eq(environment["HTTPS_PROXY"], "https://proxy.invalid")
+  assert_false(environment.contains("SHELL"))
 }
 
 ///|
@@ -79,40 +130,7 @@ fn native_pull_request_repository_name(output : String) -> String? {
 }
 
 ///|
-fn native_pull_request_head_repository(fields : Map[String, Json]) -> String? {
-  guard fields.get("headRepository") is Some(Object(repository)) else {
-    return None
-  }
-  match repository.get("nameWithOwner") {
-    Some(String(value)) if value != "" && !value.contains("\u{00}") =>
-      Some(value)
-    _ => None
-  }
-}
-
-///|
-fn native_pull_request_remote_state(
-  fields : Map[String, Json],
-) -> @workflow.RemotePullRequestState? {
-  match fields.get("mergedAt") {
-    Some(String(value)) if value.trim().to_owned() != "" =>
-      return Some(@workflow.RemotePullRequestState::RemotePullRequestMerged)
-    _ => ()
-  }
-  match fields.get("state") {
-    Some(String("OPEN")) =>
-      Some(@workflow.RemotePullRequestState::RemotePullRequestOpen)
-    Some(String("CLOSED")) =>
-      Some(@workflow.RemotePullRequestState::RemotePullRequestClosed)
-    Some(String("MERGED")) =>
-      Some(@workflow.RemotePullRequestState::RemotePullRequestMerged)
-    _ => None
-  }
-}
-
-///|
-/// GitHub reports draft state as `draft` on the REST resource and `isDraft`
-/// through the CLI's GraphQL projection.
+/// GitHub reports draft state as `draft` on the REST resource.
 fn native_pull_request_draft(fields : Map[String, Json]) -> Bool {
   match fields.get("draft") {
     Some(True) => return true
@@ -135,81 +153,6 @@ fn native_pull_request_auto_merge_enabled(fields : Map[String, Json]) -> Bool {
     Some(Object(_)) => true
     _ => false
   }
-}
-
-///|
-fn native_pull_request_snapshot(
-  fields : Map[String, Json],
-  repository_name : String,
-  intent : @workflow.PullRequestIntent,
-) -> @workflow.RemotePullRequestSnapshot? {
-  let remote_id = match fields.get("id") {
-    Some(String(value)) if value != "" => @workflow.RemotePullRequestId(value)
-    _ => return None
-  }
-  let number = match fields.get("number") {
-    Some(Number(value, ..)) if value.to_int() > 0 =>
-      @workflow.PullRequestNumber(value.to_int())
-    _ => return None
-  }
-  let url = match fields.get("url") {
-    Some(String(value)) if value != "" => @workflow.PullRequestUrl(value)
-    _ => return None
-  }
-  let head_name = match fields.get("headRefName") {
-    Some(String(value)) if value != "" => value
-    _ => return None
-  }
-  let base_name = match fields.get("baseRefName") {
-    Some(String(value)) if value != "" => value
-    _ => return None
-  }
-  let head_oid = match fields.get("headRefOid") {
-    Some(String(value)) if value != "" => @control.GitOid(value)
-    _ => return None
-  }
-  let head_repository_name = match native_pull_request_head_repository(fields) {
-    Some(value) => value
-    None => return None
-  }
-  let title = match fields.get("title") {
-    Some(String(value)) => value
-    _ => return None
-  }
-  let body = match fields.get("body") {
-    Some(String(value)) => value
-    _ => return None
-  }
-  let state = match native_pull_request_remote_state(fields) {
-    Some(value) => value
-    None => return None
-  }
-  let head_repository_id = if head_repository_name == repository_name {
-    intent.head_repository_id
-  } else {
-    @workflow.RemoteRepositoryId("github:" + head_repository_name)
-  }
-  Some({
-    remote_id,
-    number,
-    url,
-    provider_repository_id: intent.canonical_repository_id,
-    head_repository_id,
-    head_ref: @workflow.GitRefName("refs/heads/" + head_name),
-    base_repository_id: intent.base_repository_id,
-    base_ref: @workflow.GitRefName("refs/heads/" + base_name),
-    observed_head_oid: head_oid,
-    state,
-    draft: native_pull_request_draft(fields),
-    auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
-    marker_state: if body.contains(intent.identity_marker.0) {
-      @workflow.PullRequestMarkerState::PullRequestMarkerExact
-    } else {
-      @workflow.PullRequestMarkerState::PullRequestMarkerMissing
-    },
-    title_digest: @storage.artifact_digest(@utf8.encode(title)),
-    body_digest: @storage.artifact_digest(@utf8.encode(body)),
-  })
 }
 
 ///|
@@ -302,113 +245,312 @@ fn native_rest_pull_request_snapshot(
 }
 
 ///|
-fn parse_native_pull_request_lookup(
-  output : String,
-  repository_name : String,
+fn native_pull_request_snapshot_is_exact(
+  snapshot : @workflow.RemotePullRequestSnapshot,
   intent : @workflow.PullRequestIntent,
-) -> @workflow.PullRequestLookupObservation {
-  let json = @json.parse(output) catch {
-    _ =>
-      return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-  }
-  guard json is Array(items) else {
-    return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-  }
-  let snapshots : Array[@workflow.RemotePullRequestSnapshot] = []
-  for item in items {
-    guard item is Object(fields) else {
-      return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-    }
-    match native_pull_request_snapshot(fields, repository_name, intent) {
-      Some(value) => snapshots.push(value)
-      None =>
-        return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-    }
-  }
-  classify_native_pull_request_snapshots(snapshots, intent)
+) -> Bool {
+  snapshot.provider_repository_id == intent.canonical_repository_id &&
+  snapshot.head_repository_id == intent.head_repository_id &&
+  snapshot.head_ref == intent.head_ref &&
+  snapshot.base_repository_id == intent.base_repository_id &&
+  snapshot.base_ref == intent.base_ref &&
+  snapshot.observed_head_oid == intent.expected_head_oid &&
+  snapshot.marker_state ==
+  @workflow.PullRequestMarkerState::PullRequestMarkerExact &&
+  snapshot.title_digest ==
+  @storage.artifact_digest(@utf8.encode(intent.document.title)) &&
+  snapshot.body_digest ==
+  @storage.artifact_digest(@utf8.encode(intent.document.body))
 }
 
 ///|
-fn classify_native_pull_request_snapshots(
-  snapshots : Array[@workflow.RemotePullRequestSnapshot],
+fn native_pull_request_snapshot_is_related(
+  snapshot : @workflow.RemotePullRequestSnapshot,
   intent : @workflow.PullRequestIntent,
-) -> @workflow.PullRequestLookupObservation {
-  match intent.canonical_remote_pull_request_id {
-    Some(stored_id) => {
-      let matches = snapshots.filter(fn(snapshot) {
-        snapshot.remote_id == stored_id
-      })
-      if matches.length() == 1 {
-        return @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(
-          matches[0],
-        )
-      }
-      if matches.length() > 1 {
-        return @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
-      }
-    }
-    None => ()
-  }
-  let marker_matches = snapshots.filter(fn(snapshot) {
-    snapshot.marker_state ==
-    @workflow.PullRequestMarkerState::PullRequestMarkerExact
-  })
-  if marker_matches.length() == 1 {
-    return @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
-      marker_matches[0],
-    )
-  }
-  if marker_matches.length() > 1 {
-    return @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
-  }
-  let possible = snapshots.filter(fn(snapshot) {
+) -> Bool {
+  snapshot.marker_state ==
+  @workflow.PullRequestMarkerState::PullRequestMarkerExact ||
+  (
     snapshot.head_repository_id == intent.head_repository_id &&
     snapshot.head_ref == intent.head_ref &&
     snapshot.base_repository_id == intent.base_repository_id &&
-    snapshot.base_ref == intent.base_ref &&
-    snapshot.observed_head_oid == intent.expected_head_oid
-  })
-  match possible {
-    [] => @workflow.PullRequestLookupObservation::PullRequestNoMatch
-    [snapshot] =>
-      @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
-        snapshot,
-      )
-    _ =>
-      @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
+    snapshot.base_ref == intent.base_ref
+  )
+}
+
+///|
+priv struct NativePullRequestLookupAccumulator {
+  mut exact : @workflow.RemotePullRequestSnapshot?
+  mut possible : @workflow.RemotePullRequestSnapshot?
+  mut ambiguous : Bool
+}
+
+///|
+fn native_pull_request_lookup_accumulator() -> NativePullRequestLookupAccumulator {
+  { exact: None, possible: None, ambiguous: false }
+}
+
+///|
+fn native_pull_request_accumulate_snapshot(
+  accumulator : NativePullRequestLookupAccumulator,
+  snapshot : @workflow.RemotePullRequestSnapshot,
+  intent : @workflow.PullRequestIntent,
+) -> Unit {
+  if native_pull_request_snapshot_is_exact(snapshot, intent) {
+    if accumulator.exact is Some(_) || accumulator.possible is Some(_) {
+      accumulator.ambiguous = true
+    } else {
+      accumulator.exact = Some(snapshot)
+    }
+  } else if native_pull_request_snapshot_is_related(snapshot, intent) {
+    if accumulator.exact is Some(_) || accumulator.possible is Some(_) {
+      accumulator.ambiguous = true
+    } else {
+      accumulator.possible = Some(snapshot)
+    }
   }
 }
 
 ///|
-fn parse_native_paginated_pull_request_lookup(
+fn native_pull_request_lookup_accumulator_observation(
+  accumulator : NativePullRequestLookupAccumulator,
+) -> @workflow.PullRequestLookupObservation {
+  if accumulator.ambiguous {
+    return @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
+  }
+  match accumulator.exact {
+    Some(snapshot) =>
+      return @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
+        snapshot,
+      )
+    None => ()
+  }
+  match accumulator.possible {
+    Some(snapshot) =>
+      @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
+        snapshot,
+      )
+    None => @workflow.PullRequestLookupObservation::PullRequestNoMatch
+  }
+}
+
+///|
+fn parse_native_pull_request_page(
   output : String,
   repository_name : String,
   intent : @workflow.PullRequestIntent,
+  accumulator : NativePullRequestLookupAccumulator,
+) -> Int? {
+  let json = @json.parse(output) catch { _ => return None }
+  guard json is Array(items) && items.length() <= native_pull_request_page_size else {
+    return None
+  }
+  for item in items {
+    guard item is Object(fields) else { return None }
+    match native_rest_pull_request_snapshot(fields, repository_name, intent) {
+      Some(snapshot) =>
+        native_pull_request_accumulate_snapshot(accumulator, snapshot, intent)
+      None => return None
+    }
+  }
+  Some(items.length())
+}
+
+///|
+fn native_graphql_pull_request_snapshot(
+  fields : Map[String, Json],
+  repository_name : String,
+  intent : @workflow.PullRequestIntent,
+) -> @workflow.RemotePullRequestSnapshot? {
+  let remote_id = match fields.get("id") {
+    Some(String(value)) if value != "" => @workflow.RemotePullRequestId(value)
+    _ => return None
+  }
+  let number = match fields.get("number") {
+    Some(Number(value, ..)) if value.to_int() > 0 =>
+      @workflow.PullRequestNumber(value.to_int())
+    _ => return None
+  }
+  let url = match fields.get("url") {
+    Some(String(value)) if value != "" => @workflow.PullRequestUrl(value)
+    _ => return None
+  }
+  let head_name = match fields.get("headRefName") {
+    Some(String(value)) if value != "" => value
+    _ => return None
+  }
+  let base_name = match fields.get("baseRefName") {
+    Some(String(value)) if value != "" => value
+    _ => return None
+  }
+  let head_oid = match fields.get("headRefOid") {
+    Some(String(value)) if value != "" => @control.GitOid(value)
+    _ => return None
+  }
+  guard fields.get("headRepository") is Some(Object(head_repository)) else {
+    return None
+  }
+  let head_repository_name = match head_repository.get("nameWithOwner") {
+    Some(String(value)) if value != "" => value
+    _ => return None
+  }
+  let title = match fields.get("title") {
+    Some(String(value)) => value
+    _ => return None
+  }
+  let body = match fields.get("body") {
+    Some(String(value)) => value
+    _ => return None
+  }
+  let state = match fields.get("mergedAt") {
+    Some(String(value)) if value != "" =>
+      @workflow.RemotePullRequestState::RemotePullRequestMerged
+    _ =>
+      match fields.get("state") {
+        Some(String("OPEN")) =>
+          @workflow.RemotePullRequestState::RemotePullRequestOpen
+        Some(String("CLOSED")) =>
+          @workflow.RemotePullRequestState::RemotePullRequestClosed
+        Some(String("MERGED")) =>
+          @workflow.RemotePullRequestState::RemotePullRequestMerged
+        _ => return None
+      }
+  }
+  let head_repository_id = if head_repository_name == repository_name {
+    intent.head_repository_id
+  } else {
+    @workflow.RemoteRepositoryId("github:" + head_repository_name)
+  }
+  Some({
+    remote_id,
+    number,
+    url,
+    provider_repository_id: intent.canonical_repository_id,
+    head_repository_id,
+    head_ref: @workflow.GitRefName("refs/heads/" + head_name),
+    base_repository_id: intent.base_repository_id,
+    base_ref: @workflow.GitRefName("refs/heads/" + base_name),
+    observed_head_oid: head_oid,
+    state,
+    draft: native_pull_request_draft(fields),
+    auto_merge_enabled: native_pull_request_auto_merge_enabled(fields),
+    marker_state: if body.contains(intent.identity_marker.0) {
+      @workflow.PullRequestMarkerState::PullRequestMarkerExact
+    } else {
+      @workflow.PullRequestMarkerState::PullRequestMarkerMissing
+    },
+    title_digest: @storage.artifact_digest(@utf8.encode(title)),
+    body_digest: @storage.artifact_digest(@utf8.encode(body)),
+  })
+}
+
+///|
+fn parse_native_direct_pull_request_lookup(
+  output : String,
+  repository_name : String,
+  intent : @workflow.PullRequestIntent,
+  stored_id : @workflow.RemotePullRequestId,
 ) -> @workflow.PullRequestLookupObservation {
   let json = @json.parse(output) catch {
     _ =>
       return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
   }
-  guard json is Array(pages) else {
+  guard json is Object(root) &&
+    root.get("data") is Some(Object(data)) &&
+    data.get("node") is Some(Object(fields)) &&
+    native_graphql_pull_request_snapshot(fields, repository_name, intent)
+    is Some(snapshot) else {
     return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
   }
-  let snapshots : Array[@workflow.RemotePullRequestSnapshot] = []
-  for page in pages {
-    guard page is Array(items) else {
-      return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
+  if snapshot.remote_id == stored_id {
+    @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(snapshot)
+  } else {
+    @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
+      snapshot,
+    )
+  }
+}
+
+///|
+async fn native_pull_request_lookup(
+  repository_root : String,
+  repository_name : String,
+  intent : @workflow.PullRequestIntent,
+  capture : async (String, Array[String]) -> Result[
+    @process_host.NativeBoundedProcessOutcome,
+    @types.ChoirError,
+  ],
+) -> @workflow.PullRequestLookupObservation {
+  match intent.canonical_remote_pull_request_id {
+    Some(stored_id) => {
+      let outcome = capture(repository_root, [
+        "api",
+        "graphql",
+        "-f",
+        "query=query($id:ID!){node(id:$id){... on PullRequest{id number url state mergedAt headRefName headRefOid headRepository{nameWithOwner} baseRefName title body isDraft autoMergeRequest{enabledAt}}}}",
+        "-f",
+        "id=" + stored_id.0,
+      ])
+      match outcome {
+        Ok(@process_host.NativeProcessCompleted(0, output)) =>
+          parse_native_direct_pull_request_lookup(
+            output, repository_name, intent, stored_id,
+          )
+        _ => @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
+      }
     }
-    for item in items {
-      guard item is Object(fields) else {
+    None => {
+      guard pull_request_short_ref(intent.head_ref) is Some(head) &&
+        pull_request_short_ref(intent.base_ref) is Some(base) else {
         return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
       }
-      match native_rest_pull_request_snapshot(fields, repository_name, intent) {
-        Some(value) => snapshots.push(value)
-        None =>
-          return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
+      let repository_parts = repository_name.split("/").to_array()
+      if repository_parts.length() != 2 || repository_parts[0] == "" {
+        return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
       }
+      let accumulator = native_pull_request_lookup_accumulator()
+      let mut page = 1
+      while page <= native_pull_request_page_limit {
+        let outcome = capture(repository_root, [
+          "api",
+          "--method",
+          "GET",
+          "repos/" + repository_name + "/pulls",
+          "-f",
+          "state=all",
+          "-f",
+          "head=" + repository_parts[0].to_owned() + ":" + head,
+          "-f",
+          "base=" + base,
+          "-f",
+          "per_page=" + native_pull_request_page_size.to_string(),
+          "-f",
+          "page=" + page.to_string(),
+        ])
+        let output = match outcome {
+          Ok(@process_host.NativeProcessCompleted(0, value)) => value
+          _ =>
+            return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
+        }
+        let count = match
+          parse_native_pull_request_page(
+            output, repository_name, intent, accumulator,
+          ) {
+          Some(value) => value
+          None =>
+            return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
+        }
+        if accumulator.ambiguous {
+          return @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches
+        }
+        if count < native_pull_request_page_size {
+          return native_pull_request_lookup_accumulator_observation(accumulator)
+        }
+        page = page + 1
+      }
+      @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
     }
   }
-  classify_native_pull_request_snapshots(snapshots, intent)
 }
 
 ///|
@@ -576,35 +718,20 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      if captured.exit_code != 0 {
-        return Err(native_pull_request_error("repository lookup failed"))
-      }
-      match native_pull_request_repository_name(captured.output) {
-        Some(value) => Ok(value)
-        None => Err(native_pull_request_error("repository identity is invalid"))
+      match captured {
+        @process_host.NativeProcessCompleted(0, output) =>
+          match native_pull_request_repository_name(output) {
+            Some(value) => Ok(value)
+            None =>
+              Err(native_pull_request_error("repository identity is invalid"))
+          }
+        _ => Err(native_pull_request_error("repository lookup failed"))
       }
     },
     lookup: async fn(repository_root, repository_name, intent) {
-      let captured = match
-        native_gh_capture(repository_root, [
-          "api",
-          "--paginate",
-          "--slurp",
-          "repos/" + repository_name + "/pulls?state=all&per_page=100",
-        ]) {
-        Ok(value) => value
-        Err(_) =>
-          return @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-      }
-      if captured.exit_code != 0 {
-        @workflow.PullRequestLookupObservation::PullRequestLookupUncertain
-      } else {
-        parse_native_paginated_pull_request_lookup(
-          captured.output,
-          repository_name,
-          intent,
-        )
-      }
+      native_pull_request_lookup(
+        repository_root, repository_name, intent, native_gh_capture,
+      )
     },
     create: async fn(repository_root, repository_name, intent, document) {
       guard pull_request_short_ref(intent.head_ref) is Some(head) &&
@@ -635,12 +762,15 @@ pub fn native_pull_request_forge_adapters() -> NativePullRequestForgeAdapters {
         Err(_) =>
           return @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchUncertain
       }
-      if captured.exit_code == 0 {
-        @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
-      } else {
-        @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchRejected(
-          @storage.artifact_digest(@utf8.encode(captured.output)),
-        )
+      match captured {
+        @process_host.NativeProcessCompleted(0, _) =>
+          @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchAccepted
+        @process_host.NativeProcessCompleted(_, output) =>
+          @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchRejected(
+            @storage.artifact_digest(@utf8.encode(output)),
+          )
+        _ =>
+          @workflow.PullRequestMergeDispatchObservation::PullRequestMergeDispatchUncertain
       }
     },
     neutralize: async fn(repository_root, repository_name, _, receipt) {
@@ -1310,8 +1440,8 @@ pub async fn advance_native_goal_pull_request(
 }
 
 ///|
-test "GitHub lookup parser distinguishes identity, possible match, and ambiguity" {
-  let intent : @workflow.PullRequestIntent = {
+fn native_pull_request_test_intent() -> @workflow.PullRequestIntent {
+  {
     id: @workflow.PullRequestIntentId("pr-intent-fixture"),
     goal_id: @control.GoalId("goal-fixture"),
     provider: @workflow.PullRequestProvider::GitHubPullRequestProvider,
@@ -1346,37 +1476,245 @@ test "GitHub lookup parser distinguishes identity, possible match, and ambiguity
     merge_state: @workflow.PullRequestMergeState::PullRequestMergeNotRequested,
     cancellation_state: @workflow.PullRequestCancellationState::PullRequestCancellationNotRequested,
   }
-  let exact =
-    #|[{"id":"PR_1","number":7,"url":"https://example.test/pull/7","state":"OPEN","mergedAt":null,"headRefName":"choir/goals/fixture","headRefOid":"0123456789012345678901234567890123456789","headRepository":{"nameWithOwner":"choir/choir"},"baseRefName":"main","title":"Goal","body":"evidence\n<!-- choir-final-pr:fixture -->"}]
+}
+
+///|
+fn native_pull_request_test_snapshot_json(
+  title : String,
+  body : String,
+  number? : Int = 7,
+  head? : String = "choir/goals/fixture",
+) -> String {
+  {
+    "node_id": ("PR_" + number.to_string()).to_json(),
+    "number": number.to_json(),
+    "html_url": ("https://example.test/pull/" + number.to_string()).to_json(),
+    "state": "open".to_json(),
+    "head": {
+      "ref": head.to_json(),
+      "sha": "0123456789012345678901234567890123456789".to_json(),
+      "repo": { "full_name": "choir/choir".to_json() }.to_json(),
+    }.to_json(),
+    "base": { "ref": "main".to_json() }.to_json(),
+    "title": title.to_json(),
+    "body": body.to_json(),
+  }
+  .to_json()
+  .stringify()
+}
+
+///|
+fn native_pull_request_test_graphql_response(
+  intent : @workflow.PullRequestIntent,
+) -> String {
+  {
+    "data": {
+      "node": {
+        "id": "PR_7".to_json(),
+        "number": (7 : Int).to_json(),
+        "url": "https://example.test/pull/7".to_json(),
+        "state": "OPEN".to_json(),
+        "headRefName": "choir/goals/fixture".to_json(),
+        "headRefOid": intent.expected_head_oid.0.to_json(),
+        "headRepository": { "nameWithOwner": "choir/choir".to_json() }.to_json(),
+        "baseRefName": "main".to_json(),
+        "title": intent.document.title.to_json(),
+        "body": intent.document.body.to_json(),
+        "isDraft": (false : Bool).to_json(),
+      }.to_json(),
+    }.to_json(),
+  }
+  .to_json()
+  .stringify()
+}
+
+///|
+test "GitHub lookup parser requires exact identity and detects ambiguity" {
+  let intent = native_pull_request_test_intent()
+  let exact = native_pull_request_test_snapshot_json(
+    intent.document.title,
+    intent.document.body,
+  )
+  let accumulator = native_pull_request_lookup_accumulator()
+  assert_eq(
+    parse_native_pull_request_page(
+      "[" + exact + "]",
+      "choir/choir",
+      intent,
+      accumulator,
+    ),
+    Some(1),
+  )
   assert_true(
-    parse_native_pull_request_lookup(exact, "choir/choir", intent)
+    native_pull_request_lookup_accumulator_observation(accumulator)
     is @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(_),
   )
-  let possible = exact.replace_all(
-    old="<!-- choir-final-pr:fixture -->",
-    new="no marker",
+  let possible_accumulator = native_pull_request_lookup_accumulator()
+  let possible = native_pull_request_test_snapshot_json(
+    "edited title",
+    intent.document.body,
+  )
+  assert_eq(
+    parse_native_pull_request_page(
+      "[" + possible + "]",
+      "choir/choir",
+      intent,
+      possible_accumulator,
+    ),
+    Some(1),
   )
   assert_true(
-    parse_native_pull_request_lookup(possible, "choir/choir", intent)
+    native_pull_request_lookup_accumulator_observation(possible_accumulator)
     is @workflow.PullRequestLookupObservation::PullRequestPossibleExistingMatch(
       _
     ),
   )
-  let duplicate = (exact[0:exact.length() - 1] + "," + exact[1:]).to_owned()
+  let duplicate_accumulator = native_pull_request_lookup_accumulator()
   assert_eq(
-    parse_native_pull_request_lookup(duplicate, "choir/choir", intent),
-    @workflow.PullRequestLookupObservation::PullRequestMultipleMarkerMatches,
+    parse_native_pull_request_page(
+      "[" + exact + "," + exact + "]",
+      "choir/choir",
+      intent,
+      duplicate_accumulator,
+    ),
+    Some(2),
   )
+  assert_true(duplicate_accumulator.ambiguous)
   assert_eq(
-    parse_native_pull_request_lookup("not-json", "choir/choir", intent),
-    @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+    parse_native_pull_request_page(
+      "not-json", "choir/choir", intent, accumulator,
+    ),
+    None,
   )
-  let paginated =
-    #|[[{"node_id":"PR_1","number":7,"html_url":"https://example.test/pull/7","state":"open","merged_at":null,"head":{"ref":"choir/goals/fixture","sha":"0123456789012345678901234567890123456789","repo":{"full_name":"choir/choir"}},"base":{"ref":"main"},"title":"Goal","body":"evidence\n<!-- choir-final-pr:fixture -->"}],[]]
+}
+
+///|
+async test "GitHub lookup uses one direct request for a stored node ID" {
+  let base = native_pull_request_test_intent()
+  let stored_id = @workflow.RemotePullRequestId("PR_7")
+  let intent = { ..base, canonical_remote_pull_request_id: Some(stored_id) }
+  let arguments : Array[Array[String]] = []
+  let observation = native_pull_request_lookup(
+    "/unused",
+    "choir/choir",
+    intent,
+    async fn(_, args) {
+      @async.sleep(0)
+      arguments.push(args)
+      Ok(
+        @process_host.NativeProcessCompleted(
+          0,
+          native_pull_request_test_graphql_response(intent),
+        ),
+      )
+    },
+  )
   assert_true(
-    parse_native_paginated_pull_request_lookup(paginated, "choir/choir", intent)
+    observation
+    is @workflow.PullRequestLookupObservation::PullRequestStoredIdMatch(_),
+  )
+  assert_eq(arguments.length(), 1)
+  assert_eq(arguments[0][0:4], [
+    "api", "graphql", "-f", "query=query($id:ID!){node(id:$id){... on PullRequest{id number url state mergedAt headRefName headRefOid headRepository{nameWithOwner} baseRefName title body isDraft autoMergeRequest{enabledAt}}}}",
+  ])
+  assert_eq(arguments[0][4:], ["-f", "id=PR_7"])
+}
+
+///|
+async test "GitHub lookup filters exact refs and stops on a short page" {
+  let intent = native_pull_request_test_intent()
+  let arguments : Array[Array[String]] = []
+  let observation = native_pull_request_lookup(
+    "/unused",
+    "choir/choir",
+    intent,
+    async fn(_, args) {
+      @async.sleep(0)
+      arguments.push(args)
+      Ok(
+        @process_host.NativeProcessCompleted(
+          0,
+          "[" +
+          native_pull_request_test_snapshot_json(
+            intent.document.title,
+            intent.document.body,
+          ) +
+          "]",
+        ),
+      )
+    },
+  )
+  assert_true(
+    observation
     is @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(_),
   )
+  assert_eq(arguments.length(), 1)
+  assert_true(arguments[0].contains("head=choir:choir/goals/fixture"))
+  assert_true(arguments[0].contains("base=main"))
+  assert_true(arguments[0].contains("per_page=100"))
+  assert_true(arguments[0].contains("page=1"))
+}
+
+///|
+async test "GitHub lookup treats five full pages as uncertain" {
+  let intent = native_pull_request_test_intent()
+  let full_page_items : Array[String] = []
+  for index = 0; index < native_pull_request_page_size; index = index + 1 {
+    full_page_items.push(
+      native_pull_request_test_snapshot_json(
+        "unrelated " + index.to_string(),
+        "unrelated",
+        number=1000 + index,
+        head="other/" + index.to_string(),
+      ),
+    )
+  }
+  let full_page = "[" + full_page_items.join(",") + "]"
+  let mut calls = 0
+  let observation = native_pull_request_lookup(
+    "/unused",
+    "choir/choir",
+    intent,
+    async fn(_, _) {
+      @async.sleep(0)
+      calls = calls + 1
+      Ok(@process_host.NativeProcessCompleted(0, full_page))
+    },
+  )
+  assert_eq(calls, 5)
+  assert_eq(
+    observation,
+    @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+  )
+}
+
+///|
+async test "GitHub lookup maps bounded failures to uncertainty" {
+  let intent = native_pull_request_test_intent()
+  let timed_out = native_pull_request_lookup("/unused", "choir/choir", intent, async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+    Ok(@process_host.NativeProcessTimedOut("bounded tail"))
+  })
+  assert_eq(
+    timed_out,
+    @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+  )
+  let exceeded = native_pull_request_lookup("/unused", "choir/choir", intent, async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+    Ok(@process_host.NativeProcessOutputExceeded("bounded tail"))
+  })
+  assert_eq(
+    exceeded,
+    @workflow.PullRequestLookupObservation::PullRequestLookupUncertain,
+  )
+  assert_eq(native_github_timeout_ms, 30000)
+  assert_eq(native_github_output_limit_bytes, 4194304)
 }
 
 ///|

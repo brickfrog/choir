@@ -630,6 +630,7 @@ async fn conductor_dispatch(
     state.config.project_dir,
     conductor_authenticated_request(request),
     capture=@process_host.capture_command_merged,
+    dependency_delivery_observer=@goal_host.observe_native_goal_dependency_delivery,
   ) catch {
     error => {
       @moontrace.error("Conductor adapter error", fields=[
