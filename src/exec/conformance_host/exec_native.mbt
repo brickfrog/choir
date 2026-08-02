@@ -575,6 +575,7 @@ fn boxlite_create_body(name : String, network_disabled : Bool) -> String {
     "entrypoint": ["/bin/sh"].to_json(),
     "cmd": ["-c", "while :; do sleep 60; done"].to_json(),
     "network": network.to_json(),
+    "security": "enable".to_json(),
     "auto_remove": false.to_json(),
     "detach": true.to_json(),
   }
@@ -636,7 +637,7 @@ test "BoxLite REST create body fixes security-relevant resource policy" {
   assert_true(body.contains("\"memory_mib\":256"))
   assert_true(body.contains("\"disk_size_gb\":1"))
   assert_false(body.contains("rootfs_path"))
-  assert_false(body.contains("security"))
+  assert_true(body.contains("\"security\":\"enable\""))
   assert_false(body.contains("volume"))
 }
 

@@ -1346,6 +1346,7 @@ fn native_boxlite_create_body(name : String) -> String {
     "entrypoint": ["/bin/sh"].to_json(),
     "cmd": ["-c", "while :; do sleep 60; done"].to_json(),
     "network": network.to_json(),
+    "security": "enable".to_json(),
     "auto_remove": false.to_json(),
     "detach": true.to_json(),
   }
@@ -3266,6 +3267,7 @@ test "native BoxLite Take body fixes isolation and resources" {
   assert_true(body.contains("\"cpus\":2"))
   assert_true(body.contains("\"memory_mib\":2048"))
   assert_true(body.contains(@sandbox.boxlite_take_image))
+  assert_true(body.contains("\"security\":\"enable\""))
   assert_false(body.contains("volume"))
   assert_false(body.contains("rootfs_path"))
 }
