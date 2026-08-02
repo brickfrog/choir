@@ -14,6 +14,17 @@ pub(all) struct NativeGitWorkspaceSource {
 } derive(Debug, Eq)
 
 ///|
+pub(all) struct NativeGitStagingProcessRequest {
+  program : String
+  arguments : Array[String]
+  environment : Map[String, String]
+  cwd : String
+  stdin : Bytes
+  timeout_ms : Int
+  output_limit_bytes : Int
+} derive(Debug, Eq)
+
+///|
 fn native_git_workspace_error(message : String) -> @types.ChoirError {
   @types.ChoirError::git_error("native Git workspace: " + message)
 }
@@ -82,9 +93,12 @@ fn ensure_native_git_control(
   let root = config.staging_root + "/git-control"
   let config_path = root + "/config"
   let head_path = root + "/HEAD"
+  let attributes_path = root + "/info/attributes"
   let config_content = "[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
   let head_content = "ref: refs/heads/choir-control\n"
+  let attributes_content = "* -export-ignore -export-subst\n**/* -export-ignore -export-subst\n"
   if !@sys.create_dir_all(root + "/refs/heads") ||
+    !@sys.create_dir_all(root + "/info") ||
     !@sys.create_dir_all(root + "/objects/info") ||
     !@sys.create_dir_all(root + "/objects/pack") {
     return Err(native_git_workspace_error("Git control root creation failed"))
@@ -105,6 +119,17 @@ fn ensure_native_git_control(
     }
   } else if !@sys.write_file_sync(head_path, head_content) {
     return Err(native_git_workspace_error("Git control HEAD creation failed"))
+  }
+  if @sys.path_exists(attributes_path) {
+    if @sys.read_file(attributes_path) != attributes_content {
+      return Err(
+        native_git_workspace_error("Git control attributes are invalid"),
+      )
+    }
+  } else if !@sys.write_file_sync(attributes_path, attributes_content) {
+    return Err(
+      native_git_workspace_error("Git control attributes creation failed"),
+    )
   }
   Ok(())
 }
@@ -203,12 +228,43 @@ async fn remove_native_workspace_file(
 }
 
 ///|
-pub async fn stage_native_git_workspace(
+async fn capture_native_git_staging_process(
+  request : NativeGitStagingProcessRequest,
+) -> Result[@process_host.NativeBoundedBytesProcessOutcome, @types.ChoirError] {
+  @process_host.capture_bounded_process_bytes(
+    request.program,
+    request.arguments,
+    request.environment,
+    request.stdin,
+    request.cwd,
+    request.timeout_ms,
+    request.output_limit_bytes,
+    fn() { false },
+  )
+}
+
+///|
+fn native_git_staging_completed(
+  outcome : @process_host.NativeBoundedBytesProcessOutcome,
+  message : String,
+) -> Result[Bytes, @types.ChoirError] {
+  match outcome {
+    @process_host.NativeBytesProcessCompleted(0, bytes) => Ok(bytes)
+    _ => Err(native_git_workspace_error(message))
+  }
+}
+
+///|
+pub async fn stage_native_git_workspace_with_capture(
   config : NativeGitWorkspaceConfig,
   key : String,
   commit_oid : @control.GitOid,
   expected_tree_oid : @control.GitOid,
   source_digest : @control.Digest,
+  capture : async (NativeGitStagingProcessRequest) -> Result[
+    @process_host.NativeBoundedBytesProcessOutcome,
+    @types.ChoirError,
+  ],
 ) -> Result[NativeGitWorkspaceSource, @types.ChoirError] {
   if !valid_native_git_workspace_config(config) ||
     !valid_native_git_workspace_key(key) ||
@@ -228,66 +284,211 @@ pub async fn stage_native_git_workspace(
     @sys.realpath_native(config.staging_root) != Some(config.staging_root) {
     return Err(native_git_workspace_error("workspace roots are not canonical"))
   }
-  let observed_tree = match
-    native_git_workspace_oid(config, [
-      "show",
-      "-s",
-      "--format=%T",
-      "--no-show-signature",
-      commit_oid.0,
-    ]) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if observed_tree != expected_tree_oid {
-    return Err(native_git_workspace_error("base tree does not match contract"))
-  }
-  let workspace = config.staging_root + "/" + key
-  let archive = config.staging_root + "/" + key + ".tar"
-  if @sys.path_exists(workspace) ||
-    @sys.path_exists(archive) ||
-    !@sys.create_dir_all(workspace) {
-    return Err(native_git_workspace_error("staging identity is not fresh"))
-  }
-  let archived = match
-    capture_native_git_workspace_process(config, [
-      "archive",
-      "--format=tar",
-      "--output=" + archive,
-      commit_oid.0,
-    ]) {
-    Ok(value) => value
-    Err(error) => return Err(error)
-  }
-  if archived.exit_code != 0 {
-    return Err(native_git_workspace_error("Git archive failed"))
-  }
-  let extracted = @process.collect_output_merged(
-    "/usr/bin/tar",
-    [
-      "-xf", archive, "-C", workspace, "--no-same-owner", "--no-same-permissions",
-    ],
-    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
-    inherit_env=false,
-    cwd=config.staging_root,
-  ) catch {
-    _ => return Err(native_git_workspace_error("archive extraction failed"))
-  }
-  if extracted.0 != 0 {
-    return Err(native_git_workspace_error("archive extraction failed"))
-  }
-  match remove_native_workspace_file(config.staging_root, archive) {
+  match ensure_native_git_control(config) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if @sys.path_exists(workspace + "/.git") ||
+  let environment = native_git_workspace_environment(config, None, None, false)
+  let observed_tree_bytes = match
+    capture({
+      program: "/usr/bin/git",
+      arguments: [
+        "show",
+        "-s",
+        "--format=%T",
+        "--no-show-signature",
+        commit_oid.0,
+      ],
+      environment,
+      cwd: config.staging_root,
+      stdin: b"",
+      timeout_ms: native_git_staging_timeout_ms,
+      output_limit_bytes: 4096,
+    }) {
+    Ok(outcome) =>
+      match native_git_staging_completed(outcome, "base tree lookup failed") {
+        Ok(value) => value
+        Err(error) => return Err(error)
+      }
+    Err(error) => return Err(error)
+  }
+  let observed_tree = @utf8.decode(observed_tree_bytes) catch {
+    _ => return Err(native_git_workspace_error("base tree lookup failed"))
+  }
+  if observed_tree != expected_tree_oid.0 + "\n" {
+    return Err(native_git_workspace_error("base tree does not match contract"))
+  }
+
+  let manifest_bytes = match
+    capture({
+      program: "/usr/bin/git",
+      arguments: [
+        "ls-tree",
+        "--full-tree",
+        "-r",
+        "-t",
+        "-l",
+        "-z",
+        expected_tree_oid.0,
+      ],
+      environment,
+      cwd: config.staging_root,
+      stdin: b"",
+      timeout_ms: native_git_staging_timeout_ms,
+      output_limit_bytes: native_git_manifest_capture_limit_bytes,
+    }) {
+    Ok(@process_host.NativeBytesProcessCompleted(0, bytes)) => bytes
+    Ok(@process_host.NativeBytesProcessOutputExceeded(_)) =>
+      return Err(native_git_tree_limit_exceeded())
+    Ok(_) =>
+      return Err(native_git_workspace_error("tree manifest lookup failed"))
+    Err(error) => return Err(error)
+  }
+  let manifest = match
+    parse_native_git_tree_manifest(manifest_bytes, expected_tree_oid.0.length()) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let object_targets : Map[String, String] = Map([])
+  for batch in native_git_symlink_object_batches(manifest.symlink_objects) {
+    let output_limit = match native_git_cat_file_batch_output_limit(batch) {
+      Some(value) => value
+      None => return Err(native_git_tree_limit_exceeded())
+    }
+    let output = match
+      capture({
+        program: "/usr/bin/git",
+        arguments: ["cat-file", "--batch"],
+        environment,
+        cwd: config.staging_root,
+        stdin: native_git_cat_file_batch_stdin(batch),
+        timeout_ms: native_git_staging_timeout_ms,
+        output_limit_bytes: output_limit,
+      }) {
+      Ok(@process_host.NativeBytesProcessCompleted(0, bytes)) => bytes
+      Ok(@process_host.NativeBytesProcessOutputExceeded(_)) =>
+        return Err(native_git_tree_limit_exceeded())
+      Ok(_) => return Err(native_git_workspace_error("symlink lookup failed"))
+      Err(error) => return Err(error)
+    }
+    let parsed = match parse_native_git_cat_file_batch(output, batch) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    for oid in parsed.keys() {
+      object_targets[oid] = parsed.get(oid).unwrap()
+    }
+  }
+  match validate_native_git_symlink_graph(manifest, object_targets) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let archive_ceiling = match native_git_archive_ceiling(manifest) {
+    Some(value) => value
+    None => return Err(native_git_tree_limit_exceeded())
+  }
+
+  let workspace = config.staging_root + "/" + key
+  let archive = config.staging_root + "/" + key + ".tar"
+  if @sys.file_mode(workspace) >= 0 ||
+    @sys.file_mode(archive) >= 0 ||
+    !@sys.create_dir_all(workspace) {
+    return Err(native_git_workspace_error("staging identity is not fresh"))
+  }
+  let cleanup_armed = @ref.new(true)
+  defer (if cleanup_armed.val {
+    ignore(@sys.rm_rf(archive))
+    ignore(@sys.rm_rf(workspace))
+  })
+  let archived = match
+    capture({
+      program: "/usr/bin/prlimit",
+      arguments: [
+        "--fsize=" + archive_ceiling.to_string(),
+        "--",
+        "/usr/bin/git",
+        "archive",
+        "--format=tar",
+        "--output=" + archive,
+        expected_tree_oid.0,
+      ],
+      environment,
+      cwd: config.staging_root,
+      stdin: b"",
+      timeout_ms: native_git_staging_timeout_ms,
+      output_limit_bytes: native_git_staging_diagnostic_limit_bytes,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !(archived is @process_host.NativeBytesProcessCompleted(0, _)) {
+    return Err(native_git_workspace_error("Git archive failed"))
+  }
+  let archive_size = @sys.file_size(archive)
+  if archive_size < 0 || archive_size > archive_ceiling {
+    return Err(native_git_workspace_error("Git archive is invalid"))
+  }
+  let extracted = match
+    capture({
+      program: "/usr/bin/tar",
+      arguments: [
+        "--restrict",
+        "--extract",
+        "--file=" + archive,
+        "--directory=" + workspace,
+        "--no-same-owner",
+        "--no-same-permissions",
+        "--delay-directory-restore",
+        "--no-overwrite-dir",
+      ],
+      environment: {
+        "HOME": "/nonexistent",
+        "PATH": "/usr/bin:/bin",
+        "LC_ALL": "C",
+      },
+      cwd: config.staging_root,
+      stdin: b"",
+      timeout_ms: native_git_staging_timeout_ms,
+      output_limit_bytes: native_git_staging_diagnostic_limit_bytes,
+    }) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !(extracted is @process_host.NativeBytesProcessCompleted(0, _)) {
+    return Err(native_git_workspace_error("archive extraction failed"))
+  }
+  if !@sys.rm_rf(archive) {
+    return Err(native_git_workspace_error("workspace cleanup failed"))
+  }
+  if @sys.file_mode(workspace + "/.git") >= 0 ||
     !@sys.write_file_sync(
       workspace + "/.choir-source-root",
       source_digest.0 + "\n",
     ) {
     return Err(native_git_workspace_error("staged source is invalid"))
   }
+  cleanup_armed.val = false
   Ok({ root: workspace, commit_oid, tree_oid: expected_tree_oid, source_digest })
+}
+
+///|
+pub async fn stage_native_git_workspace(
+  config : NativeGitWorkspaceConfig,
+  key : String,
+  commit_oid : @control.GitOid,
+  expected_tree_oid : @control.GitOid,
+  source_digest : @control.Digest,
+) -> Result[NativeGitWorkspaceSource, @types.ChoirError] {
+  if !@sys.path_executable("/usr/bin/prlimit") ||
+    !@sys.path_executable("/usr/bin/git") ||
+    !@sys.path_executable("/usr/bin/tar") {
+    return Err(
+      native_git_workspace_error("required staging executable is unavailable"),
+    )
+  }
+  stage_native_git_workspace_with_capture(
+    config, key, commit_oid, expected_tree_oid, source_digest, capture_native_git_staging_process,
+  )
 }
 
 ///|
@@ -613,162 +814,4 @@ test "native Git evidence keeps NUL paths and symlink identity" {
     ),
     [@control.RepoPath("AGENTS.md")],
   )
-}
-
-///|
-async fn native_git_evidence_test_command(
-  cwd : String,
-  arguments : Array[String],
-) -> String {
-  let (exit_code, data) = @process.collect_output_merged(
-    "/usr/bin/git",
-    arguments,
-    extra_env={
-      "GIT_CONFIG_GLOBAL": "/dev/null",
-      "GIT_CONFIG_NOSYSTEM": "1",
-      "HOME": "/nonexistent",
-      "LC_ALL": "C.UTF-8",
-      "PATH": "/usr/bin:/bin",
-    },
-    inherit_env=false,
-    cwd~,
-  ) catch {
-    _ => fail("native Git evidence fixture process failed")
-  }
-  let output = data.text() catch {
-    _ => fail("native Git evidence fixture output was not UTF-8")
-  }
-  if exit_code != 0 {
-    fail("native Git evidence fixture command failed: " + output)
-  }
-  output
-}
-
-///|
-async test "native Git candidate evidence captures raw changed paths and symlinks" {
-  let root = "/tmp/choir-take-path-evidence-" + @sys.get_pid().to_string()
-  ignore(@sys.rm_rf(root))
-  defer ignore(@sys.rm_rf(root))
-  let repository = root + "/repository"
-  let staging = root + "/staging"
-  let result = root + "/results/candidate"
-  guard @sys.create_dir_all(repository + "/src") &&
-    @sys.create_dir_all(repository + "/docs") &&
-    @sys.create_dir_all(staging) else {
-    fail("native Git evidence fixture root failed")
-  }
-  ignore(native_git_evidence_test_command(repository, ["init", "--quiet"]))
-  guard @sys.write_file_sync(repository + "/src/old_name.mbt", "old\n") &&
-    @sys.write_file_sync(repository + "/src/delete.mbt", "delete\n") &&
-    @sys.write_file_sync(repository + "/docs/café.md", "composed\n") else {
-    fail("native Git evidence fixture base files failed")
-  }
-  ignore(
-    native_git_evidence_test_command(repository, ["add", "--all", "--", "."]),
-  )
-  ignore(
-    native_git_evidence_test_command(repository, [
-      "-c", "user.name=Choir Test", "-c", "user.email=choir-test@invalid", "commit",
-      "--quiet", "-m", "base",
-    ]),
-  )
-  let base_commit = @control.GitOid(
-    native_git_evidence_test_command(repository, ["rev-parse", "HEAD"])
-    .trim()
-    .to_owned(),
-  )
-  let base_tree = @control.GitOid(
-    native_git_evidence_test_command(repository, [
-      "show", "-s", "--format=%T", "HEAD",
-    ])
-    .trim()
-    .to_owned(),
-  )
-  let config : NativeGitWorkspaceConfig = {
-    repository_root: repository,
-    object_directory: repository + "/.git/objects",
-    staging_root: staging,
-  }
-  let source_digest = @control.Digest(
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  )
-  let source = match
-    stage_native_git_workspace(
-      config, "path-evidence", base_commit, base_tree, source_digest,
-    ) {
-    Ok(value) => value
-    Err(error) => fail(error.message())
-  }
-  guard @sys.create_dir_all(result) else {
-    fail("native Git evidence result root failed")
-  }
-  let copied = @process.collect_output_merged(
-    "/usr/bin/cp",
-    ["-a", source.root + "/.", result],
-    extra_env={ "HOME": "/nonexistent", "PATH": "/usr/bin:/bin" },
-    inherit_env=false,
-    cwd=root,
-  ) catch {
-    _ => fail("native Git evidence source copy failed")
-  }
-  if copied.0 != 0 {
-    fail("native Git evidence source copy failed")
-  }
-  ignore(@sys.rm_rf(result + "/src/old_name.mbt"))
-  ignore(@sys.rm_rf(result + "/src/delete.mbt"))
-  guard @sys.write_file_sync(result + "/src/new_name.mbt", "old\n") &&
-    @sys.create_dir_all(result + "/generated") &&
-    @sys.create_dir_all(result + "/case") &&
-    @sys.write_file_sync(result + "/generated/schema.mbt", "generated\n") &&
-    @sys.write_file_sync(result + "/case/A.mbt", "upper\n") &&
-    @sys.write_file_sync(result + "/case/a.mbt", "lower\n") &&
-    @sys.write_file_sync(result + "/docs/cafe\u{301}.md", "decomposed\n") &&
-    @sys.symlink_force("new_name.mbt", result + "/src/link.mbt") else {
-    fail("native Git evidence candidate mutation failed")
-  }
-  let normalized = match
-    normalize_native_git_candidate(
-      config,
-      "path-evidence-candidate",
-      @control.GoalId("path-evidence-goal"),
-      @control.PartId("path-evidence-part"),
-      @control.TakeId("path-evidence-take"),
-      @control.SemanticCommitTitle("test: capture path evidence"),
-      base_commit,
-      source.source_digest,
-      result,
-    ) {
-    Ok(value) => value
-    Err(error) => fail(error.message())
-  }
-  let expected = [
-    @control.RepoPath("case/A.mbt"),
-    @control.RepoPath("case/a.mbt"),
-    @control.RepoPath("docs/cafe\u{301}.md"),
-    @control.RepoPath("generated/schema.mbt"),
-    @control.RepoPath("src/delete.mbt"),
-    @control.RepoPath("src/link.mbt"),
-    @control.RepoPath("src/new_name.mbt"),
-    @control.RepoPath("src/old_name.mbt"),
-  ]
-  assert_eq(
-    native_git_evidence_test_command(repository, [
-      "show",
-      "-s",
-      "--format=%s",
-      normalized.0.commit_oid.0,
-    ])
-    .trim()
-    .to_owned(),
-    "test: capture path evidence",
-  )
-  assert_eq(normalized.0.changed_paths.length(), expected.length())
-  for path in expected {
-    assert_true(
-      normalized.0.changed_paths.any(fn(observed) { observed == path }),
-    )
-  }
-  assert_eq(normalized.1.symlink_prefix_paths, [
-    @control.RepoPath("src/link.mbt"),
-  ])
 }

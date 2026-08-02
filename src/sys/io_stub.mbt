@@ -34,6 +34,16 @@ pub fn rm_rf(_path : String) -> Bool {
 }
 
 ///|
+pub fn write_file_in_child_dir_no_follow(
+  _root : String,
+  _child_name : String,
+  _file_name : String,
+  _content : String,
+) -> Bool {
+  false
+}
+
+///|
 pub fn write_stdout(_s : String) -> Unit {
 
 }

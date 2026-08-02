@@ -422,18 +422,32 @@ async fn execute_native_work_order_planner(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let context_dir = staged.root + "/.choir"
-  let context_path = context_dir + "/work-order-planner-context.json"
   let context = native_work_order_planner_context_bytes(record, round)
-  if (!@sys.path_exists(context_dir) && !@sys.create_dir_all(context_dir)) ||
-    !@sys.write_file_sync(context_path, @utf8.decode(context)) {
+  let context_text = @utf8.decode(context) catch {
+    _ => {
+      ignore(@take_host.cleanup_native_boxlite_runtime_root(server_config))
+      return Err(
+        native_work_order_planning_error("planner context staging failed"),
+      )
+    }
+  }
+  if !@sys.write_file_in_child_dir_no_follow(
+      staged.root,
+      ".choir",
+      "work-order-planner-context.json",
+      context_text,
+    ) {
+    ignore(@take_host.cleanup_native_boxlite_runtime_root(server_config))
     return Err(
       native_work_order_planning_error("planner context staging failed"),
     )
   }
   let server = match @take_host.start_native_boxlite_server(server_config) {
     Ok(value) => value
-    Err(error) => return Err(error)
+    Err(error) => {
+      ignore(@take_host.cleanup_native_boxlite_runtime_root(server_config))
+      return Err(error)
+    }
   }
   let moon_home = match @sys.getenv("CHOIR_MOON_HOME") {
     Some(value) => value
