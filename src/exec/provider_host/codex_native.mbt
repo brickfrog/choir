@@ -648,7 +648,14 @@ priv enum NativeCodexTakeState {
   CodexTurnRunning
   CodexTurnCompleted
   CodexTurnInterrupted
-} derive(Eq, ToJson, FromJson)
+  CodexTurnTimedOut
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+let native_codex_take_manifest_version : Int = 5
+
+///|
+let native_codex_timeout_interrupt_grace_ms : Int = 5000
 
 ///|
 priv struct NativeCodexTakeManifest {
@@ -692,7 +699,8 @@ pub fn read_native_codex_initialization_attestation(
   let manifest : NativeCodexTakeManifest = @json.from_json(json) catch {
     _ => return None
   }
-  if manifest.version == 4 && manifest.server_initialized {
+  if manifest.version == native_codex_take_manifest_version &&
+    manifest.server_initialized {
     manifest.initialization_attestation_digest
   } else {
     None
@@ -817,7 +825,7 @@ fn load_native_codex_manifest(
         native_codex_driver_error("Take session manifest schema is invalid"),
       )
   }
-  if manifest.version != 4 ||
+  if manifest.version != native_codex_take_manifest_version ||
     manifest.session_id != session.id ||
     manifest.take_id != session.take_id ||
     manifest.role != role ||
@@ -1082,6 +1090,160 @@ async fn notify_native_codex_app_server(
     "params": params,
   }
   write_native_codex_app_server(config, notification.to_json())
+}
+
+///|
+async fn interrupt_native_codex_turn_at_timeout(
+  config : NativeCodexDriverConfig,
+  manifest : NativeCodexTakeManifest,
+) -> Result[Unit, @types.ChoirError] {
+  let thread_id = match manifest.thread_id {
+    Some(value) => value
+    None => return Err(native_codex_driver_error("thread identity is absent"))
+  }
+  let turn_id = match manifest.turn_id {
+    Some(value) => value
+    None => return Err(native_codex_driver_error("turn identity is absent"))
+  }
+  let request : Map[String, Json] = {
+    "id": "turn-timeout-interrupt".to_json(),
+    "method": "turn/interrupt".to_json(),
+    "params": { "threadId": thread_id.to_json(), "turnId": turn_id.to_json() }.to_json(),
+  }
+  // A deadline does not wait for the RPC response: the durable timeout state
+  // already forbids adoption, and the grace period below is the bounded time
+  // in which the provider may honor this request before its server is killed.
+  write_native_codex_app_server(config, request.to_json())
+}
+
+///|
+async fn stop_and_reap_native_codex_owned_server_with(
+  config : NativeCodexDriverConfig,
+  pid : Int,
+  owned_alive : (NativeCodexDriverConfig, Int) -> Bool,
+  group_alive : (Int) -> Bool,
+  kill : (Int) -> Bool,
+  sleep : async (Int) -> Unit,
+  reap : async (Int) -> Int,
+) -> Result[Unit, @types.ChoirError] {
+  if pid <= 1 {
+    return Ok(())
+  }
+  if !owned_alive(config, pid) {
+    if group_alive(pid) {
+      return Err(
+        @types.ChoirError::policy_blocked(
+          "Codex app-server ownership changed before timeout cleanup",
+        ),
+      )
+    }
+    // A server that exited during the grace period can still be our zombie.
+    // waitpid is harmless for an adopted recovery process: it returns ECHILD.
+    ignore(reap(pid))
+    return Ok(())
+  }
+  if !kill(pid) && group_alive(pid) {
+    return Err(native_codex_driver_error("app-server timeout kill failed"))
+  }
+  let mut waited_ms = 0
+  while group_alive(pid) && waited_ms < 1000 {
+    sleep(20)
+    waited_ms = waited_ms + 20
+  }
+  if group_alive(pid) {
+    return Err(native_codex_driver_error("app-server survived timeout cleanup"))
+  }
+  ignore(reap(pid))
+  if group_alive(pid) {
+    Err(native_codex_driver_error("app-server survived timeout reap"))
+  } else {
+    Ok(())
+  }
+}
+
+///|
+async fn stop_and_reap_native_codex_owned_server(
+  config : NativeCodexDriverConfig,
+  pid : Int,
+) -> Result[Unit, @types.ChoirError] {
+  stop_and_reap_native_codex_owned_server_with(
+    config,
+    pid,
+    native_codex_owned_server_alive,
+    @sys.pgid_has_non_zombie_process,
+    @sys.force_kill_pgid_checked,
+    async fn(milliseconds) { @async.sleep(milliseconds) },
+    async fn(pid) { @process.wait_pid(pid) catch { _ => -1 } },
+  )
+}
+
+///|
+async fn time_out_native_codex_take_with(
+  config : NativeCodexDriverConfig,
+  manifest : NativeCodexTakeManifest,
+  now : () -> Int64,
+  after_terminal_recorded : () -> Unit,
+  store : (NativeCodexDriverConfig, NativeCodexTakeManifest) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
+  server_alive : (NativeCodexDriverConfig, Int) -> Bool,
+  interrupt : async (NativeCodexDriverConfig, NativeCodexTakeManifest) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
+  sleep : async (Int) -> Unit,
+  stop_and_reap : async (NativeCodexDriverConfig, Int) -> Result[
+    Unit,
+    @types.ChoirError,
+  ],
+) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
+  let timed_out = if manifest.state == CodexTurnTimedOut {
+    manifest
+  } else {
+    { ..manifest, state: CodexTurnTimedOut, finished_at: Some(now()) }
+  }
+  let mut store_error : @types.ChoirError? = None
+  if manifest.state != CodexTurnTimedOut {
+    match store(config, timed_out) {
+      Ok(_) => after_terminal_recorded()
+      Err(error) => store_error = Some(error)
+    }
+  }
+  if server_alive(config, timed_out.server_pid) {
+    // Cleanup does not depend on the provider acknowledging the interrupt.
+    // Failure here still advances to the bounded grace and owned-process kill.
+    ignore(interrupt(config, timed_out))
+    sleep(native_codex_timeout_interrupt_grace_ms)
+  }
+  match stop_and_reap(config, timed_out.server_pid) {
+    Ok(_) =>
+      match store_error {
+        Some(error) => Err(error)
+        None => Ok(timed_out)
+      }
+    Err(error) => Err(error)
+  }
+}
+
+///|
+async fn time_out_native_codex_take(
+  config : NativeCodexDriverConfig,
+  manifest : NativeCodexTakeManifest,
+  now : () -> Int64,
+  after_terminal_recorded : () -> Unit,
+) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
+  time_out_native_codex_take_with(
+    config,
+    manifest,
+    now,
+    after_terminal_recorded,
+    store_native_codex_manifest,
+    native_codex_owned_server_alive,
+    interrupt_native_codex_turn_at_timeout,
+    async fn(milliseconds) { @async.sleep(milliseconds) },
+    stop_and_reap_native_codex_owned_server,
+  )
 }
 
 ///|
@@ -1907,7 +2069,7 @@ pub async fn run_native_codex_take(
     Some(value) => value
     None => {
       let value : NativeCodexTakeManifest = {
-        version: 4,
+        version: native_codex_take_manifest_version,
         session_id: session.id,
         take_id: session.take_id,
         role,
@@ -1939,6 +2101,14 @@ pub async fn run_native_codex_take(
         @types.ChoirError::canceled("Codex Take interrupted at the Goal cutoff"),
       )
     }
+    CodexTurnTimedOut =>
+      match
+        time_out_native_codex_take(
+          config, manifest, now, after_terminal_recorded,
+        ) {
+        Ok(_) => return Err(@types.ChoirError::timeout("Codex Take"))
+        Err(error) => return Err(error)
+      }
     CodexTurnCompleted =>
       stop_native_codex_owned_server(config, manifest.server_pid)
     _ => ()
@@ -2069,6 +2239,16 @@ pub async fn run_native_codex_take(
     let mut last_turn_read_ms = 0
     let mut interrupt_sent = false
     while terminal_trace == "" {
+      if elapsed_ms >= config.timeout_ms {
+        match
+          time_out_native_codex_take(
+            config, manifest, now, after_terminal_recorded,
+          ) {
+          Ok(value) => manifest = value
+          Err(error) => return Err(error)
+        }
+        return Err(@types.ChoirError::timeout("Codex Take"))
+      }
       manifest = match
         ensure_native_codex_app_server(
           config, codex_native, manifest, after_server_started, after_initialized_notification_sent,
@@ -2112,9 +2292,6 @@ pub async fn run_native_codex_take(
       let read_is_due = elapsed_ms - last_turn_read_ms >=
         native_codex_turn_read_interval_ms
       if running_per_events && !read_is_due {
-        if elapsed_ms >= config.timeout_ms {
-          return Err(@types.ChoirError::timeout("Codex Take"))
-        }
         @async.sleep(200)
         elapsed_ms = elapsed_ms + 200
         continue
@@ -2204,9 +2381,6 @@ pub async fn run_native_codex_take(
           )
       }
       if terminal_trace == "" {
-        if elapsed_ms >= config.timeout_ms {
-          return Err(@types.ChoirError::timeout("Codex Take"))
-        }
         @async.sleep(200)
         elapsed_ms = elapsed_ms + 200
       }
@@ -2598,7 +2772,7 @@ test "provider host boundary masks host temporary files" {
 ///|
 test "Codex recovery adopts the turn with the durable client message id" {
   let manifest : NativeCodexTakeManifest = {
-    version: 4,
+    version: native_codex_take_manifest_version,
     session_id: @control.HarnessSessionId("session-recovery"),
     take_id: @control.TakeId("take-recovery"),
     role: @harness.CodexTakeRole::CodexImplementationTake,
@@ -2630,6 +2804,230 @@ test "Codex recovery adopts the turn with the durable client message id" {
   assert_true(turn is Some(_))
   guard turn is Some(fields) else { fail("recovery turn is absent") }
   assert_eq(@types.json_field_string(fields, "id"), Some("turn-recovery"))
+}
+
+///|
+fn native_codex_timeout_test_config() -> NativeCodexDriverConfig {
+  {
+    sterile_root: "/tmp/choir-codex-timeout-test",
+    mcp_executable: "/usr/bin/node",
+    mcp_arguments: [],
+    execution_token: "",
+    boxlite_owner_socket_root: None,
+    mcp_server_name: "choir_sandbox",
+    allowed_tools: ["read_file"],
+    timeout_ms: 1000,
+    connect_trace_path: None,
+  }
+}
+
+///|
+fn native_codex_timeout_test_manifest(
+  state? : NativeCodexTakeState = CodexTurnRunning,
+) -> NativeCodexTakeManifest {
+  {
+    version: native_codex_take_manifest_version,
+    session_id: @control.HarnessSessionId("session-timeout"),
+    take_id: @control.TakeId("take-timeout"),
+    role: @harness.CodexTakeRole::CodexImplementationTake,
+    surface_digest: @control.Digest("digest-timeout"),
+    server_pid: 42,
+    server_generation: 1,
+    server_initialized: true,
+    initialization_notification_may_have_been_sent: true,
+    initialization_attestation_digest: Some(
+      @control.Digest("initialization-timeout"),
+    ),
+    thread_id: Some("thread-timeout"),
+    turn_id: Some("turn-timeout"),
+    client_user_message_id: "client-message-timeout",
+    read_ordinal: 1,
+    state,
+    started_at: 10L,
+    finished_at: None,
+    terminal_trace: None,
+  }
+}
+
+///|
+async test "Codex semantic deadline records timeout before interrupt and reaps" {
+  let events : Array[String] = []
+  let alive = @ref.new(true)
+  let result = time_out_native_codex_take_with(
+    native_codex_timeout_test_config(),
+    native_codex_timeout_test_manifest(),
+    fn() { 20L },
+    fn() { events.push("terminal-recorded") },
+    fn(_, manifest) {
+      if manifest.state != CodexTurnTimedOut ||
+        manifest.finished_at != Some(20L) {
+        return Err(native_codex_driver_error("timeout was not persisted"))
+      }
+      events.push("stored-timeout")
+      Ok(())
+    },
+    fn(_, _) { alive.val },
+    fn(_, manifest) {
+      if manifest.state != CodexTurnTimedOut {
+        return Err(native_codex_driver_error("interrupt preceded timeout"))
+      }
+      events.push("interrupt")
+      Ok(())
+    },
+    async fn(milliseconds) {
+      events.push("sleep:" + milliseconds.to_string())
+      @async.sleep(0)
+    },
+    async fn(config, pid) {
+      stop_and_reap_native_codex_owned_server_with(
+        config,
+        pid,
+        fn(_, _) { alive.val },
+        fn(_) { alive.val },
+        fn(stopped_pid) {
+          events.push("kill:" + stopped_pid.to_string())
+          alive.val = false
+          true
+        },
+        async fn(_) { @async.sleep(0) },
+        async fn(reaped_pid) {
+          events.push("reap:" + reaped_pid.to_string())
+          @async.sleep(0)
+          reaped_pid
+        },
+      )
+    },
+  )
+  assert_true(result is Ok(_))
+  guard result is Ok(timed_out) else { fail("timeout cleanup failed") }
+  assert_eq(timed_out.state, CodexTurnTimedOut)
+  assert_eq(events, [
+    "stored-timeout", "terminal-recorded", "interrupt", "sleep:5000", "kill:42",
+    "reap:42",
+  ])
+}
+
+///|
+async test "Codex timeout interrupt failure still kills and reaps" {
+  let events : Array[String] = []
+  let result = time_out_native_codex_take_with(
+    native_codex_timeout_test_config(),
+    native_codex_timeout_test_manifest(),
+    fn() { 20L },
+    fn() { events.push("terminal-recorded") },
+    fn(_, _) {
+      events.push("stored-timeout")
+      Ok(())
+    },
+    fn(_, _) { true },
+    fn(_, _) {
+      events.push("interrupt-failed")
+      Err(native_codex_driver_error("injected interrupt failure"))
+    },
+    async fn(milliseconds) {
+      events.push("sleep:" + milliseconds.to_string())
+      @async.sleep(0)
+    },
+    fn(_, pid) {
+      events.push("stop-and-reap:" + pid.to_string())
+      Ok(())
+    },
+  )
+  assert_true(result is Ok(_))
+  assert_eq(events, [
+    "stored-timeout", "terminal-recorded", "interrupt-failed", "sleep:5000", "stop-and-reap:42",
+  ])
+}
+
+///|
+async test "Codex timeout manifest failure still cleans the owned server" {
+  let events : Array[String] = []
+  let result = time_out_native_codex_take_with(
+    native_codex_timeout_test_config(),
+    native_codex_timeout_test_manifest(),
+    fn() { 20L },
+    fn() { events.push("unexpected-terminal-callback") },
+    fn(_, _) {
+      events.push("store-failed")
+      Err(native_codex_driver_error("injected manifest failure"))
+    },
+    fn(_, _) { true },
+    fn(_, _) {
+      events.push("interrupt")
+      Ok(())
+    },
+    async fn(milliseconds) {
+      events.push("sleep:" + milliseconds.to_string())
+      @async.sleep(0)
+    },
+    fn(_, pid) {
+      events.push("stop-and-reap:" + pid.to_string())
+      Ok(())
+    },
+  )
+  assert_true(result is Err(_))
+  assert_eq(events, [
+    "store-failed", "interrupt", "sleep:5000", "stop-and-reap:42",
+  ])
+}
+
+///|
+async test "repeated Codex timeout recovery does not reacquire work" {
+  let stores = @ref.new(0)
+  let interrupts = @ref.new(0)
+  let sleeps = @ref.new(0)
+  let kills = @ref.new(0)
+  let reaps = @ref.new(0)
+  let alive = @ref.new(true)
+  let mut manifest = native_codex_timeout_test_manifest()
+  for round = 0; round < 8; round = round + 1 {
+    let result = time_out_native_codex_take_with(
+      native_codex_timeout_test_config(),
+      manifest,
+      fn() { 20L },
+      fn() { () },
+      fn(_, _) {
+        stores.val = stores.val + 1
+        Ok(())
+      },
+      fn(_, _) { alive.val },
+      fn(_, _) {
+        interrupts.val = interrupts.val + 1
+        Ok(())
+      },
+      async fn(_) {
+        sleeps.val = sleeps.val + 1
+        @async.sleep(0)
+      },
+      async fn(config, pid) {
+        stop_and_reap_native_codex_owned_server_with(
+          config,
+          pid,
+          fn(_, _) { alive.val },
+          fn(_) { alive.val },
+          fn(_) {
+            kills.val = kills.val + 1
+            alive.val = false
+            true
+          },
+          async fn(_) { @async.sleep(0) },
+          async fn(reaped_pid) {
+            reaps.val = reaps.val + 1
+            @async.sleep(0)
+            reaped_pid
+          },
+        )
+      },
+    )
+    guard result is Ok(value) else { fail("timeout recovery failed") }
+    manifest = value
+  }
+  assert_eq(manifest.state, CodexTurnTimedOut)
+  assert_eq(stores.val, 1)
+  assert_eq(interrupts.val, 1)
+  assert_eq(sleeps.val, 1)
+  assert_eq(kills.val, 1)
+  assert_eq(reaps.val, 8)
 }
 
 ///|
