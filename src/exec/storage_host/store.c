@@ -11,6 +11,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -1698,6 +1699,214 @@ static int choir_artifact_checked_dir(const char *path, mode_t mode) {
         return -1;
     }
     return 0;
+}
+
+/* One lock per repository artifact store serializes immutable-object changes
+ * with their retention authority. The lock is opened relative to the checked
+ * store root so its final component cannot redirect through a symlink. */
+int choir_artifact_store_lock(
+    const char *root, int root_len, int nonblocking
+) {
+    char *root_path = choir_store_copy_string(root, root_len);
+    if (root_path == NULL) return -1;
+    if (choir_artifact_checked_dir(root_path, 0700) != 0) {
+        free(root_path);
+        return -1;
+    }
+    int root_fd = open(
+        root_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    );
+    free(root_path);
+    if (root_fd < 0) return -1;
+    int lock_fd = openat(
+        root_fd,
+        "retention.lock",
+        O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+        0600
+    );
+    close(root_fd);
+    if (lock_fd < 0) return -1;
+    struct stat info;
+    if (fstat(lock_fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+        fchmod(lock_fd, 0600) != 0) {
+        close(lock_fd);
+        return -1;
+    }
+    int operation = LOCK_EX | (nonblocking ? LOCK_NB : 0);
+    while (flock(lock_fd, operation) != 0) {
+        if (!nonblocking && errno == EINTR) continue;
+        close(lock_fd);
+        return -1;
+    }
+    return lock_fd;
+}
+
+int choir_artifact_store_unlock(int lock_fd) {
+    if (lock_fd < 0) return -1;
+    int result = flock(lock_fd, LOCK_UN);
+    int close_result = close(lock_fd);
+    return result == 0 && close_result == 0 ? 0 : -1;
+}
+
+static int choir_artifact_store_open_root(const char *root, int root_len) {
+    char *root_path = choir_store_copy_string(root, root_len);
+    if (root_path == NULL) return -1;
+    int root_fd = open(
+        root_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    );
+    free(root_path);
+    return root_fd;
+}
+
+static int choir_artifact_store_write_all(
+    int fd, const unsigned char *content, int content_len
+) {
+    int offset = 0;
+    while (offset < content_len) {
+        ssize_t n = write(fd, content + offset, (size_t)(content_len - offset));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return -1;
+        offset += (int)n;
+    }
+    return 0;
+}
+
+int choir_artifact_store_ledger_size(const char *root, int root_len) {
+    int root_fd = choir_artifact_store_open_root(root, root_len);
+    if (root_fd < 0) return -1;
+    int fd = openat(root_fd, "retention.ledger", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int open_error = errno;
+    close(root_fd);
+    if (fd < 0) return open_error == ENOENT ? 0 : -1;
+    struct stat info;
+    int result = -1;
+    if (fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size >= 0 &&
+        info.st_size <= INT32_MAX) {
+        result = (int)info.st_size;
+    }
+    close(fd);
+    return result;
+}
+
+int choir_artifact_store_read_ledger(
+    const char *root,
+    int root_len,
+    unsigned char *output,
+    int output_size
+) {
+    if (output_size < 0 || (output == NULL && output_size != 0)) return -1;
+    int root_fd = choir_artifact_store_open_root(root, root_len);
+    if (root_fd < 0) return -1;
+    int fd = openat(root_fd, "retention.ledger", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int open_error = errno;
+    close(root_fd);
+    if (fd < 0) return open_error == ENOENT && output_size == 0 ? 0 : -1;
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+        info.st_size != output_size) {
+        close(fd);
+        return -1;
+    }
+    int offset = 0;
+    while (offset < output_size) {
+        ssize_t n = read(fd, output + offset, (size_t)(output_size - offset));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            close(fd);
+            return -1;
+        }
+        offset += (int)n;
+    }
+    unsigned char trailing;
+    ssize_t extra = read(fd, &trailing, 1);
+    close(fd);
+    return extra == 0 ? offset : -1;
+}
+
+int choir_artifact_store_append_ledger(
+    const char *root,
+    int root_len,
+    const unsigned char *content,
+    int content_len
+) {
+    if ((content == NULL && content_len != 0) || content_len < 0) return -1;
+    int root_fd = choir_artifact_store_open_root(root, root_len);
+    if (root_fd < 0) return -1;
+    int fd = openat(
+        root_fd,
+        "retention.ledger",
+        O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW,
+        0600
+    );
+    if (fd < 0) {
+        close(root_fd);
+        return -1;
+    }
+    struct stat info;
+    int result = 0;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) ||
+        fchmod(fd, 0600) != 0) result = -1;
+    if (result == 0 && content_len > 0 &&
+        choir_artifact_store_write_all(fd, content, content_len) != 0) result = -1;
+    if (result == 0 && fsync(fd) != 0) result = -1;
+    if (close(fd) != 0) result = -1;
+    if (result == 0 && fsync(root_fd) != 0) result = -1;
+    close(root_fd);
+    return result;
+}
+
+int choir_artifact_store_rewrite_ledger(
+    const char *root,
+    int root_len,
+    const unsigned char *content,
+    int content_len
+) {
+    if ((content == NULL && content_len != 0) || content_len < 0) return -1;
+    int root_fd = choir_artifact_store_open_root(root, root_len);
+    if (root_fd < 0) return -1;
+    struct stat target_info;
+    int target_result = fstatat(
+        root_fd, "retention.ledger", &target_info, AT_SYMLINK_NOFOLLOW
+    );
+    if (target_result == 0) {
+        if (!S_ISREG(target_info.st_mode)) {
+            close(root_fd);
+            return -1;
+        }
+    } else if (errno != ENOENT) {
+        close(root_fd);
+        return -1;
+    }
+    static unsigned long ledger_sequence = 0;
+    char temp[128];
+    unsigned long sequence = __atomic_add_fetch(
+        &ledger_sequence, 1, __ATOMIC_RELAXED
+    );
+    int rendered = snprintf(
+        temp, sizeof(temp), ".retention.ledger.%ld.%lu.tmp", (long)getpid(), sequence
+    );
+    if (rendered < 0 || rendered >= (int)sizeof(temp)) {
+        close(root_fd);
+        return -1;
+    }
+    int fd = openat(
+        root_fd, temp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600
+    );
+    if (fd < 0) {
+        close(root_fd);
+        return -1;
+    }
+    int result = 0;
+    if (content_len > 0 &&
+        choir_artifact_store_write_all(fd, content, content_len) != 0) result = -1;
+    if (result == 0 && fsync(fd) != 0) result = -1;
+    if (close(fd) != 0) result = -1;
+    if (result == 0 &&
+        renameat(root_fd, temp, root_fd, "retention.ledger") != 0) result = -1;
+    if (result == 0 && fsync(root_fd) != 0) result = -1;
+    if (result != 0) (void)unlinkat(root_fd, temp, 0);
+    close(root_fd);
+    return result;
 }
 
 static int choir_artifact_existing_matches(

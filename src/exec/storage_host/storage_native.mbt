@@ -214,6 +214,51 @@ extern "C" fn artifact_store_read_ffi(
 ) -> Int = "choir_artifact_store_read"
 
 ///|
+#borrow(root)
+extern "C" fn artifact_store_lock_ffi(
+  root : Bytes,
+  root_len : Int,
+  nonblocking : Int,
+) -> Int = "choir_artifact_store_lock"
+
+///|
+extern "C" fn artifact_store_unlock_ffi(lock_fd : Int) -> Int = "choir_artifact_store_unlock"
+
+///|
+#borrow(root)
+extern "C" fn artifact_store_ledger_size_ffi(
+  root : Bytes,
+  root_len : Int,
+) -> Int = "choir_artifact_store_ledger_size"
+
+///|
+#borrow(root, output)
+extern "C" fn artifact_store_read_ledger_ffi(
+  root : Bytes,
+  root_len : Int,
+  output : Bytes,
+  output_size : Int,
+) -> Int = "choir_artifact_store_read_ledger"
+
+///|
+#borrow(root, content)
+extern "C" fn artifact_store_append_ledger_ffi(
+  root : Bytes,
+  root_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_artifact_store_append_ledger"
+
+///|
+#borrow(root, content)
+extern "C" fn artifact_store_rewrite_ledger_ffi(
+  root : Bytes,
+  root_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_artifact_store_rewrite_ledger"
+
+///|
 fn validate_store_path(path : String) -> Result[Unit, @types.ChoirError] {
   if !path.has_prefix("/") || path.contains("\u{00}") {
     Err(
@@ -950,9 +995,75 @@ fn artifact_store_failure(operation : String) -> @types.ChoirError {
 }
 
 ///|
-pub fn adopt_artifact(
+fn acquire_artifact_store_lock(
+  store : @storage.ArtifactStore,
+  nonblocking? : Bool = false,
+) -> Result[Int, @types.ChoirError] {
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let lock_fd = artifact_store_lock_ffi(
+    root,
+    root_len,
+    if nonblocking {
+      1
+    } else {
+      0
+    },
+  )
+  if lock_fd < 0 {
+    Err(artifact_store_failure("retention lock"))
+  } else {
+    Ok(lock_fd)
+  }
+}
+
+///|
+fn release_artifact_store_lock(lock_fd : Int) -> Unit {
+  ignore(artifact_store_unlock_ffi(lock_fd))
+}
+
+///|
+fn read_artifact_retention_ledger_unlocked(
+  store : @storage.ArtifactStore,
+) -> Result[Array[@storage.ArtifactRetentionEntry], @types.ChoirError] {
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let size = artifact_store_ledger_size_ffi(root, root_len)
+  if size < 0 {
+    return Err(artifact_store_failure("retention ledger sizing"))
+  }
+  let output = Bytes::new(size)
+  if artifact_store_read_ledger_ffi(root, root_len, output, size) != size {
+    return Err(artifact_store_failure("retention ledger read"))
+  }
+  Ok(@storage.decode_artifact_retention_ledger(@utf8.decode_lossy(output)))
+}
+
+///|
+fn append_artifact_retention(
+  store : @storage.ArtifactStore,
+  content : String,
+) -> Bool {
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let encoded = @utf8.encode(content)
+  artifact_store_append_ledger_ffi(root, root_len, encoded, encoded.length()) ==
+  0
+}
+
+///|
+fn rewrite_artifact_retention_ledger(
+  store : @storage.ArtifactStore,
+  content : String,
+) -> Bool {
+  let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
+  let encoded = @utf8.encode(content)
+  artifact_store_rewrite_ledger_ffi(root, root_len, encoded, encoded.length()) ==
+  0
+}
+
+///|
+fn adopt_artifact_with(
   store : @storage.ArtifactStore,
   request : @storage.ArtifactAdoptionRequest,
+  append_retention : (@storage.ArtifactStore, String) -> Bool,
 ) -> Result[@storage.ArtifactReceipt, @types.ChoirError] {
   match validate_store_path(store.root) {
     Ok(_) => ()
@@ -962,6 +1073,11 @@ pub fn adopt_artifact(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  let lock_fd = match acquire_artifact_store_lock(store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  defer release_artifact_store_lock(lock_fd)
   let (root, root_len) = exec_string_to_null_terminated_bytes(store.root)
   let digest_text = @storage.digest_text(request.expected_digest)
   let (digest, digest_len) = exec_string_to_null_terminated_bytes(digest_text)
@@ -984,17 +1100,28 @@ pub fn adopt_artifact(
       )
     _ => return Err(artifact_store_failure("adoption"))
   }
-  // Record what this content is being kept for. Adoption previously returned
-  // the retention in a receipt and dropped it, so the store knew only digests
-  // and bytes and nothing could ever decide what was collectable.
-  ignore(
-    @sys.append_file_sync(
-      artifact_retention_ledger_path(store),
-      @storage.encode_artifact_retention_ledger([
-        { digest: request.expected_digest, retentions: [request.retention] },
-      ]),
-    ),
-  )
+  let ledger = match read_artifact_retention_ledger_unlocked(store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let already_recorded = ledger.any(fn(entry) {
+    entry.digest == request.expected_digest &&
+    entry.retentions.contains(request.retention)
+  })
+  let retention_record = if already_recorded {
+    ""
+  } else {
+    @storage.encode_artifact_retention_ledger([
+      { digest: request.expected_digest, retentions: [request.retention] },
+    ])
+  }
+  // Even an already-recorded term passes through the durable writer. The
+  // empty append re-fsyncs both ledger and directory, so a retry after an
+  // acknowledgment or directory-sync failure cannot mistake visibility for
+  // durability.
+  if !append_retention(store, retention_record) {
+    return Err(artifact_store_failure("retention ledger append"))
+  }
   Ok({
     artifact_id: @storage.artifact_id_for_digest(request.expected_digest),
     digest: request.expected_digest,
@@ -1006,9 +1133,11 @@ pub fn adopt_artifact(
 }
 
 ///|
-/// Where the store records what each artifact is being kept for.
-pub fn artifact_retention_ledger_path(store : @storage.ArtifactStore) -> String {
-  store.root + "/retention.ledger"
+pub fn adopt_artifact(
+  store : @storage.ArtifactStore,
+  request : @storage.ArtifactAdoptionRequest,
+) -> Result[@storage.ArtifactReceipt, @types.ChoirError] {
+  adopt_artifact_with(store, request, append_artifact_retention)
 }
 
 ///|
@@ -1016,13 +1145,17 @@ pub fn artifact_retention_ledger_path(store : @storage.ArtifactStore) -> String 
 /// reads as empty, which makes nothing collectable.
 pub fn read_artifact_retention_ledger(
   store : @storage.ArtifactStore,
-) -> Array[@storage.ArtifactRetentionEntry] {
-  let path = artifact_retention_ledger_path(store)
-  if !@sys.path_exists(path) {
-    []
-  } else {
-    @storage.decode_artifact_retention_ledger(@sys.read_file(path))
+) -> Result[Array[@storage.ArtifactRetentionEntry], @types.ChoirError] {
+  match validate_store_path(store.root) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
+  let lock_fd = match acquire_artifact_store_lock(store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  defer release_artifact_store_lock(lock_fd)
+  read_artifact_retention_ledger_unlocked(store)
 }
 
 ///|
@@ -1042,14 +1175,32 @@ pub fn read_artifact_retention_ledger(
 /// the ledger rewrite is asked again for content that is already gone, and
 /// reporting that as released would tell an operator space was reclaimed that
 /// was reclaimed the first time.
-pub fn collect_artifacts(
+fn collect_artifacts_with(
   store : @storage.ArtifactStore,
-  collect : Array[@control.Digest],
+  candidates : Array[@control.Digest],
+  now : Int64,
+  goal_terminal : (@control.GoalId) -> Bool,
+  rewrite_ledger : (@storage.ArtifactStore, String) -> Bool,
 ) -> Result[Int, @types.ChoirError] {
   match validate_store_path(store.root) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
+  if candidates.length() == 0 {
+    return Ok(0)
+  }
+  let lock_fd = match acquire_artifact_store_lock(store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  defer release_artifact_store_lock(lock_fd)
+  let ledger = match read_artifact_retention_ledger_unlocked(store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let collect = @storage.revalidate_artifact_collection(
+      ledger, candidates, now, goal_terminal,
+    ).collect
   if collect.length() == 0 {
     return Ok(0)
   }
@@ -1065,16 +1216,119 @@ pub fn collect_artifacts(
       _ => return Err(artifact_store_failure("collection"))
     }
   }
-  let retained = read_artifact_retention_ledger(store).filter(fn(entry) {
-    !collect.contains(entry.digest)
-  })
-  if !@sys.write_file_atomic(
-      artifact_retention_ledger_path(store),
-      @storage.encode_artifact_retention_ledger(retained),
-    ) {
+  let retained = ledger.filter(fn(entry) { !collect.contains(entry.digest) })
+  if !rewrite_ledger(store, @storage.encode_artifact_retention_ledger(retained)) {
     return Err(artifact_store_failure("collection ledger rewrite"))
   }
   Ok(released)
+}
+
+///|
+pub fn collect_artifacts(
+  store : @storage.ArtifactStore,
+  candidates : Array[@control.Digest],
+  now : Int64,
+  goal_terminal : (@control.GoalId) -> Bool,
+) -> Result[Int, @types.ChoirError] {
+  collect_artifacts_with(
+    store, candidates, now, goal_terminal, rewrite_artifact_retention_ledger,
+  )
+}
+
+///|
+test "artifact retention lock is exclusive and rejects a symlink target" {
+  let root = "/tmp/choir-artifact-lock-test-" + @sys.get_pid().to_string()
+  let outside = root + "-outside"
+  defer ignore(@sys.rm_rf(root))
+  defer ignore(@sys.rm_rf(outside))
+  ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(outside))
+  let store : @storage.ArtifactStore = { root, }
+  let first = acquire_artifact_store_lock(store).unwrap()
+  assert_true(acquire_artifact_store_lock(store, nonblocking=true) is Err(_))
+  release_artifact_store_lock(first)
+  let reacquired = acquire_artifact_store_lock(store, nonblocking=true).unwrap()
+  release_artifact_store_lock(reacquired)
+  assert_true(@sys.create_dir_all(outside))
+  assert_true(@sys.write_file_sync(outside + "/canary", "unchanged"))
+  assert_true(@sys.rm_rf(root + "/retention.lock"))
+  assert_true(@sys.symlink_force(outside + "/canary", root + "/retention.lock"))
+  assert_true(acquire_artifact_store_lock(store, nonblocking=true) is Err(_))
+  assert_eq(@sys.read_file(outside + "/canary"), "unchanged")
+}
+
+///|
+test "failed retention commit retries an already-present artifact after restart" {
+  let root = "/tmp/choir-artifact-retention-failure-" +
+    @sys.get_pid().to_string()
+  defer ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(root))
+  let store : @storage.ArtifactStore = { root, }
+  let content = b"retention retry"
+  let digest = @storage.artifact_digest(content)
+  let request : @storage.ArtifactAdoptionRequest = {
+    content,
+    expected_digest: digest,
+    provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+    retention: @storage.ArtifactRetention::ArtifactPermanent,
+  }
+  let attempts = @ref.new(0)
+  let failed = adopt_artifact_with(store, request, fn(_, _) {
+    attempts.val = attempts.val + 1
+    false
+  })
+  assert_true(failed is Err(_))
+  assert_eq(attempts.val, 1)
+  assert_true(artifact_store_contains(store, digest).unwrap())
+  assert_eq(read_artifact_retention_ledger(store).unwrap().length(), 0)
+  let restarted : @storage.ArtifactStore = { root, }
+  let retried = adopt_artifact(restarted, request).unwrap()
+  assert_eq(
+    retried.outcome,
+    @storage.ArtifactAdoptionOutcome::ArtifactAlreadyPresent,
+  )
+  let ledger = read_artifact_retention_ledger(restarted).unwrap()
+  assert_eq(ledger.length(), 1)
+  assert_eq(ledger[0].digest, digest)
+  assert_eq(ledger[0].retentions.length(), 1)
+  assert_true(
+    ledger[0].retentions.contains(@storage.ArtifactRetention::ArtifactPermanent),
+  )
+}
+
+///|
+test "failed collection ledger commit converges after restart" {
+  let root = "/tmp/choir-artifact-collection-failure-" +
+    @sys.get_pid().to_string()
+  defer ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(root))
+  let store : @storage.ArtifactStore = { root, }
+  let content = b"collection retry"
+  let digest = @storage.artifact_digest(content)
+  ignore(
+    adopt_artifact(store, {
+      content,
+      expected_digest: digest,
+      provenance: @storage.ArtifactProvenance::ArtifactConformanceEvidence,
+      retention: @storage.ArtifactRetention::ArtifactUntilTimestamp(100L),
+    }).unwrap(),
+  )
+  let failed = collect_artifacts_with(store, [digest], 100L, fn(_) { true }, fn(
+    _,
+    _,
+  ) {
+    false
+  })
+  assert_true(failed is Err(_))
+  assert_false(artifact_store_contains(store, digest).unwrap())
+  assert_eq(read_artifact_retention_ledger(store).unwrap().length(), 1)
+  let restarted : @storage.ArtifactStore = { root, }
+  assert_eq(
+    collect_artifacts(restarted, [digest], 100L, fn(_) { true }).unwrap(),
+    0,
+  )
+  assert_false(artifact_store_contains(restarted, digest).unwrap())
+  assert_eq(read_artifact_retention_ledger(restarted).unwrap().length(), 0)
 }
 
 ///|

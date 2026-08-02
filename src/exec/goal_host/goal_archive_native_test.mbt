@@ -355,6 +355,86 @@ async test "an archived Goal releases only its own expired content" {
 }
 
 ///|
+/// Reproduce the scan's exact plan-to-delete interleaving deterministically:
+/// the archive observes one expired retention, then another active Goal adopts
+/// the same digest before collection reaches its destructive sink.
+async test "archive revalidates a concurrent adoption before collection" {
+  let root = "/tmp/choir-goal-archive-race-" + @sys.get_pid().to_string()
+  let (repository, adapters) = archive_native_repository(root)
+  defer ignore(@sys.rm_rf(root))
+  let terminal = archive_native_queued_record(label="archive-race-terminal")
+  let goal_id = terminal.goal.id
+  archive_native_persist(
+    repository,
+    adapters,
+    archive_native_succeeded(terminal),
+  )
+  let live = archive_native_queued_record(label="archive-race-live")
+  archive_native_persist(repository, adapters, live)
+  let digest = archive_native_adopt(
+    repository,
+    "archive-race-shared",
+    @storage.ArtifactRetention::ArtifactUntilGoalTerminal(goal_id),
+  )
+  let adopted_during_archive = @ref.new(false)
+  let report = archive_native_goal(
+    root,
+    goal_id,
+    dry_run=false,
+    now=1_000L,
+    list_refs=async fn(_) {
+      @async.sleep(0)
+      Ok([
+        terminal.goal_ref,
+        terminal.branch_initialization.initialization_witness_ref,
+      ])
+    },
+    delete_refs=async fn(_, references) {
+      @async.sleep(0)
+      ignore(
+        archive_native_adopt(
+          repository,
+          "archive-race-shared",
+          @storage.ArtifactRetention::ArtifactUntilGoalTerminal(live.goal.id),
+        ),
+      )
+      adopted_during_archive.val = true
+      Ok(references.length())
+    },
+  ).unwrap()
+  assert_true(adopted_during_archive.val)
+  guard report.decision
+    is @workflow.GoalArchiveDecision::GoalArchivePlanned(plan) else {
+    fail("terminal Goal was refused archival")
+  }
+  @debug.assert_eq(plan.release_artifacts, [digest])
+  assert_eq(report.artifacts_released, 0)
+  assert_true(
+    @storage_host.artifact_store_contains(repository.artifact_store, digest).unwrap(),
+  )
+  assert_eq(
+    @utf8.decode_lossy(
+      @storage_host.read_artifact(repository.artifact_store, {
+        digest,
+        max_bytes: 1024,
+      }).unwrap(),
+    ),
+    "archive-race-shared",
+  )
+  let ledger = @storage_host.read_artifact_retention_ledger(
+    repository.artifact_store,
+  ).unwrap()
+  let matching = ledger.filter(fn(entry) { entry.digest == digest })
+  guard matching.length() == 1 else { fail("shared retention disappeared") }
+  let entry = matching[0]
+  assert_true(
+    entry.retentions.contains(
+      @storage.ArtifactRetention::ArtifactUntilGoalTerminal(live.goal.id),
+    ),
+  )
+}
+
+///|
 async test "a refused archive touches nothing" {
   let root = "/tmp/choir-goal-archive-refused-" + @sys.get_pid().to_string()
   let (repository, adapters) = archive_native_repository(root)

@@ -112,6 +112,45 @@ test "a ledger round-trips every term it recorded" {
 }
 
 ///|
+test "collection revalidation never widens or guesses from absent evidence" {
+  let expired = retention_digest("expired")
+  let newly_live = retention_digest("newly-live")
+  let absent = retention_digest("absent")
+  let outside = retention_digest("outside")
+  let live_goal = @control.GoalId("goal-live")
+  let plan = @storage.revalidate_artifact_collection(
+    [
+      {
+        digest: expired,
+        retentions: [@storage.ArtifactRetention::ArtifactUntilTimestamp(100L)],
+      },
+      {
+        digest: newly_live,
+        retentions: [@storage.ArtifactRetention::ArtifactUntilTimestamp(100L)],
+      },
+      {
+        digest: newly_live,
+        retentions: [
+          @storage.ArtifactRetention::ArtifactUntilGoalTerminal(live_goal),
+        ],
+      },
+      {
+        digest: outside,
+        retentions: [@storage.ArtifactRetention::ArtifactPermanent],
+      },
+    ],
+    [expired, newly_live, absent, expired],
+    100L,
+    fn(_) { false },
+  )
+  @debug.assert_eq(plan.collect, [expired])
+  assert_eq(plan.retain.length(), 2)
+  @debug.assert_eq(plan.retain[0].digest, newly_live)
+  @debug.assert_eq(plan.retain[1].digest, absent)
+  assert_eq(plan.retain[1].retentions.length(), 0)
+}
+
+///|
 /// The ledger is appended to on every adoption, so a torn write is expected.
 /// One unreadable line must cost that entry's collectability, not the file's.
 test "an unreadable ledger line is skipped, not fatal" {

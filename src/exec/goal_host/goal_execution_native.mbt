@@ -7606,11 +7606,10 @@ async fn delete_native_goal_archived_git_refs(
 /// What this function does about it is refuse to add a third: an archive is
 /// operator-invoked at an arbitrary moment, so it releases no boxes at all.
 ///
-/// Content is collected last and the ledger is rewritten after the bytes are
-/// gone, so an interrupted archive leaves entries naming absent content rather
-/// than content nothing records. A concurrent adoption of the same digest
-/// between the plan and the collection is not fenced: the artifact store has no
-/// lock.
+/// Content is collected last. The preview's artifact list is only a candidate
+/// set: the storage boundary re-reads current retention under the repository
+/// artifact lock immediately before unlinking, then rewrites the ledger after
+/// the bytes are gone so interrupted collection remains retryable.
 pub async fn archive_native_goal(
   project_dir : String,
   goal_id : @control.GoalId,
@@ -7671,15 +7670,13 @@ pub async fn archive_native_goal(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let retention_ledger = match
+    @storage_host.read_artifact_retention_ledger(repository.artifact_store) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   let decision = @workflow.plan_goal_archive(
-    {
-      subject,
-      observed_refs,
-      retention_ledger: @storage_host.read_artifact_retention_ledger(
-        repository.artifact_store,
-      ),
-      now,
-    },
+    { subject, observed_refs, retention_ledger, now },
     fn(candidate) { terminal_goal_ids.contains(candidate) },
   )
   guard decision is @workflow.GoalArchiveDecision::GoalArchivePlanned(plan) else {
@@ -7708,6 +7705,8 @@ pub async fn archive_native_goal(
     @storage_host.collect_artifacts(
       repository.artifact_store,
       plan.release_artifacts,
+      now,
+      fn(candidate) { terminal_goal_ids.contains(candidate) },
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
