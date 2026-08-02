@@ -3096,12 +3096,34 @@ test "integrated Parts authorize one immutable Goal branch seal" {
       uncertain_pull_request,
     ),
   )
+  let empty_cancellation = @workflow.record_goal_pull_request_cancellation(
+    issued_pull_request,
+    @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+    42L,
+  ).unwrap()
+  assert_eq(
+    empty_cancellation.intent.state,
+    @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain,
+  )
+  assert_false(
+    @workflow.goal_pull_request_cancellation_disposition_is_known(
+      empty_cancellation,
+    ),
+  )
+  // Repeated ticks remain fail closed until an explicit absence-proof policy
+  // exists; a burst of empty lookups is not durable forge evidence.
+  let repeated_empty_cancellation = @workflow.record_goal_pull_request_cancellation(
+    empty_cancellation,
+    @workflow.PullRequestLookupObservation::PullRequestNoMatch,
+    43L,
+  ).unwrap()
+  assert_eq(repeated_empty_cancellation, empty_cancellation)
   let cancellation_witnessed_pull_request = @workflow.record_goal_pull_request_cancellation(
-    uncertain_pull_request,
+    empty_cancellation,
     @workflow.PullRequestLookupObservation::PullRequestUniqueMarkerMatch(
       remote_pull_request,
     ),
-    42L,
+    44L,
   ).unwrap()
   assert_eq(
     cancellation_witnessed_pull_request.intent.state,

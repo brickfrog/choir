@@ -3694,8 +3694,9 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      // A definitive empty lookup proves the create never reached the forge.
-      let abandoned_issued_pull_request = match
+      // A single empty lookup cannot prove that a may-have-issued create never
+      // reached the forge; cancellation must keep the source claims held.
+      let uncertain_issued_pull_request = match
         @workflow.record_goal_pull_request_cancellation(
           issued,
           @workflow.PullRequestLookupObservation::PullRequestNoMatch,
@@ -3730,20 +3731,20 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
         abandoned_authorized_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
-        abandoned_issued_pull_request.intent.state ==
-        @workflow.PullRequestIntentState::PullRequestAbandonedByCancellation &&
+        uncertain_issued_pull_request.intent.state ==
+        @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain &&
         uncertain_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestRemoteCreateUncertain &&
         receipted_pull_request.intent.state ==
         @workflow.PullRequestIntentState::PullRequestReceipted &&
         receipted_pull_request.intent.cancellation_state ==
         @workflow.PullRequestCancellationState::PullRequestCancellationPlanned &&
-        [
-          abandoned_pull_request, abandoned_authorized_pull_request, abandoned_issued_pull_request,
-        ].all(@workflow.goal_pull_request_cancellation_disposition_is_known) &&
-        ![uncertain_pull_request, receipted_pull_request].any(
+        [abandoned_pull_request, abandoned_authorized_pull_request].all(
           @workflow.goal_pull_request_cancellation_disposition_is_known,
-        )
+        ) &&
+        ![
+          uncertain_issued_pull_request, uncertain_pull_request, receipted_pull_request,
+        ].any(@workflow.goal_pull_request_cancellation_disposition_is_known)
       if !pr_rows_hold {
         return Err(audit_fixture_error("pull-request ordering failed"))
       }
