@@ -29,13 +29,118 @@ async test "native Conductor task dispatch uses typed Beads commands" {
   assert_true(response.is_ok())
   assert_eq(commands.length(), 3)
   assert_eq(commands[0].program, "bd")
+  @debug.assert_eq(commands[0].args, [
+    "show", "--id=choir-task", "--json", "--readonly",
+  ])
   @debug.assert_eq(commands[1].args, [
-    "create", "Implement the seam", "--id", "choir-task", "--force", "--type", "task",
-    "--priority", "2", "--json", "--notes", "Exact context",
+    "create", "--title=Implement the seam", "--id=choir-task", "--force", "--type",
+    "task", "--priority", "2", "--json", "--notes", "Exact context",
   ])
   @debug.assert_eq(commands[2].args, [
-    "update", "choir-task", "--status", "in_progress", "--json",
+    "update", "--status", "in_progress", "--json", "--", "choir-task",
   ])
+}
+
+///|
+async test "native Conductor preserves a flag-looking title as create data" {
+  let commands : Array[@process_host.Command] = []
+  let response = dispatch_native_conductor_request(
+    "/repo",
+    {
+      req_method: @types.WireMethod::WireToolsCall,
+      name: "task_create",
+      args: @types.RequestArgs::from_values({
+        "id": "g3n.3.2".to_json(),
+        "title": "--db=/tmp/other".to_json(),
+      }),
+    },
+    capture=command => {
+      commands.push(command)
+      match command.args[0] {
+        "show" => (1, "not found")
+        "create" =>
+          (
+            0, "{\"id\":\"g3n.3.2\",\"title\":\"--db=/tmp/other\",\"status\":\"open\"}",
+          )
+        other => (1, "unexpected " + other)
+      }
+    },
+  )
+  assert_true(response.is_ok())
+  @debug.assert_eq(commands.map(fn(command) { command.args }), [
+    ["show", "--id=g3n.3.2", "--json", "--readonly"],
+    [
+      "create", "--title=--db=/tmp/other", "--id=g3n.3.2", "--force", "--type", "task",
+      "--priority", "2", "--json",
+    ],
+  ])
+}
+
+///|
+async test "native Conductor create preflight safely returns an existing Bead" {
+  let commands : Array[@process_host.Command] = []
+  let response = dispatch_native_conductor_request(
+    "/repo",
+    {
+      req_method: @types.WireMethod::WireToolsCall,
+      name: "task_create",
+      args: @types.RequestArgs::from_values({
+        "id": "choir-existing".to_json(),
+        "title": "Existing".to_json(),
+      }),
+    },
+    capture=command => {
+      commands.push(command)
+      (
+        0, "{\"id\":\"choir-existing\",\"title\":\"Existing\",\"status\":\"open\"}",
+      )
+    },
+  )
+  assert_true(response.is_ok())
+  assert_eq(response.ok_payload().unwrap().get_bool("created"), Some(false))
+  @debug.assert_eq(commands.map(fn(command) { command.args }), [
+    ["show", "--id=choir-existing", "--json", "--readonly"],
+  ])
+}
+
+///|
+async test "native Conductor rejects unsafe direct task ids before capture" {
+  let unsafe_ids = [
+    "--watch",
+    "--db=/tmp/other",
+    "-C",
+    "",
+    " choir-a",
+    "choir-a\u{00}next",
+    "a".repeat(161),
+  ]
+  for tool in ["task_create", "task_get", "task_update"] {
+    for id in unsafe_ids {
+      let commands : Array[@process_host.Command] = []
+      let values : Map[String, Json] = {
+        "id": id.to_json(),
+        "title": "Title".to_json(),
+        "notes": "Note".to_json(),
+      }
+      let response = dispatch_native_conductor_request(
+        "/repo",
+        {
+          req_method: @types.WireMethod::WireToolsCall,
+          name: tool,
+          args: @types.RequestArgs::from_values(values),
+        },
+        capture=command => {
+          commands.push(command)
+          (0, "[]")
+        },
+      )
+      assert_eq(
+        response.error_code(),
+        Some(@types.WireErrorCode::WireValidationError),
+      )
+      assert_eq(commands.length(), 0)
+    }
+  }
 }
 
 ///|
@@ -91,7 +196,7 @@ async test "native Conductor maps completed tasks to closed Beads" {
   })
   assert_true(response.is_ok())
   @debug.assert_eq(commands[0].args, [
-    "update", "choir-task", "--status", "closed", "--json",
+    "update", "--status", "closed", "--json", "--", "choir-task",
   ])
 }
 
@@ -117,9 +222,31 @@ async test "native Conductor can normalize a contradictory Bead contract" {
   })
   assert_true(response.is_ok())
   @debug.assert_eq(commands[0].args, [
-    "update", "choir-contradictory", "--title", "Enforce import boundaries", "--description",
-    "Reject only newly introduced forbidden imports.", "--acceptance", "Existing imports remain valid; new imports fail.",
-    "--notes", "Normalized an acceptance rule that rejected its own baseline.", "--json",
+    "update", "--title", "Enforce import boundaries", "--description", "Reject only newly introduced forbidden imports.",
+    "--acceptance", "Existing imports remain valid; new imports fail.", "--notes",
+    "Normalized an acceptance rule that rejected its own baseline.", "--json", "--",
+    "choir-contradictory",
+  ])
+}
+
+///|
+async test "native Conductor no-op update delegates to option-safe get" {
+  let commands : Array[@process_host.Command] = []
+  let response = dispatch_native_conductor_request(
+    "/repo",
+    {
+      req_method: @types.WireMethod::WireToolsCall,
+      name: "task_update",
+      args: @types.RequestArgs::from_values({ "id": "g3n.3.2".to_json() }),
+    },
+    capture=command => {
+      commands.push(command)
+      (0, "{\"id\":\"g3n.3.2\",\"title\":\"Existing\",\"status\":\"open\"}")
+    },
+  )
+  assert_true(response.is_ok())
+  @debug.assert_eq(commands.map(fn(command) { command.args }), [
+    ["show", "--id=g3n.3.2", "--json", "--readonly"],
   ])
 }
 
@@ -155,7 +282,7 @@ async test "native Conductor exposes blocking Beads dependencies" {
   })
   assert_true(response.is_ok())
   @debug.assert_eq(commands[0].args, [
-    "show", "choir-parent", "--json", "--readonly",
+    "show", "--id=choir-parent", "--json", "--readonly",
   ])
   let task = response
     .ok_payload()
@@ -443,10 +570,39 @@ async test "a rejected batch item writes nothing at all" {
   let written = commands.map(fn(command) { command.args })
   @debug.assert_eq(written, [
     ["list", "--json", "--readonly", "--flat", "--limit", "0", "--all"],
-    ["create", "First", "--id", "probe-b", "--json"],
-    ["create", "Second", "--id", "probe-c", "--json"],
-    ["dep", "add", "probe-c", "probe-b"],
+    ["create", "--title=First", "--id=probe-b", "--json"],
+    ["create", "--title=Second", "--id=probe-c", "--json"],
+    ["dep", "add", "--", "probe-c", "probe-b"],
   ])
+}
+
+///|
+async test "unsafe batch identifiers are rejected before the graph read" {
+  for
+    items in [
+      "[{\"id\":\"--watch\",\"intent\":\"create\",\"title\":\"Subject\"}]", "[{\"id\":\"probe-a\",\"intent\":\"create\",\"title\":\"Parent\",\"parent\":\"-C\"}]",
+      "[{\"id\":\"probe-a\",\"intent\":\"create\",\"title\":\"Blocker\",\"blocked_by\":[\"--db=/tmp/other\"]}]",
+    ] {
+    let commands : Array[@process_host.Command] = []
+    let parsed = @json.parse(items) catch { _ => fail("invalid test JSON") }
+    let response = dispatch_native_conductor_request(
+      "/repo",
+      {
+        req_method: @types.WireMethod::WireToolsCall,
+        name: "task_batch",
+        args: @types.RequestArgs::from_values({ "items": parsed }),
+      },
+      capture=command => {
+        commands.push(command)
+        (0, "[]")
+      },
+    )
+    assert_eq(
+      response.error_code(),
+      Some(@types.WireErrorCode::WireValidationError),
+    )
+    assert_eq(commands.length(), 0)
+  }
 }
 
 ///|
@@ -475,7 +631,7 @@ async test "WorkOrder batch delivery rereads exact applied Bead revisions" {
     commands.push(command)
     match command.args {
       ["list", ..] => (0, graph.val)
-      ["create", "Planned next", ..] => {
+      ["create", "--title=Planned next", ..] => {
         graph.val = (
           #|[{"id":"planned-next","title":"Planned next","description":"Deliver the next bounded change.","acceptance_criteria":"The focused test passes.","status":"open","priority":1,"issue_type":"task","labels":["planning"],"updated_at":"2026-07-28T00:00:00Z"}]
         )
@@ -491,6 +647,35 @@ async test "WorkOrder batch delivery rereads exact applied Bead revisions" {
     commands.filter(fn(command) { command.args[0] == "list" }).length(),
     2,
   )
+}
+
+///|
+async test "WorkOrder batch rejects unsafe identifiers before graph capture" {
+  let commands : Array[@process_host.Command] = []
+  let proposal : @command.BeadBatchProposal = {
+    mutations: [
+      {
+        id: "--watch",
+        intent: @command.BeadMutationIntent::BeadCreateIntent,
+        title: Some("Unsafe"),
+        description: None,
+        acceptance_criteria: None,
+        notes: None,
+        priority: None,
+        issue_type: None,
+        labels: None,
+        blocked_by: [],
+        parent: None,
+        expected_updated_at: None,
+      },
+    ],
+  }
+  let result = @beads_host.apply_native_bead_batch("/repo", proposal, command => {
+    commands.push(command)
+    (0, "[]")
+  })
+  assert_true(result is Err(_))
+  assert_eq(commands.length(), 0)
 }
 
 ///|
