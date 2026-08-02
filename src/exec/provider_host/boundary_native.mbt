@@ -51,28 +51,50 @@ fn native_provider_bound_socket_path() -> String {
 }
 
 ///|
-/// Host directories credential-bearing enough that even the provider's own
-/// HOME must not expose them to a Take-influenced provider turn.
-let native_provider_masked_home_entries : Array[String] = [
-  ".ssh", ".gnupg", ".aws", ".kube", ".config/gh",
-]
+fn native_provider_bound_executable_path() -> String {
+  "/choir-provider-cli"
+}
+
+///|
+priv enum NativeProviderCredentialTarget {
+  NativeClaudeCredential
+  NativeCodexCredential
+}
+
+///|
+priv struct NativeProviderCredentialBind {
+  source : String
+  target : NativeProviderCredentialTarget
+}
+
+///|
+fn native_provider_credential_path(
+  sterile_root : String,
+  target : NativeProviderCredentialTarget,
+) -> String {
+  match target {
+    NativeClaudeCredential =>
+      sterile_root + "/provider-home/.claude/.credentials.json"
+    NativeCodexCredential => sterile_root + "/codex-home/auth.json"
+  }
+}
 
 ///|
 /// Minimal read allowlist replacing the old whole-host `--ro-bind / /`:
-/// toolchains and libraries, /etc for DNS and TLS roots, and the provider's
-/// HOME for CLI installs and subscription state, with common credential
-/// directories masked. Everything else on the host — other repositories,
-/// /var, /mnt, /root, sibling users — is invisible. A fresh minimal /dev
-/// replaces the old whole-device bind. The network stays shared because the
-/// provider CLI must reach its model API.
+/// toolchains and libraries plus /etc for DNS and TLS roots. The provider
+/// executable and subscription credential are bound individually; the real
+/// HOME is never mounted. Everything else on the host — credentials, other
+/// repositories, /var, /mnt, /root, and sibling users — is invisible. A fresh
+/// minimal /dev replaces the old whole-device bind. The network stays shared
+/// because the provider CLI must reach its model API.
 fn native_provider_host_boundary_args(
   sterile_root : String,
   working_directory : String,
   boxlite_owner_socket_root : String?,
   executable : String,
   executable_args : Array[String],
-  provider_home? : String? = @sys.getenv("HOME"),
-  mask_entry_exists? : (String) -> Bool = @sys.path_entry_exists,
+  provider_executable? : String? = None,
+  provider_credential? : NativeProviderCredentialBind? = None,
   provider_tool? : String? = None,
   provider_socket? : String? = None,
 ) -> Array[String] {
@@ -90,22 +112,13 @@ fn native_provider_host_boundary_args(
     args.push(path)
     args.push(path)
   }
-  match provider_home {
-    Some(home) if home.has_prefix("/") => {
+  match provider_executable {
+    Some(source) => {
       args.push("--ro-bind")
-      args.push(home)
-      args.push(home)
-      // Masking requires an existing mount point beneath the read-only HOME
-      // bind, so only present directories are covered by a tmpfs.
-      for entry in native_provider_masked_home_entries {
-        let masked = home + "/" + entry
-        if mask_entry_exists(masked) {
-          args.push("--tmpfs")
-          args.push(masked)
-        }
-      }
+      args.push(source)
+      args.push(native_provider_bound_executable_path())
     }
-    _ => ()
+    None => ()
   }
   match provider_tool {
     Some(source) => {
@@ -126,18 +139,28 @@ fn native_provider_host_boundary_args(
   for
     tail in [
       "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind", sterile_root,
-      sterile_root, "--chdir", working_directory, "--", executable,
+      sterile_root,
     ] {
     args.push(tail)
   }
-  match boxlite_owner_socket_root {
-    Some(source) => {
-      let chdir = args.search("--chdir").unwrap()
-      args.insert(chdir, "--ro-bind")
-      args.insert(chdir + 1, source)
-      args.insert(chdir + 2, native_provider_owner_socket_root())
+  match provider_credential {
+    Some(bind) => {
+      args.push("--ro-bind")
+      args.push(bind.source)
+      args.push(native_provider_credential_path(sterile_root, bind.target))
     }
     None => ()
+  }
+  match boxlite_owner_socket_root {
+    Some(source) => {
+      args.push("--ro-bind")
+      args.push(source)
+      args.push(native_provider_owner_socket_root())
+    }
+    None => ()
+  }
+  for tail in ["--chdir", working_directory, "--", executable] {
+    args.push(tail)
   }
   for argument in executable_args {
     args.push(argument)
@@ -146,15 +169,18 @@ fn native_provider_host_boundary_args(
 }
 
 ///|
-test "provider boundary allowlists reads and masks credential directories" {
+test "provider boundary binds only the exact provider executable and credential" {
   let args = native_provider_host_boundary_args(
     "/tmp/choir-boundary-test",
     "/tmp/choir-boundary-test",
     None,
-    "/usr/bin/true",
+    native_provider_bound_executable_path(),
     [],
-    provider_home=Some("/home/provider"),
-    mask_entry_exists=fn(path) { path == "/home/provider/.ssh" },
+    provider_executable=Some("/home/provider/bin/provider"),
+    provider_credential=Some({
+      source: "/home/provider/.provider/auth.json",
+      target: NativeCodexCredential,
+    }),
   )
   assert_true(args.contains("/proc"))
   // The whole-host bind and whole-device bind are gone.
@@ -167,20 +193,19 @@ test "provider boundary allowlists reads and masks credential directories" {
   }
   assert_false(args.contains("--dev-bind"))
   assert_true(args.contains("--dev"))
-  // HOME is readable but existing credential directories are masked.
-  assert_true(args.contains("/home/provider"))
-  let mask = args.search("/home/provider/.ssh").unwrap()
-  assert_eq(args[mask - 1], "--tmpfs")
-  assert_false(args.contains("/home/provider/.gnupg"))
-  // No HOME bind without an absolute provider home.
+  assert_true(args.contains("/home/provider/bin/provider"))
+  assert_true(args.contains(native_provider_bound_executable_path()))
+  assert_true(args.contains("/home/provider/.provider/auth.json"))
+  assert_true(args.contains("/tmp/choir-boundary-test/codex-home/auth.json"))
+  assert_false(args.contains("/home/provider/.git-credentials"))
+  assert_false(args.contains("/home/provider/sibling-repository"))
+  // Without explicit provider binds the boundary exposes no HOME path.
   let homeless = native_provider_host_boundary_args(
     "/tmp/choir-boundary-test",
     "/tmp/choir-boundary-test",
     None,
     "/usr/bin/true",
     [],
-    provider_home=None,
-    mask_entry_exists=fn(_) { false },
   )
   assert_true(homeless.contains("--tmpfs"))
   assert_true(homeless.contains("/usr"))
@@ -191,8 +216,6 @@ test "provider boundary allowlists reads and masks credential directories" {
     None,
     "/usr/bin/true",
     [],
-    provider_home=None,
-    mask_entry_exists=fn(_) { false },
     provider_tool=Some("/opt/choir/bin/choir"),
     provider_socket=Some("/repo/.choir/run/server.sock"),
   )
@@ -217,6 +240,99 @@ fn validate_native_provider_host_boundary() -> Result[Unit, @types.ChoirError] {
 }
 
 ///|
+fn canonical_native_provider_executable(
+  discovered : String,
+  label : String,
+  canonicalize? : (String) -> String? = @sys.realpath_native,
+  executable? : (String) -> Bool = @sys.path_executable,
+) -> Result[String, @types.ChoirError] {
+  let canonical = match canonicalize(discovered) {
+    Some(value) => value
+    None =>
+      return Err(
+        @types.ChoirError::policy_blocked(
+          label + " provider executable is not canonical",
+        ),
+      )
+  }
+  if canonical == "/" || !executable(canonical) {
+    Err(
+      @types.ChoirError::policy_blocked(
+        label + " provider executable is unavailable",
+      ),
+    )
+  } else {
+    Ok(canonical)
+  }
+}
+
+///|
+fn validate_native_provider_credential_source(
+  source : String,
+  label : String,
+  canonicalize? : (String) -> String? = @sys.realpath_native,
+  file_mode? : (String) -> Int = @sys.file_mode,
+  file_size? : (String) -> Int = @sys.file_size,
+) -> Result[String, @types.ChoirError] {
+  let mode = file_mode(source)
+  let size = file_size(source)
+  if canonicalize(source) != Some(source) ||
+    (mode != 0o600 && mode != 0o640) ||
+    size <= 0 ||
+    size > 1048576 {
+    Err(
+      @types.ChoirError::policy_blocked(
+        label + " subscription credential is not a canonical private file",
+      ),
+    )
+  } else {
+    Ok(source)
+  }
+}
+
+///|
+test "provider exact-bind sources must be canonical private files" {
+  assert_eq(
+    canonical_native_provider_executable(
+      "/link/provider",
+      "test",
+      canonicalize=fn(_) { Some("/real/provider") },
+      executable=fn(path) { path == "/real/provider" },
+    ).unwrap(),
+    "/real/provider",
+  )
+  assert_true(
+    canonical_native_provider_executable(
+      "/link/provider",
+      "test",
+      canonicalize=fn(_) { None },
+      executable=fn(_) { true },
+    )
+    is Err(_),
+  )
+  assert_eq(
+    validate_native_provider_credential_source(
+      "/provider/auth.json",
+      "test",
+      canonicalize=fn(path) { Some(path) },
+      file_mode=fn(_) { 0o640 },
+      file_size=fn(_) { 64 },
+    ).unwrap(),
+    "/provider/auth.json",
+  )
+  assert_true(
+    validate_native_provider_credential_source(
+      "/provider/auth.json",
+      "test",
+      canonicalize=fn(path) { Some(path) },
+      file_mode=fn(_) { 0o644 },
+      file_size=fn(_) { 64 },
+    )
+    is Err(_),
+  )
+}
+
+///|
 pub async fn capture_native_provider_host_boundary(
   root : String,
   surface : @harness.ProviderSurface,
@@ -238,8 +354,16 @@ pub async fn capture_native_provider_host_boundary(
     Err(error) => return Err(error)
   }
   let outside = root + "-outside"
+  let fake_home = root + "-home"
+  let home_canary = fake_home + "/sibling-repository/canary"
   let inside = root + "/inside"
-  if @sys.path_entry_exists(outside) || !@sys.create_dir_all(root) {
+  if @sys.path_entry_exists(outside) ||
+    @sys.path_entry_exists(fake_home) ||
+    !@sys.create_dir_all(root) ||
+    !@sys.create_dir_all(fake_home + "/sibling-repository") ||
+    !@sys.write_file_sync(home_canary, "host-home-canary") {
+    ignore(@sys.rm_rf(root))
+    ignore(@sys.rm_rf(fake_home))
     return Err(
       @types.ChoirError::workspace_error(
         "provider host-boundary probe fixtures are unavailable",
@@ -252,6 +376,7 @@ pub async fn capture_native_provider_host_boundary(
   ) catch {
     _ => {
       ignore(@sys.rm_rf(root))
+      ignore(@sys.rm_rf(fake_home))
       return Err(
         @types.ChoirError::transport_error(
           "provider host-boundary probe sink failed",
@@ -259,12 +384,10 @@ pub async fn capture_native_provider_host_boundary(
       )
     }
   }
-  let run = async fn(path : String) -> Int {
+  let run = async fn(program : String, arguments : Array[String]) -> Int {
     @process.run(
       "/usr/bin/bwrap",
-      native_provider_host_boundary_args(root, root, None, "/usr/bin/touch", [
-        path,
-      ]),
+      native_provider_host_boundary_args(root, root, None, program, arguments),
       extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
       inherit_env=false,
       stdout=sink,
@@ -274,8 +397,9 @@ pub async fn capture_native_provider_host_boundary(
       _ => -1
     }
   }
-  let inside_code = run(inside)
-  let outside_code = run(outside)
+  let inside_code = run("/usr/bin/touch", [inside])
+  let outside_code = run("/usr/bin/touch", [outside])
+  let home_read_code = run("/usr/bin/test", ["-r", home_canary])
   let inside_created = @sys.path_exists(inside)
   let outside_absent = !@sys.path_entry_exists(outside)
   let evidence = @storage.artifact_digest(
@@ -287,17 +411,20 @@ pub async fn capture_native_provider_host_boundary(
       "\u{00}" +
       outside_code.to_string() +
       "\u{00}" +
+      home_read_code.to_string() +
+      "\u{00}" +
       inside_created.to_string() +
       "\u{00}" +
       outside_absent.to_string(),
     ),
   )
   ignore(@sys.rm_rf(root))
+  ignore(@sys.rm_rf(fake_home))
   ignore(@sys.delete_file_sync(outside))
   // The private /tmp may accept the outside write; only host persistence is
   // forbidden. Requiring the sandboxed touch itself to fail confuses an
   // isolated writable tmpfs with host mutation authority.
-  if inside_code == 0 && inside_created && outside_absent {
+  if inside_code == 0 && inside_created && outside_absent && home_read_code != 0 {
     Ok(evidence)
   } else {
     Err(
@@ -309,14 +436,12 @@ pub async fn capture_native_provider_host_boundary(
 }
 
 ///|
-
-///|
 let native_boxlite_execution_token_variable : String = "CHOIR_BOXLITE_EXECUTION_TOKEN"
 
 ///|
 pub fn claude_probe_executable() -> Result[String, @types.ChoirError] {
   match @process_host.resolve_executable_in_path("claude") {
-    Some(path) => Ok(path)
+    Some(path) => canonical_native_provider_executable(path, "Claude")
     None =>
       Err(
         @types.ChoirError::transport_error(

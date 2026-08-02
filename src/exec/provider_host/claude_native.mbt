@@ -183,7 +183,7 @@ fn native_claude_driver_args(
   [
     "-p",
     "--input-format",
-    "text",
+    "stream-json",
     "--setting-sources",
     "",
     "--tools",
@@ -208,13 +208,178 @@ fn native_claude_driver_args(
 }
 
 ///|
+fn native_claude_readiness_launcher_source() -> String {
+  (
+    #|"use strict";
+    #|const { spawn } = require("node:child_process");
+    #|const serverName = process.argv[2];
+    #|const providerArgs = process.argv.slice(3);
+    #|let instruction = "";
+    #|let child = null;
+    #|let stdoutBuffer = "";
+    #|let requestSequence = 0;
+    #|let state = "starting";
+    #|let failed = false;
+    #|let startupTimer = null;
+    #|const pending = new Map();
+    #|
+    #|function failClosed() {
+    #|  if (failed) return;
+    #|  failed = true;
+    #|  state = "failed";
+    #|  process.exitCode = 86;
+    #|  if (startupTimer !== null) clearTimeout(startupTimer);
+    #|  if (child !== null && child.exitCode === null) child.kill("SIGTERM");
+    #|}
+    #|
+    #|function sendControl(subtype) {
+    #|  if (failed || child === null || child.stdin.destroyed) return;
+    #|  const requestId = "choir-" + (++requestSequence);
+    #|  pending.set(requestId, subtype);
+    #|  const request = {
+    #|    type: "control_request",
+    #|    request_id: requestId,
+    #|    request: { subtype }
+    #|  };
+    #|  child.stdin.write(JSON.stringify(request) + "\n");
+    #|}
+    #|
+    #|function sendUserMessage() {
+    #|  if (failed || child === null || state !== "waiting") return;
+    #|  state = "running";
+    #|  if (startupTimer !== null) clearTimeout(startupTimer);
+    #|  const message = {
+    #|    type: "user",
+    #|    session_id: "",
+    #|    message: { role: "user", content: [{ type: "text", text: instruction }] },
+    #|    parent_tool_use_id: null
+    #|  };
+    #|  child.stdin.end(JSON.stringify(message) + "\n");
+    #|}
+    #|
+    #|function handleControlResponse(message) {
+    #|  const response = message && message.response;
+    #|  const requestId = response && response.request_id;
+    #|  const subtype = pending.get(requestId);
+    #|  if (subtype === undefined) return false;
+    #|  pending.delete(requestId);
+    #|  if (!response || response.subtype !== "success") {
+    #|    failClosed();
+    #|    return true;
+    #|  }
+    #|  if (subtype === "initialize") {
+    #|    state = "waiting";
+    #|    sendControl("mcp_status");
+    #|    return true;
+    #|  }
+    #|  const body = response.response;
+    #|  const servers = body && body.mcpServers;
+    #|  if (!Array.isArray(servers)) {
+    #|    failClosed();
+    #|    return true;
+    #|  }
+    #|  const server = servers.find((candidate) => candidate && candidate.name === serverName);
+    #|  if (!server) {
+    #|    failClosed();
+    #|  } else if (server.status === "connected") {
+    #|    sendUserMessage();
+    #|  } else if (server.status === "pending") {
+    #|    setTimeout(() => sendControl("mcp_status"), 25);
+    #|  } else {
+    #|    failClosed();
+    #|  }
+    #|  return true;
+    #|}
+    #|
+    #|function handleProviderLine(line) {
+    #|  if (line.length === 0) return;
+    #|  let message;
+    #|  try {
+    #|    message = JSON.parse(line);
+    #|  } catch (_) {
+    #|    if (state === "running") process.stdout.write(line + "\n");
+    #|    else failClosed();
+    #|    return;
+    #|  }
+    #|  if (message.type === "control_response" && handleControlResponse(message)) return;
+    #|  if (state !== "running") {
+    #|    if (message.type !== "auth_status" && message.type !== "keep_alive") failClosed();
+    #|    return;
+    #|  }
+    #|  process.stdout.write(line + "\n");
+    #|}
+    #|
+    #|function startProvider() {
+    #|  child = spawn("/choir-provider-cli", providerArgs, {
+    #|    cwd: process.cwd(),
+    #|    env: process.env,
+    #|    stdio: ["pipe", "pipe", "pipe"]
+    #|  });
+    #|  child.stdin.on("error", failClosed);
+    #|  child.stdout.setEncoding("utf8");
+    #|  child.stdout.on("data", (chunk) => {
+    #|    stdoutBuffer += chunk;
+    #|    let newline;
+    #|    while ((newline = stdoutBuffer.indexOf("\n")) >= 0) {
+    #|      const line = stdoutBuffer.slice(0, newline);
+    #|      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+    #|      handleProviderLine(line);
+    #|    }
+    #|  });
+    #|  child.stdout.on("error", failClosed);
+    #|  child.stderr.resume();
+    #|  child.on("error", failClosed);
+    #|  child.on("close", (code) => {
+    #|    if (stdoutBuffer.length !== 0) handleProviderLine(stdoutBuffer);
+    #|    if (state !== "running") failed = true;
+    #|    process.exitCode = failed ? 86 : (code === null ? 1 : code);
+    #|  });
+    #|  startupTimer = setTimeout(failClosed, 30000);
+    #|  sendControl("initialize");
+    #|}
+    #|
+    #|process.stdin.setEncoding("utf8");
+    #|process.stdin.on("data", (chunk) => {
+    #|  instruction += chunk;
+    #|  if (Buffer.byteLength(instruction, "utf8") > 16384) failClosed();
+    #|});
+    #|process.stdin.on("error", failClosed);
+    #|process.stdin.on("end", () => {
+    #|  if (failed || instruction.length === 0 || !serverName) {
+    #|    process.exitCode = 86;
+    #|    return;
+    #|  }
+    #|  startProvider();
+    #|});
+  )
+}
+
+///|
+fn prepare_native_claude_readiness_launcher(
+  sterile_root : String,
+) -> Result[String, @types.ChoirError] {
+  let launcher_path = sterile_root + "/launcher/claude-readiness.cjs"
+  if !@sys.write_file_in_child_dir_no_follow(
+      sterile_root,
+      "launcher",
+      "claude-readiness.cjs",
+      native_claude_readiness_launcher_source(),
+    ) ||
+    !@sys.chmod_mode(launcher_path, 0o400) {
+    return Err(
+      native_claude_driver_error("Claude readiness gate is unavailable"),
+    )
+  }
+  Ok(launcher_path)
+}
+
+///|
 fn native_claude_environment(
-  provider_home : String,
   sterile_root : String,
   execution_token : String,
 ) -> Map[String, String] {
   let environment : Map[String, String] = {
-    "HOME": provider_home,
+    "HOME": sterile_root + "/provider-home",
     "TMPDIR": sterile_root + "/tmp",
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "COLUMNS": "200",
@@ -228,6 +393,30 @@ fn native_claude_environment(
     environment[native_boxlite_execution_token_variable] = execution_token
   }
   environment
+}
+
+///|
+fn prepare_native_claude_provider_home(
+  sterile_root : String,
+  provider_home : String,
+) -> Result[String, @types.ChoirError] {
+  for
+    path in [
+      sterile_root,
+      sterile_root + "/tmp",
+      sterile_root + "/provider-home",
+      sterile_root + "/provider-home/.claude",
+    ] {
+    if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
+      return Err(
+        native_claude_driver_error("sterile provider home is unavailable"),
+      )
+    }
+  }
+  validate_native_provider_credential_source(
+    provider_home + "/.claude/.credentials.json",
+    "Claude",
+  )
 }
 
 ///|
@@ -279,7 +468,6 @@ fn validate_native_claude_mcp_preflight_output(
 ///|
 async fn preflight_native_claude_mcp(
   config : NativeClaudeDriverConfig,
-  provider_home : String,
 ) -> Result[Unit, @types.ChoirError] {
   let prefix = "mcp__" + config.mcp_server_name + "__"
   let expected_tools : Array[String] = []
@@ -332,7 +520,6 @@ async fn preflight_native_claude_mcp(
       "/usr/bin/bwrap",
       bounded_args,
       extra_env=native_claude_environment(
-        provider_home,
         config.sterile_root,
         config.execution_token,
       ),
@@ -486,22 +673,16 @@ pub fn reconcile_native_claude_process_witness(
 
 ///|
 test "native Claude Take environment is an exact allowlist" {
-  let environment = native_claude_environment(
-    "/provider-home", "/sterile-take", "",
-  )
+  let environment = native_claude_environment("/sterile-take", "")
   assert_eq(environment.length(), 5)
-  assert_eq(environment["HOME"], "/provider-home")
+  assert_eq(environment["HOME"], "/sterile-take/provider-home")
   assert_eq(environment["TMPDIR"], "/sterile-take/tmp")
   assert_false(environment.contains("ANTHROPIC_API_KEY"))
   assert_false(environment.contains("CLAUDE_CODE_OAUTH_TOKEN"))
   assert_false(environment.contains("CHOIR_CONDUCTOR_TOKEN"))
   // The BoxLite capability travels here, where /proc exposure is owner-only,
   // rather than on an argv every process can read.
-  let capable = native_claude_environment(
-    "/provider-home",
-    "/sterile-take",
-    "f".repeat(64),
-  )
+  let capable = native_claude_environment("/sterile-take", "f".repeat(64))
   assert_eq(capable["CHOIR_BOXLITE_EXECUTION_TOKEN"], "f".repeat(64))
   assert_eq(capable.length(), 6)
 }
@@ -593,11 +774,18 @@ pub async fn run_native_claude_take(
     Ok(_) => ()
     Err(error) => return Err(error)
   }
-  if !@sys.create_dir_all(config.sterile_root + "/tmp") {
-    return Err(native_claude_driver_error("sterile root is unavailable"))
+  let credential_source = match
+    prepare_native_claude_provider_home(config.sterile_root, provider_home) {
+    Ok(value) => value
+    Err(error) => return Err(error)
   }
-  match preflight_native_claude_mcp(config, provider_home) {
+  match preflight_native_claude_mcp(config) {
     Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let readiness_launcher = match
+    prepare_native_claude_readiness_launcher(config.sterile_root) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   let (stdin_read, stdin_write) = @process.write_to_process() catch {
@@ -614,16 +802,19 @@ pub async fn run_native_claude_take(
   stdin_write.close()
   let started_at = now()
   let args = native_claude_driver_args(config, role)
+  let provider_program = "/usr/bin/node"
+  let provider_args = [readiness_launcher, config.mcp_server_name, ..args]
   let traced_program = match config.connect_trace_path {
     Some(_) => "/usr/bin/strace"
-    None => claude
+    None => provider_program
   }
   let traced_args : Array[String] = match config.connect_trace_path {
     Some(path) =>
       [
-        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, claude, ..args,
+        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, provider_program,
+        ..provider_args,
       ]
-    None => args
+    None => provider_args
   }
   let bounded_args = native_provider_host_boundary_args(
     config.sterile_root,
@@ -631,6 +822,11 @@ pub async fn run_native_claude_take(
     config.boxlite_owner_socket_root,
     traced_program,
     traced_args,
+    provider_executable=Some(claude),
+    provider_credential=Some({
+      source: credential_source,
+      target: NativeClaudeCredential,
+    }),
   )
   @process_host.abort_if_hermetic_test_exec(
     @process_host.command_to_shell_string({
@@ -643,11 +839,7 @@ pub async fn run_native_claude_take(
     @process_host.capture_bounded_process(
       "/usr/bin/bwrap",
       bounded_args,
-      native_claude_environment(
-        provider_home,
-        config.sterile_root,
-        config.execution_token,
-      ),
+      native_claude_environment(config.sterile_root, config.execution_token),
       stdin_read,
       config.sterile_root,
       config.timeout_ms,
@@ -718,6 +910,7 @@ test "native Claude driver argv removes host tools and ambient configuration" {
     @harness.ClaudeTakeRole::ClaudeImplementationTake,
   )
   assert_true(args.contains("--setting-sources"))
+  assert_true(args.contains("stream-json"))
   assert_true(args.contains("--tools"))
   assert_true(args.contains("--strict-mcp-config"))
   assert_true(args.contains("--no-session-persistence"))
@@ -725,4 +918,14 @@ test "native Claude driver argv removes host tools and ambient configuration" {
   assert_true(args.contains("mcp__choir_sandbox__execute"))
   assert_false(args.contains("--bare"))
   assert_false(args.contains("--dangerously-skip-permissions"))
+}
+
+///|
+test "native Claude readiness launcher gates the user turn on MCP status" {
+  let source = native_claude_readiness_launcher_source()
+  assert_true(source.contains("mcp_status"))
+  assert_true(source.contains("server.status === \"connected\""))
+  assert_true(source.contains("sendUserMessage()"))
+  assert_true(source.contains("/choir-provider-cli"))
+  assert_false(source.contains(".credentials.json"))
 }
