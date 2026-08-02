@@ -96,6 +96,37 @@ pub fn plan_artifact_sweep(
 }
 
 ///|
+/// Revalidate an already-authorized candidate set against the latest durable
+/// ledger. An absent candidate has no affirmative retention evidence and is
+/// therefore retained rather than inferred collectable.
+pub fn revalidate_artifact_collection(
+  ledger : Array[ArtifactRetentionEntry],
+  candidates : Array[@control.Digest],
+  now : Int64,
+  goal_terminal : (@control.GoalId) -> Bool,
+) -> ArtifactSweepPlan {
+  let mut observed : Array[ArtifactRetentionEntry] = []
+  for entry in ledger {
+    if !candidates.contains(entry.digest) {
+      continue
+    }
+    if entry.retentions.length() == 0 &&
+      !observed.any(fn(item) { item.digest == entry.digest }) {
+      observed.push(entry)
+    }
+    for retention in entry.retentions {
+      observed = record_artifact_retention(observed, entry.digest, retention)
+    }
+  }
+  for candidate in candidates {
+    if !observed.any(fn(entry) { entry.digest == candidate }) {
+      observed.push({ digest: candidate, retentions: [] })
+    }
+  }
+  plan_artifact_sweep(observed, now, goal_terminal)
+}
+
+///|
 fn artifact_retention_text(retention : ArtifactRetention) -> String {
   match retention {
     ArtifactPermanent => "permanent"

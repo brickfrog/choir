@@ -666,6 +666,9 @@ test "local artifact store atomically adopts immutable content" {
     Ok(_) => fail("unexpected repeated adoption receipt")
     Err(error) => fail(error.message())
   }
+  let ledger = read_artifact_retention_ledger(store).unwrap()
+  assert_eq(ledger.length(), 1)
+  assert_eq(ledger[0].retentions.length(), 1)
   ignore(@sys.rm_rf(root))
 }
 
@@ -946,10 +949,12 @@ test "an artifact sweep collects only content whose every term expired" {
     collect_artifacts(
       store,
       @storage.plan_artifact_sweep(
-        read_artifact_retention_ledger(store),
+        read_artifact_retention_ledger(store).unwrap(),
         now,
         goal_terminal,
       ).collect,
+      now,
+      goal_terminal,
     )
   }
   let adopt = fn(content : String, retention : @storage.ArtifactRetention) {
@@ -1029,9 +1034,15 @@ test "a collection counts the content it removed, not the content it was named" 
     is Ok(_) else {
     fail("adopt collectable content")
   }
-  assert_eq(collect_artifacts(store, [digest]).unwrap(), 1)
+  assert_eq(
+    collect_artifacts(store, [digest], 1_000L, fn(_) { true }).unwrap(),
+    1,
+  )
   assert_false(artifact_store_contains(store, digest).unwrap())
   // The rerun: same digests, nothing left to release.
-  assert_eq(collect_artifacts(store, [digest]).unwrap(), 0)
+  assert_eq(
+    collect_artifacts(store, [digest], 1_000L, fn(_) { true }).unwrap(),
+    0,
+  )
   ignore(@sys.rm_rf(root))
 }
