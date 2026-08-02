@@ -61,6 +61,97 @@ static int choir_saved_sigpipe_for_test_valid = 0;
 #define CHOIR_SIGNAL_EXIT_CLOCK CLOCK_REALTIME
 #endif
 
+static int choir_valid_single_path_component(const char *value, int value_len) {
+    if (value == NULL || value_len <= 0 || (int)strlen(value) != value_len) {
+        return 0;
+    }
+    if ((value_len == 1 && value[0] == '.') ||
+        (value_len == 2 && value[0] == '.' && value[1] == '.')) {
+        return 0;
+    }
+    return memchr(value, '/', (size_t)value_len) == NULL;
+}
+
+int choir_write_file_in_child_dir_no_follow(
+    const char *root,
+    int root_len,
+    const char *child_name,
+    int child_name_len,
+    const char *file_name,
+    int file_name_len,
+    const char *content,
+    int content_len) {
+    if (root == NULL || root_len <= 0 || root[0] != '/' ||
+        (int)strlen(root) != root_len ||
+        !choir_valid_single_path_component(child_name, child_name_len) ||
+        !choir_valid_single_path_component(file_name, file_name_len) ||
+        content == NULL || content_len < 0) {
+        return -1;
+    }
+
+    int root_fd = -1;
+    int child_fd = -1;
+    int file_fd = -1;
+    int result = -1;
+    struct stat info;
+
+    root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (root_fd < 0 || fstat(root_fd, &info) != 0 ||
+        !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) {
+        goto done;
+    }
+    if (mkdirat(root_fd, child_name, 0700) != 0 && errno != EEXIST) {
+        goto done;
+    }
+    child_fd = openat(
+        root_fd,
+        child_name,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (child_fd < 0 || fstat(child_fd, &info) != 0 ||
+        !S_ISDIR(info.st_mode) || info.st_uid != geteuid() ||
+        fchmod(child_fd, 0700) != 0) {
+        goto done;
+    }
+
+    int created = 0;
+    file_fd = openat(
+        child_fd,
+        file_name,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0600);
+    if (file_fd >= 0) {
+        created = 1;
+    } else if (errno == EEXIST) {
+        file_fd = openat(
+            child_fd,
+            file_name,
+            O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
+    }
+    if (file_fd < 0 || fstat(file_fd, &info) != 0 ||
+        !S_ISREG(info.st_mode) || info.st_uid != geteuid() ||
+        info.st_nlink != 1 || fchmod(file_fd, 0600) != 0) {
+        goto done;
+    }
+    if (!created && ftruncate(file_fd, 0) != 0) {
+        goto done;
+    }
+    if (content_len > 0 && choir_write_fd_all(file_fd, content, content_len) != 0) {
+        goto done;
+    }
+    if (close(file_fd) != 0) {
+        file_fd = -1;
+        goto done;
+    }
+    file_fd = -1;
+    result = 0;
+
+done:
+    if (file_fd >= 0 && close(file_fd) != 0) result = -1;
+    if (child_fd >= 0 && close(child_fd) != 0) result = -1;
+    if (root_fd >= 0 && close(root_fd) != 0) result = -1;
+    return result;
+}
+
 static int choir_open_owned_directory_at(int parent_fd, const char *name, int create) {
     int fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0 && create && errno == ENOENT) {

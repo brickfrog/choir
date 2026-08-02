@@ -13,6 +13,91 @@ fn bounded_process_test_environment() -> Map[String, String] {
 }
 
 ///|
+async test "real exec integration: raw bounded capture rejects an invalid specification" {
+  if !@test_support.real_exec_integration_enabled() {
+    return
+  }
+  let result = capture_bounded_process_bytes(
+    "relative-program",
+    [],
+    bounded_process_test_environment(),
+    b"input",
+    "/tmp",
+    5000,
+    4096,
+    fn() { false },
+  )
+  assert_true(result is Err(_))
+}
+
+///|
+async test "real exec integration: raw bounded capture preserves exact bytes" {
+  if !@test_support.real_exec_integration_enabled() {
+    return
+  }
+  let input = Bytes::from_array([
+    (0x41 : Byte),
+    (0x00 : Byte),
+    (0xff : Byte),
+    (0x0a : Byte),
+  ])
+  let outcome = capture_bounded_process_bytes(
+    "/usr/bin/tee",
+    [],
+    bounded_process_test_environment(),
+    input,
+    "/tmp",
+    5000,
+    input.length(),
+    fn() { false },
+  ).unwrap()
+  assert_eq(outcome, NativeBytesProcessCompleted(0, input))
+}
+
+///|
+async test "real exec integration: raw bounded capture closes an early child input" {
+  if !@test_support.real_exec_integration_enabled() {
+    return
+  }
+  let input = Bytes::new(1024 * 1024)
+  let outcome = capture_bounded_process_bytes(
+    "/usr/bin/true",
+    [],
+    bounded_process_test_environment(),
+    input,
+    "/tmp",
+    5000,
+    0,
+    fn() { false },
+  ).unwrap()
+  assert_eq(outcome, NativeBytesProcessCompleted(0, b""))
+}
+
+///|
+async test "real exec integration: raw bounded timeout kills and reaps its group" {
+  if !@test_support.real_exec_integration_enabled() {
+    return
+  }
+  let witnessed_pid = @ref.new(0)
+  let outcome = capture_bounded_process_bytes(
+    "/usr/bin/sleep",
+    ["30"],
+    bounded_process_test_environment(),
+    b"",
+    "/tmp",
+    1000,
+    4096,
+    fn() { false },
+    started=fn(pid) {
+      witnessed_pid.val = pid
+      Ok(())
+    },
+  ).unwrap()
+  assert_true(outcome is NativeBytesProcessTimedOut(_))
+  assert_false(@sys.pgid_has_non_zombie_process(witnessed_pid.val))
+}
+
+///|
 async test "real exec integration: bounded process accepts empty output at a zero-byte cap" {
   if !@test_support.real_exec_integration_enabled() {
     return

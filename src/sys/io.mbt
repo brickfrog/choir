@@ -19,6 +19,19 @@ extern "C" fn c_path_executable(path : Bytes) -> Int = "choir_path_executable"
 extern "C" fn c_rm_rf(path : Bytes) -> Int = "choir_rm_rf"
 
 ///|
+#borrow(root, child_name, file_name, content)
+extern "C" fn c_write_file_in_child_dir_no_follow(
+  root : Bytes,
+  root_len : Int,
+  child_name : Bytes,
+  child_name_len : Int,
+  file_name : Bytes,
+  file_name_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "choir_write_file_in_child_dir_no_follow"
+
+///|
 #borrow(path, buf)
 extern "C" fn c_list_dir(path : Bytes, buf : Bytes, max_size : Int) -> Int = "choir_list_dir"
 
@@ -289,6 +302,33 @@ pub fn stdin_set_unbuffered() -> Bool {
 /// links are unlinked, not followed.
 pub fn rm_rf(path : String) -> Bool {
   c_rm_rf(string_to_null_terminated_bytes(path)) == 0
+}
+
+///|
+/// Write one effective-user-owned regular file beneath one real child
+/// directory of an already-canonical absolute root. Both path components are
+/// opened descriptor-relatively with no-follow semantics.
+pub fn write_file_in_child_dir_no_follow(
+  root : String,
+  child_name : String,
+  file_name : String,
+  content : String,
+) -> Bool {
+  let root_bytes = string_to_null_terminated_bytes(root)
+  let child_bytes = string_to_null_terminated_bytes(child_name)
+  let file_bytes = string_to_null_terminated_bytes(file_name)
+  let content_bytes = @utf8.encode(content)
+  c_write_file_in_child_dir_no_follow(
+    root_bytes,
+    root_bytes.length() - 1,
+    child_bytes,
+    child_bytes.length() - 1,
+    file_bytes,
+    file_bytes.length() - 1,
+    content_bytes,
+    content_bytes.length(),
+  ) ==
+  0
 }
 
 ///|

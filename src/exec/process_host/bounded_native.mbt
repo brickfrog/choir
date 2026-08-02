@@ -7,8 +7,16 @@ pub(all) enum NativeBoundedProcessOutcome {
 } derive(Debug, Eq)
 
 ///|
+pub(all) enum NativeBoundedBytesProcessOutcome {
+  NativeBytesProcessCompleted(Int, Bytes)
+  NativeBytesProcessInterrupted(String)
+  NativeBytesProcessTimedOut(String)
+  NativeBytesProcessOutputExceeded(String)
+} derive(Debug, Eq)
+
+///|
 priv enum NativeBoundedReadOutcome {
-  NativeBoundedReadCompleted(String, String)
+  NativeBoundedReadCompleted(Bytes, String)
   NativeBoundedReadExceeded(String)
   NativeBoundedReadFailed
 }
@@ -73,9 +81,7 @@ async fn drain_native_bounded_process_output(
     }
     if read == 0 {
       reader.close()
-      let output = decode_native_process_bytes(
-        buffer.unsafe_reinterpret_as_bytes()[:total],
-      )
+      let output = buffer.unsafe_reinterpret_as_bytes()[:total].to_owned()
       let tail = native_process_diagnostic_tail(buffer, total)
       let outcome = NativeBoundedReadCompleted(output, tail)
       observed.val = Some(outcome)
@@ -100,9 +106,7 @@ async fn drain_native_bounded_process_output(
     observed.val = Some(outcome)
     outcome
   } else {
-    let output = decode_native_process_bytes(
-      buffer.unsafe_reinterpret_as_bytes()[:total],
-    )
+    let output = buffer.unsafe_reinterpret_as_bytes()[:total].to_owned()
     let tail = native_process_diagnostic_tail(buffer, total)
     let outcome = NativeBoundedReadCompleted(output, tail)
     observed.val = Some(outcome)
@@ -169,22 +173,52 @@ fn native_bounded_read_tail(outcome : NativeBoundedReadOutcome) -> String {
 }
 
 ///|
-pub async fn capture_bounded_process(
+async fn feed_native_bounded_process_input(
+  writer : @process.WriteToProcess,
+  input : Bytes,
+  observed : Ref[Bool],
+) -> Unit {
+  defer writer.close()
+  let mut offset = 0
+  while offset < input.length() {
+    let written = writer.write_once(input, offset~, len=input.length() - offset) catch {
+      _ => {
+        observed.val = true
+        return
+      }
+    }
+    if written <= 0 {
+      observed.val = true
+      return
+    }
+    offset = offset + written
+  }
+  observed.val = true
+}
+
+///|
+async fn capture_bounded_process_core(
   program : String,
   arguments : Array[String],
   environment : Map[String, String],
   stdin_read : &@process.ProcessInput,
+  stdin_writer : @process.WriteToProcess?,
+  stdin_bytes : Bytes?,
   cwd : String,
   timeout_ms : Int,
   output_limit_bytes : Int,
   cancellation_requested : () -> Bool,
   started? : (Int) -> Result[Unit, @types.ChoirError] = fn(_) { Ok(()) },
-) -> Result[NativeBoundedProcessOutcome, @types.ChoirError] {
+) -> Result[NativeBoundedBytesProcessOutcome, @types.ChoirError] {
   if !program.has_prefix("/") ||
     !cwd.has_prefix("/") ||
     timeout_ms < 1000 ||
     timeout_ms > 3600000 ||
     output_limit_bytes < 0 {
+    match stdin_writer {
+      Some(value) => value.close()
+      None => ()
+    }
     return Err(
       @types.ChoirError::validation_error(
         "bounded process specification is invalid",
@@ -195,10 +229,15 @@ pub async fn capture_bounded_process(
     command_for_program(program, arguments, Some(cwd)),
   )
   let (reader, writer) = @process.read_from_process() catch {
-    _ =>
+    _ => {
+      match stdin_writer {
+        Some(value) => value.close()
+        None => ()
+      }
       return Err(
         @types.ChoirError::transport_error("bounded process output pipe failed"),
       )
+    }
   }
   let setsid_arguments : Array[String] = [program]
   for argument in arguments {
@@ -216,6 +255,10 @@ pub async fn capture_bounded_process(
   ) catch {
     _ => {
       reader.close()
+      match stdin_writer {
+        Some(value) => value.close()
+        None => ()
+      }
       return Err(
         @types.ChoirError::transport_error("bounded process failed to start"),
       )
@@ -223,6 +266,10 @@ pub async fn capture_bounded_process(
   }
   if pid <= 1 {
     reader.close()
+    match stdin_writer {
+      Some(value) => value.close()
+      None => ()
+    }
     return Err(
       @types.ChoirError::transport_error(
         "bounded process returned an unsafe process id",
@@ -233,6 +280,10 @@ pub async fn capture_bounded_process(
     Ok(_) => ()
     Err(error) => {
       reader.close()
+      match stdin_writer {
+        Some(value) => value.close()
+        None => ()
+      }
       let cleanup = terminate_native_process_group_default(pid)
       let reaped = @process.wait_pid(pid) catch { _ => -1 }
       match cleanup {
@@ -252,6 +303,12 @@ pub async fn capture_bounded_process(
   @async.with_task_group(async fn(group) {
     let wait_observed : Ref[NativeBoundedWaitOutcome?] = @ref.new(None)
     let read_observed : Ref[NativeBoundedReadOutcome?] = @ref.new(None)
+    let input_observed : Ref[Bool] = @ref.new(
+      match stdin_writer {
+        Some(_) => false
+        None => true
+      },
+    )
     let waiter = group.spawn(async fn() {
       let code = @process.wait_pid(pid) catch { _ => -1 }
       let outcome = if code < 0 {
@@ -267,6 +324,22 @@ pub async fn capture_bounded_process(
         reader, output_limit_bytes, read_observed,
       )
     })
+    let feeder = match (stdin_writer, stdin_bytes) {
+      (Some(input_writer), Some(input)) =>
+        Some(
+          group.spawn(async fn() {
+            feed_native_bounded_process_input(
+              input_writer, input, input_observed,
+            )
+          }),
+        )
+      (Some(input_writer), None) => {
+        input_writer.close()
+        input_observed.val = true
+        None
+      }
+      _ => None
+    }
     let mut elapsed_ms = 0
     let mut stop_reason : NativeBoundedStopReason? = None
     while stop_reason is None {
@@ -294,7 +367,7 @@ pub async fn capture_bounded_process(
           (
             Some(NativeBoundedWaitCompleted(_)),
             Some(NativeBoundedReadCompleted(_, _)),
-          ) => break
+          ) if input_observed.val => break
           (Some(NativeBoundedWaitFailed), _) =>
             stop_reason = Some(
               NativeBoundedTransportFailure(
@@ -316,6 +389,10 @@ pub async fn capture_bounded_process(
     }
     let wait_outcome = waiter.wait()
     let read_outcome = drainer.wait()
+    match feeder {
+      Some(task) => ignore(task.wait())
+      None => ()
+    }
     match cleanup {
       Some(Err(error)) => return Err(error)
       _ => ()
@@ -339,18 +416,24 @@ pub async fn capture_bounded_process(
     }
     match stop_reason {
       Some(NativeBoundedInterrupted) =>
-        Ok(NativeProcessInterrupted(native_bounded_read_tail(read_outcome)))
+        Ok(
+          NativeBytesProcessInterrupted(native_bounded_read_tail(read_outcome)),
+        )
       Some(NativeBoundedTimedOut) =>
-        Ok(NativeProcessTimedOut(native_bounded_read_tail(read_outcome)))
+        Ok(NativeBytesProcessTimedOut(native_bounded_read_tail(read_outcome)))
       Some(NativeBoundedOutputExceeded) =>
-        Ok(NativeProcessOutputExceeded(native_bounded_read_tail(read_outcome)))
+        Ok(
+          NativeBytesProcessOutputExceeded(
+            native_bounded_read_tail(read_outcome),
+          ),
+        )
       Some(NativeBoundedTransportFailure(error)) => Err(error)
       None =>
         match (wait_outcome, read_outcome) {
           (
             NativeBoundedWaitCompleted(code),
             NativeBoundedReadCompleted(output, _),
-          ) => Ok(NativeProcessCompleted(code, output))
+          ) => Ok(NativeBytesProcessCompleted(code, output))
           _ =>
             Err(
               @types.ChoirError::transport_error(
@@ -360,6 +443,80 @@ pub async fn capture_bounded_process(
         }
     }
   })
+}
+
+///|
+pub async fn capture_bounded_process(
+  program : String,
+  arguments : Array[String],
+  environment : Map[String, String],
+  stdin_read : &@process.ProcessInput,
+  cwd : String,
+  timeout_ms : Int,
+  output_limit_bytes : Int,
+  cancellation_requested : () -> Bool,
+  started? : (Int) -> Result[Unit, @types.ChoirError] = fn(_) { Ok(()) },
+) -> Result[NativeBoundedProcessOutcome, @types.ChoirError] {
+  let outcome = match
+    capture_bounded_process_core(
+      program,
+      arguments,
+      environment,
+      stdin_read,
+      None,
+      None,
+      cwd,
+      timeout_ms,
+      output_limit_bytes,
+      cancellation_requested,
+      started~,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok(
+    match outcome {
+      NativeBytesProcessCompleted(code, bytes) =>
+        NativeProcessCompleted(code, decode_native_process_bytes(bytes))
+      NativeBytesProcessInterrupted(tail) => NativeProcessInterrupted(tail)
+      NativeBytesProcessTimedOut(tail) => NativeProcessTimedOut(tail)
+      NativeBytesProcessOutputExceeded(tail) =>
+        NativeProcessOutputExceeded(tail)
+    },
+  )
+}
+
+///|
+pub async fn capture_bounded_process_bytes(
+  program : String,
+  arguments : Array[String],
+  environment : Map[String, String],
+  stdin_bytes : Bytes,
+  cwd : String,
+  timeout_ms : Int,
+  output_limit_bytes : Int,
+  cancellation_requested : () -> Bool,
+  started? : (Int) -> Result[Unit, @types.ChoirError] = fn(_) { Ok(()) },
+) -> Result[NativeBoundedBytesProcessOutcome, @types.ChoirError] {
+  let (stdin_read, stdin_writer) = @process.write_to_process() catch {
+    _ =>
+      return Err(
+        @types.ChoirError::transport_error("bounded process input pipe failed"),
+      )
+  }
+  capture_bounded_process_core(
+    program,
+    arguments,
+    environment,
+    stdin_read,
+    Some(stdin_writer),
+    Some(stdin_bytes),
+    cwd,
+    timeout_ms,
+    output_limit_bytes,
+    cancellation_requested,
+    started~,
+  )
 }
 
 ///|

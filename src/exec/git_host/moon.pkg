@@ -8,8 +8,13 @@ import {
   "moonbitlang/async",
   "moonbitlang/async/process",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/ref",
   "moonbitlang/core/string",
 }
+
+import {
+  "choir/src/exec/test_support",
+} for "test"
 
 options(
   "is-main": false,
@@ -17,5 +22,7 @@ options(
   targets: {
     "integration_native.mbt": [ "native" ],
     "workspace_native.mbt": [ "native" ],
+    "tree_preflight_native.mbt": [ "native" ],
+    "workspace_native_test.mbt": [ "native" ],
   },
 )

@@ -69,7 +69,7 @@ jobs:
         run: python3 scripts/test_mcp_stdio_lifetime.py "$PWD/_build/native/debug/build/src/bin/choir/choir.exe"
 
       - name: Test real exec adapters
-        run: CHOIR_TEST_REAL_EXEC=1 moon test --target native --no-parallelize src/exec/process_host src/exec/conformance_host src/bin/choir
+        run: CHOIR_TEST_REAL_EXEC=1 moon test --target native --no-parallelize src/exec/process_host src/exec/git_host src/exec/conformance_host src/bin/choir
 
       - name: Build release binary
         run: moon build --target native --release
