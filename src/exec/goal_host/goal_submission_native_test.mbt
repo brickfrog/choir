@@ -113,6 +113,115 @@ fn mark_native_submission_test_goal_succeeded(
 }
 
 ///|
+async test "native Goal graph preflight rejects before artifacts and durable state" {
+  let root = "/tmp/choir-goal-graph-preflight-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  if !@sys.create_dir_all(root) {
+    fail("failed to create Goal graph preflight root")
+  }
+  let base_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  let base_tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let beads =
+    #|[{"id":"cycle-a","title":"Cycle A","description":"Depends on B","acceptance_criteria":"Cycle is rejected","status":"open","priority":2,"issue_type":"task","dependency_count":1,"updated_at":"2026-08-01T00:00:00Z","dependencies":[{"id":"cycle-b","title":"Cycle B","description":"Depends on A","acceptance_criteria":"Cycle is rejected","status":"open","priority":2,"issue_type":"task","updated_at":"2026-08-01T00:00:01Z","dependency_type":"blocks","dependencies":[{"id":"cycle-a","dependency_type":"blocks"}]}]},{"id":"cycle-b","title":"Cycle B","description":"Depends on A","acceptance_criteria":"Cycle is rejected","status":"open","priority":2,"issue_type":"task","dependency_count":1,"updated_at":"2026-08-01T00:00:01Z","dependencies":[{"id":"cycle-a","title":"Cycle A","description":"Depends on B","acceptance_criteria":"Cycle is rejected","status":"open","priority":2,"issue_type":"task","updated_at":"2026-08-01T00:00:00Z","dependency_type":"blocks","dependencies":[{"id":"cycle-b","dependency_type":"blocks"}]}]}]
+  let reached_later_capture = @ref.new(false)
+  let capture : async (@process_host.Command) -> (Int, String) = command => {
+    match (command.program, command.args) {
+      ("git", ["symbolic-ref", "--quiet", "HEAD"]) => (0, "refs/heads/main\n")
+      ("git", ["rev-parse", "--show-toplevel"]) => (0, root + "\n")
+      ("git", ["rev-parse", "--verify", "--quiet", "refs/heads/main@{upstream}"]
+      ) => (-1, "")
+      ("git", ["rev-parse", "--verify", "refs/heads/main^{commit}"]) =>
+        (0, base_commit + "\n")
+      (
+        "git",
+        [
+          "show",
+          "-s",
+          "--format=%T",
+          "--no-show-signature",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+      ) => (0, base_tree + "\n")
+      ("bd", ["show", "cycle-a", "cycle-b", "--json", "--readonly"]) =>
+        (0, beads)
+      _ => {
+        reached_later_capture.val = true
+        (-1, "graph rejection must precede later capture")
+      }
+    }
+  }
+  let draft =
+    #|{"proposal_id":"proposal-cycle-preflight","goal_id":"goal-cycle-preflight","pull_request":{"title":"fix: reject cycle","body":"Rejects a cyclic Goal graph before materialization."},"maximum_parallel_parts":2,"work_order":{"objective":"Prove graph admission is bounded.","selection_policy":"exact_bead_closure","planner":{"provider":"codex"},"initial_primary_targets":["cycle-a","cycle-b"],"max_active_child_goals":1,"stop":{"kind":"safety_ceiling","takes":4},"cutoff":"cancel"},"parts":[{"part_id":"cycle-a","commit_title":"fix: change cycle A","instruction":"Implement cycle A.","exact_paths":["src/a.mbt"],"moon_args":["test"]},{"part_id":"cycle-b","commit_title":"fix: change cycle B","instruction":"Implement cycle B.","exact_paths":["src/b.mbt"],"moon_args":["test"]}]}
+  match
+    submit_native_conductor_goal_draft(
+      root,
+      draft,
+      capture,
+      nfc_available=test_nfc_available,
+      is_nfc=test_path_is_nfc,
+    ) {
+    Err(error) => assert_true(error.message().contains("graph is invalid"))
+    Ok(_) => fail("a cyclic Goal graph reached materialization")
+  }
+  assert_false(reached_later_capture.val)
+  let repository = native_submission_test_repository(root)
+  let adapters = @storage_host.local_part_workflow_repository_adapters()
+  let snapshot = @workflow.goal_selection_snapshot_from_beads_json(
+    @workflow.repository_id(root),
+    @control.GitOid(base_commit),
+    @control.GitOid(base_tree),
+    beads,
+  ).unwrap()
+  for
+    digest in [
+      @workflow.goal_selection_snapshot_digest(snapshot),
+      @storage.artifact_digest(@utf8.encode("Implement cycle A.")),
+    ] {
+    match
+      (adapters.artifacts.read)(repository.artifact_store, {
+        digest,
+        max_bytes: 2 * 1024 * 1024,
+      }) {
+      Err(_) => ()
+      Ok(_) => fail("graph rejection left an adopted artifact")
+    }
+  }
+  let goal_id = @control.GoalId("goal-cycle-preflight")
+  match @workflow.load_goal_selection_decision(repository, adapters, goal_id) {
+    Ok(None) => ()
+    Ok(Some(_)) => fail("graph rejection persisted a Goal selection")
+    Err(error) => fail(error.message())
+  }
+  for part_id in [@control.PartId("cycle-a"), @control.PartId("cycle-b")] {
+    match
+      @workflow.load_part_snapshot(
+        repository,
+        adapters,
+        native_goal_part_workflow_id(goal_id, part_id),
+      ) {
+      Ok(None) => ()
+      Ok(Some(_)) => fail("graph rejection initialized a Part workflow")
+      Err(error) => fail(error.message())
+    }
+  }
+  match @workflow.load_goal_execution_record(repository, adapters, goal_id) {
+    Ok(None) => ()
+    Ok(Some(_)) => fail("graph rejection initialized Goal execution")
+    Err(error) => fail(error.message())
+  }
+  let work_order_id = @workflow.work_order_id(
+    @workflow.repository_id(root),
+    @workflow.GoalProposalId("proposal-cycle-preflight"),
+  )
+  match @workflow.load_work_order_record(repository, adapters, work_order_id) {
+    Ok(None) => ()
+    Ok(Some(_)) => fail("graph rejection persisted a WorkOrder binding")
+    Err(error) => fail(error.message())
+  }
+  ignore(@sys.rm_rf(root))
+}
+
+///|
 async test "native Conductor submission captures Beads and persists once" {
   let root = "/tmp/choir-conductor-submit-" + @sys.get_pid().to_string()
   ignore(@sys.rm_rf(root))

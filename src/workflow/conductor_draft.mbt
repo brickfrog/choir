@@ -718,6 +718,9 @@ fn decode_conductor_part_draft(
 pub fn decode_conductor_goal_draft(
   content : String,
 ) -> Result[ConductorGoalDraft, @types.ChoirError] {
+  if @utf8.encode(content).length() > conductor_goal_draft_max_bytes {
+    return Err(goal_submission_error("Conductor Goal draft exceeds byte limit"))
+  }
   let json = @json.parse(content) catch {
     _ =>
       return Err(
@@ -796,10 +799,22 @@ pub fn decode_conductor_goal_draft(
   }
   let parts = match fields.get("parts") {
     Some(Array(values)) if values.length() > 0 => {
+      if values.length() > goal_proposal_max_parts {
+        return Err(goal_submission_error("Goal proposal exceeds Part limit"))
+      }
       let decoded : Array[ConductorPartDraft] = []
+      let part_ids : Map[@control.PartId, Unit] = Map([])
       for value in values {
         match decode_conductor_part_draft(value) {
-          Ok(part) => decoded.push(part)
+          Ok(part) => {
+            if part_ids.contains(part.part_id) {
+              return Err(
+                goal_submission_error("Goal proposal graph is invalid"),
+              )
+            }
+            part_ids[part.part_id] = ()
+            decoded.push(part)
+          }
           Err(error) => return Err(error)
         }
       }
@@ -1256,26 +1271,30 @@ fn source_part_from_bead_fields(
 ///|
 fn add_captured_source_part(
   parts : Array[GoalSelectionSourcePart],
+  index : Map[@control.PartId, GoalSelectionSourcePart],
   candidate : GoalSelectionSourcePart,
 ) -> Result[Unit, @types.ChoirError] {
-  for existing in parts {
-    if existing.part_id == candidate.part_id {
-      return if existing == candidate {
+  match index.get(candidate.part_id) {
+    Some(existing) =>
+      if existing == candidate {
         Ok(())
       } else {
         Err(
           goal_submission_error("Beads returned conflicting source revisions"),
         )
       }
+    None => {
+      index[candidate.part_id] = candidate
+      parts.push(candidate)
+      Ok(())
     }
   }
-  parts.push(candidate)
-  Ok(())
 }
 
 ///|
 fn capture_nested_bead_dependencies(
   parts : Array[GoalSelectionSourcePart],
+  index : Map[@control.PartId, GoalSelectionSourcePart],
   fields : Map[String, Json],
 ) -> Result[Unit, @types.ChoirError] {
   match fields.get("dependencies") {
@@ -1287,7 +1306,7 @@ fn capture_nested_bead_dependencies(
             if kind == "" || kind == "blocks" {
               match source_part_from_bead_fields(dependency) {
                 Some(part) =>
-                  match add_captured_source_part(parts, part) {
+                  match add_captured_source_part(parts, index, part) {
                     Ok(_) => ()
                     Err(error) => return Err(error)
                   }
@@ -1319,6 +1338,7 @@ pub fn goal_selection_snapshot_from_beads_json(
     _ => return Err(goal_submission_error("Beads capture has the wrong shape"))
   }
   let parts : Array[GoalSelectionSourcePart] = []
+  let part_index : Map[@control.PartId, GoalSelectionSourcePart] = Map([])
   for value in values {
     match value {
       Object(fields) => {
@@ -1328,13 +1348,13 @@ pub fn goal_selection_snapshot_from_beads_json(
         }
         match source_part_from_bead_fields(fields) {
           Some(part) =>
-            match add_captured_source_part(parts, part) {
+            match add_captured_source_part(parts, part_index, part) {
               Ok(_) => ()
               Err(error) => return Err(error)
             }
           None => return Err(goal_submission_error("Beads issue has no ID"))
         }
-        match capture_nested_bead_dependencies(parts, fields) {
+        match capture_nested_bead_dependencies(parts, part_index, fields) {
           Ok(_) => ()
           Err(error) => return Err(error)
         }

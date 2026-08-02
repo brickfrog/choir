@@ -1964,6 +1964,274 @@ test "dependency cycle is a typed selection rejection" {
       )
     }),
   )
+  match
+    @workflow.decode_goal_selection_decision(
+      @workflow.goal_selection_decision_bytes(decision),
+    ) {
+    Ok(decoded) => assert_eq(decoded, decision)
+    Err(error) => fail(error.message())
+  }
+}
+
+///|
+test "iterative cycle diagnostics exclude downstream dependents" {
+  let goal_id = @control.GoalId("goal-exact-cycles")
+  let a = @control.PartId("a")
+  let b = @control.PartId("b")
+  let parts = [
+    submission_part(
+      goal_id,
+      "a",
+      [b],
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+    submission_part(
+      goal_id,
+      "b",
+      [a],
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+    submission_part(
+      goal_id,
+      "c",
+      [b],
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    ),
+  ]
+  let snapshot = submission_snapshot([
+    submission_source(
+      "a",
+      [b],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+    submission_source(
+      "b",
+      [a],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+    submission_source(
+      "c",
+      [b],
+      @workflow.SelectionSourceState::SelectionSourceOpen,
+    ),
+  ])
+  let decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, parts),
+    snapshot,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(decision.rejections.map(fn(rejection) { rejection.part_id }), [a, b])
+  assert_true(
+    decision.rejections.all(fn(rejection) {
+      rejection.reasons ==
+      [@workflow.SelectionRejectionReason::SelectionDependencyCycle]
+    }),
+  )
+  let self = submission_part(
+    goal_id,
+    "self",
+    [@control.PartId("self")],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let self_decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [self]),
+    submission_snapshot([
+      submission_source(
+        "self",
+        [@control.PartId("self")],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(self_decision.rejections[0].reasons, [
+    @workflow.SelectionRejectionReason::SelectionDependencyCycle,
+  ])
+}
+
+///|
+test "duplicate declared dependency is a typed selection rejection" {
+  let goal_id = @control.GoalId("goal-duplicate-edge")
+  let dependency = @control.PartId("dependency")
+  let part = submission_part(
+    goal_id,
+    "dependent",
+    [dependency, dependency],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let decision = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [part]),
+    submission_snapshot([
+      submission_source(
+        "dependency",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceClosed,
+      ),
+      submission_source(
+        "dependent",
+        [dependency, dependency],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(decision.rejections[0].reasons, [
+    @workflow.SelectionRejectionReason::SelectionDuplicate,
+  ])
+}
+
+///|
+fn submission_dense_graph(
+  goal_id : @control.GoalId,
+  part_count : Int,
+  edge_count : Int,
+) -> (
+  Array[@workflow.ConductorPartProposal],
+  Array[@workflow.GoalSelectionSourcePart],
+) {
+  let parts : Array[@workflow.ConductorPartProposal] = []
+  let sources : Array[@workflow.GoalSelectionSourcePart] = []
+  let mut remaining = edge_count
+  for dependent = 0; dependent < part_count; dependent = dependent + 1 {
+    let dependencies : Array[@control.PartId] = []
+    for dependency = 0
+        dependency < dependent && remaining > 0
+        dependency = dependency + 1 {
+      dependencies.push(@control.PartId("dense-" + dependency.to_string()))
+      remaining = remaining - 1
+    }
+    let id = "dense-" + dependent.to_string()
+    parts.push(
+      submission_part(
+        goal_id,
+        id,
+        dependencies,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ),
+    )
+    sources.push(
+      submission_source(
+        id,
+        dependencies,
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    )
+  }
+  (parts, sources)
+}
+
+///|
+test "dense bounded proposal ordering and decision digest are stable" {
+  let goal_id = @control.GoalId("goal-dense-bounded")
+  let (parts, sources) = submission_dense_graph(goal_id, 256, 2048)
+  let snapshot = submission_snapshot(sources)
+  let forward = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, parts),
+    snapshot,
+    fn(_) { true },
+  ).unwrap()
+  let reverse = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, parts.rev()),
+    { ..snapshot, parts: snapshot.parts.rev() },
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    forward.outcome,
+    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
+  )
+  assert_eq(forward.accepted_parts.length(), 256)
+  assert_eq(
+    forward.accepted_parts.map(fn(part) { part.part.id }),
+    reverse.accepted_parts.map(fn(part) { part.part.id }),
+  )
+  assert_eq(forward.proposal_digest, reverse.proposal_digest)
+  assert_eq(forward.id, reverse.id)
+  assert_eq(
+    forward.goal.unwrap().contract_digest,
+    reverse.goal.unwrap().contract_digest,
+  )
+  let repeated = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, parts),
+    snapshot,
+    fn(_) { true },
+  ).unwrap()
+  assert_eq(
+    @workflow.goal_selection_decision_digest(forward),
+    @workflow.goal_selection_decision_digest(repeated),
+  )
+}
+
+///|
+test "persisted selection decision decoder reapplies graph limits" {
+  let goal_id = @control.GoalId("goal-persisted-bounds")
+  let base_part = submission_part(
+    goal_id,
+    "base",
+    [],
+    @control.ProviderSurfaceId::CodexSubscriptionCli,
+  )
+  let base = @workflow.evaluate_goal_proposal(
+    submission_proposal(goal_id, [base_part]),
+    submission_snapshot([
+      submission_source(
+        "base",
+        [],
+        @workflow.SelectionSourceState::SelectionSourceOpen,
+      ),
+    ]),
+    fn(_) { true },
+  ).unwrap()
+  let oversized_parts = Array::makei(257, fn(index) {
+    submission_part(
+      goal_id,
+      "persisted-" + index.to_string(),
+      [],
+      @control.ProviderSurfaceId::CodexSubscriptionCli,
+    )
+  })
+  let oversized_proposal = { ..base.proposal, parts: oversized_parts }
+  let oversized = {
+    ..base,
+    proposal: oversized_proposal,
+    proposal_digest: @workflow.goal_proposal_digest(oversized_proposal),
+  }
+  match
+    @workflow.decode_goal_selection_decision(
+      @workflow.goal_selection_decision_bytes(oversized),
+    ) {
+    Err(error) => assert_true(error.message().contains("exceeds Part limit"))
+    Ok(_) => fail("an oversized persisted selection was admitted")
+  }
+  let chain_parts : Array[@workflow.ConductorPartProposal] = []
+  for index = 0; index < 66; index = index + 1 {
+    let dependencies = if index == 0 {
+      []
+    } else {
+      [@control.PartId("persisted-chain-" + (index - 1).to_string())]
+    }
+    chain_parts.push(
+      submission_part(
+        goal_id,
+        "persisted-chain-" + index.to_string(),
+        dependencies,
+        @control.ProviderSurfaceId::CodexSubscriptionCli,
+      ),
+    )
+  }
+  let deep_proposal = { ..base.proposal, parts: chain_parts }
+  let deep = {
+    ..base,
+    proposal: deep_proposal,
+    proposal_digest: @workflow.goal_proposal_digest(deep_proposal),
+  }
+  match
+    @workflow.decode_goal_selection_decision(
+      @workflow.goal_selection_decision_bytes(deep),
+    ) {
+    Err(error) =>
+      assert_true(error.message().contains("exceeds dependency depth"))
+    Ok(_) => fail("an over-depth persisted selection was admitted")
+  }
 }
 
 ///|
