@@ -229,12 +229,12 @@ test "a mutation becomes tracker invocations that state the edge as meant" {
   }
   @debug.assert_eq(@command.bead_mutation_arguments(mutation).unwrap(), [
     [
-      "create", "probe-new", "--id", "probe-new", "--description", "Body.", "--acceptance",
-      "AC.", "--notes", "Note.", "--priority", "1", "--type", "bug", "--parent",
-      "probe-epic", "--labels", "autonomy,product", "--json",
+      "create", "--title=probe-new", "--id=probe-new", "--description", "Body.",
+      "--acceptance", "AC.", "--notes", "Note.", "--priority", "1", "--type", "bug",
+      "--parent", "probe-epic", "--labels", "autonomy,product", "--json",
     ],
-    ["dep", "add", "probe-new", "probe-first"],
-    ["dep", "add", "probe-new", "probe-second"],
+    ["dep", "add", "--", "probe-new", "probe-first"],
+    ["dep", "add", "--", "probe-new", "probe-second"],
   ])
   // --force is deliberately absent so a mis-prefixed id fails rather than
   // being forced into the database. It is not what protects an existing Bead:
@@ -257,8 +257,8 @@ test "an update writes only the fields it named" {
   // Labels replace rather than add, so a label the planner dropped is dropped.
   @debug.assert_eq(@command.bead_mutation_arguments(mutation).unwrap(), [
     [
-      "update", "probe-a", "--title", "Revised", "--priority", "0", "--set-labels",
-      "autonomy", "--json",
+      "update", "--title", "Revised", "--priority", "0", "--set-labels", "autonomy",
+      "--json", "--", "probe-a",
     ],
   ])
   // A revision that named nothing but its own identity writes nothing else.
@@ -268,8 +268,43 @@ test "an update writes only the fields it named" {
       intent: @command.BeadMutationIntent::BeadUpdateIntent,
       title: None,
     }).unwrap(),
-    [["update", "probe-a", "--json"]],
+    [["update", "--json", "--", "probe-a"]],
   )
+}
+
+///|
+test "mutation builders reject programmatic identifier bypasses" {
+  let base = bead_batch_create("probe-new", [])
+  for
+    mutation in [
+      { ..base, id: "--watch" },
+      { ..base, parent: Some("-C") },
+      { ..base, blocked_by: ["--db=/tmp/other"] },
+    ] {
+    match @command.bead_mutation_arguments(mutation) {
+      Ok(_) => fail("unsafe mutation produced process arguments")
+      Err(error) => assert_true(error.is_validation_error())
+    }
+  }
+  assert_true(
+    @command.bead_reconciled_arguments(
+      base,
+      @command.BeadItemOutcome::BeadItemPartiallyApplied(["--watch"]),
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "batch JSON rejects unsafe subject parent and blocker identifiers" {
+  for
+    items in [
+      "[{\"id\":\"--watch\",\"intent\":\"create\",\"title\":\"Subject\"}]", "[{\"id\":\"probe-a\",\"intent\":\"create\",\"title\":\"Parent\",\"parent\":\"-C\"}]",
+      "[{\"id\":\"probe-a\",\"intent\":\"create\",\"title\":\"Blocker\",\"blocked_by\":[\"--db=/tmp/other\"]}]",
+    ] {
+    let parsed = @json.parse(items) catch { _ => fail("invalid test JSON") }
+    assert_true(@command.bead_batch_from_json({ "items": parsed }) is Err(_))
+  }
 }
 
 ///|
@@ -359,7 +394,7 @@ test "a redelivered batch reports what it already wrote" {
   ])
   @debug.assert_eq(
     @command.bead_reconciled_arguments(mutation, partial[0].outcome).unwrap(),
-    [["dep", "add", "probe-new", "probe-b"]],
+    [["dep", "add", "--", "probe-new", "probe-b"]],
   )
   // Everything landed: the redelivery writes nothing at all.
   let applied = @command.reconcile_bead_batch(

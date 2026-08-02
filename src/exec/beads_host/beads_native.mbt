@@ -36,6 +36,18 @@ fn native_conductor_required_string(
 }
 
 ///|
+/// Read an MCP-originating Bead id without trimming or normalization, then
+/// cross the typed CLI identifier boundary before any `bd` invocation.
+fn native_conductor_bead_cli_identifier(
+  request : @types.Request,
+) -> Result[@command.BeadCliIdentifier, @types.ChoirError] {
+  match request.args.get("id") {
+    Some(value) => @command.BeadCliIdentifier::try_parse(value)
+    None => Err(@types.ChoirError::validation_error("missing id"))
+  }
+}
+
+///|
 fn native_conductor_optional_string(
   request : @types.Request,
   name : String,
@@ -421,6 +433,10 @@ pub async fn apply_native_bead_batch(
   proposal : @command.BeadBatchProposal,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> Result[NativeAppliedBeadBatch, @types.ChoirError] {
+  match @command.validate_bead_batch_cli_identifiers(proposal) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let graph = match native_conductor_bead_graph(project_dir, capture) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -538,15 +554,16 @@ async fn dispatch_native_task_get(
   request : @types.Request,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
-  let id = match native_conductor_required_string(request, "id") {
+  let identifier = match native_conductor_bead_cli_identifier(request) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
+  let id = identifier.text()
   let output = match
     native_conductor_capture_beads(
       project_dir,
       "show",
-      ["show", id, "--json", "--readonly"],
+      ["show", "--id=" + id, "--json", "--readonly"],
       capture,
     ) {
     Ok(value) => value
@@ -567,11 +584,15 @@ async fn dispatch_native_task_get(
 ///|
 fn native_conductor_task_create_arguments(
   request : @types.Request,
-) -> Result[(String, @types.TaskStatus, Array[String]), @types.ChoirError] {
-  let id = match native_conductor_required_string(request, "id") {
+) -> Result[
+  (@command.BeadCliIdentifier, @types.TaskStatus, Array[String]),
+  @types.ChoirError,
+] {
+  let identifier = match native_conductor_bead_cli_identifier(request) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let id = identifier.text()
   let title = match native_conductor_required_string(request, "title") {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -585,7 +606,14 @@ fn native_conductor_task_create_arguments(
     None => @types.TaskStatus::Todo
   }
   let arguments : Array[String] = [
-    "create", title, "--id", id, "--force", "--type", "task", "--priority", "2",
+    "create",
+    "--title=" + title,
+    "--id=" + id,
+    "--force",
+    "--type",
+    "task",
+    "--priority",
+    "2",
     "--json",
   ]
   match native_conductor_optional_string(request, "assignee") {
@@ -602,7 +630,7 @@ fn native_conductor_task_create_arguments(
     }
     None => ()
   }
-  Ok((id, status, arguments))
+  Ok((identifier, status, arguments))
 }
 
 ///|
@@ -611,14 +639,15 @@ async fn dispatch_native_task_create(
   request : @types.Request,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
-  let (id, status, arguments) = match
+  let (identifier, status, arguments) = match
     native_conductor_task_create_arguments(request) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
+  let id = identifier.text()
   let existing = capture({
     program: "bd",
-    args: ["show", id, "--json"],
+    args: ["show", "--id=" + id, "--json", "--readonly"],
     workdir: Some(project_dir),
   })
   if existing.0 == 0 {
@@ -652,10 +681,11 @@ async fn dispatch_native_task_create(
         "update",
         [
           "update",
-          id,
           "--status",
           native_conductor_task_status_for_beads(status),
           "--json",
+          "--",
+          id,
         ],
         capture,
       ) {
@@ -932,11 +962,12 @@ async fn dispatch_native_task_update(
   request : @types.Request,
   capture : async (@process_host.Command) -> (Int, String),
 ) -> @types.Response {
-  let id = match native_conductor_required_string(request, "id") {
+  let identifier = match native_conductor_bead_cli_identifier(request) {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
-  let arguments : Array[String] = ["update", id]
+  let id = identifier.text()
+  let arguments : Array[String] = ["update"]
   match native_conductor_optional_string(request, "title") {
     Some(value) => {
       arguments.push("--title")
@@ -983,10 +1014,12 @@ async fn dispatch_native_task_update(
     }
     None => ()
   }
-  if arguments.length() == 2 {
+  if arguments.length() == 1 {
     return dispatch_native_task_get(project_dir, request, capture)
   }
   arguments.push("--json")
+  arguments.push("--")
+  arguments.push(id)
   let output = match
     native_conductor_capture_beads(project_dir, "update", arguments, capture) {
     Ok(value) => value

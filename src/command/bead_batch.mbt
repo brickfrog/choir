@@ -89,6 +89,48 @@ fn bead_batch_error(detail : String) -> @types.ChoirError {
 }
 
 ///|
+/// Revalidate every identifier carried by a mutation before a public command
+/// builder turns it into process arguments. `BeadMutation` remains the MCP
+/// JSON shape, so callers can construct it without first holding the typed CLI
+/// identifier boundary.
+pub fn validate_bead_mutation_cli_identifiers(
+  mutation : BeadMutation,
+) -> Result[Unit, @types.ChoirError] {
+  match BeadCliIdentifier::try_parse(mutation.id) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match mutation.parent {
+    Some(parent) =>
+      match BeadCliIdentifier::try_parse(parent) {
+        Ok(_) => ()
+        Err(error) => return Err(error)
+      }
+    None => ()
+  }
+  for blocker in mutation.blocked_by {
+    match BeadCliIdentifier::try_parse(blocker) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(())
+}
+
+///|
+pub fn validate_bead_batch_cli_identifiers(
+  proposal : BeadBatchProposal,
+) -> Result[Unit, @types.ChoirError] {
+  for mutation in proposal.mutations {
+    match validate_bead_mutation_cli_identifiers(mutation) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+  }
+  Ok(())
+}
+
+///|
 fn bead_mutation_fields(mutation : BeadMutation) -> Array[String] {
   let optional = fn(value : String?) {
     match value {
@@ -329,8 +371,9 @@ pub fn bead_batch_is_admitted_or_applied(
 pub fn bead_mutation_arguments(
   mutation : BeadMutation,
 ) -> Result[Array[Array[String]], @types.ChoirError] {
-  if mutation.id == "" {
-    return Err(bead_batch_error("mutation has no Bead identity"))
+  match validate_bead_mutation_cli_identifiers(mutation) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
   }
   for label in mutation.labels.unwrap_or([]) {
     if label == "" || label.contains(",") {
@@ -348,13 +391,11 @@ pub fn bead_mutation_arguments(
       // tracker overwrites a taken id and exits zero either way, which is why
       // duplicate identity is refused by validation before anything runs.
       arguments.push("create")
-      arguments.push(title)
-      arguments.push("--id")
-      arguments.push(mutation.id)
+      arguments.push("--title=" + title)
+      arguments.push("--id=" + mutation.id)
     }
     BeadUpdateIntent => {
       arguments.push("update")
-      arguments.push(mutation.id)
       match mutation.title {
         Some(title) => {
           arguments.push("--title")
@@ -397,15 +438,16 @@ pub fn bead_mutation_arguments(
     None => ()
   }
   arguments.push("--json")
+  if mutation.intent is BeadUpdateIntent {
+    arguments.push("--")
+    arguments.push(mutation.id)
+  }
   let invocations : Array[Array[String]] = [arguments]
   for blocker in mutation.blocked_by {
-    if blocker == "" {
-      return Err(bead_batch_error("blocking dependency has no identity"))
-    }
     if blocker == mutation.id {
       return Err(bead_batch_error("a Bead cannot block itself"))
     }
-    invocations.push(["dep", "add", mutation.id, blocker])
+    invocations.push(["dep", "add", "--", mutation.id, blocker])
   }
   Ok(invocations)
 }
@@ -520,15 +562,23 @@ pub fn bead_reconciled_arguments(
   mutation : BeadMutation,
   outcome : BeadItemOutcome,
 ) -> Result[Array[Array[String]], @types.ChoirError] {
+  match validate_bead_mutation_cli_identifiers(mutation) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   match outcome {
     BeadItemAlreadyApplied => Ok([])
     BeadItemPartiallyApplied(missing) => {
       let invocations : Array[Array[String]] = []
       for blocker in missing {
-        if blocker == "" || blocker == mutation.id {
+        match BeadCliIdentifier::try_parse(blocker) {
+          Ok(_) => ()
+          Err(error) => return Err(error)
+        }
+        if blocker == mutation.id {
           return Err(bead_batch_error("blocking dependency is invalid"))
         }
-        invocations.push(["dep", "add", mutation.id, blocker])
+        invocations.push(["dep", "add", "--", mutation.id, blocker])
       }
       Ok(invocations)
     }
@@ -579,6 +629,10 @@ pub fn bead_mutation_from_json(
   guard bead_batch_json_string(fields, "id") is Some(id) else {
     return Err(bead_batch_error("item has no Bead identity"))
   }
+  match BeadCliIdentifier::try_parse(id) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let intent = match bead_batch_json_string(fields, "intent") {
     Some("create") => BeadCreateIntent
     Some("update") => BeadUpdateIntent
@@ -620,7 +674,7 @@ pub fn bead_mutation_from_json(
     Ok(values) => values
     Err(error) => return Err(error)
   }
-  Ok({
+  let mutation : BeadMutation = {
     id,
     intent,
     title: bead_batch_json_string(fields, "title"),
@@ -633,7 +687,11 @@ pub fn bead_mutation_from_json(
     blocked_by,
     parent: bead_batch_json_string(fields, "parent"),
     expected_updated_at: bead_batch_json_string(fields, "expected_updated_at"),
-  })
+  }
+  match validate_bead_mutation_cli_identifiers(mutation) {
+    Ok(_) => Ok(mutation)
+    Err(error) => Err(error)
+  }
 }
 
 ///|
