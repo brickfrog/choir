@@ -1,11 +1,22 @@
 import net from "node:net";
-import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_WRITE_BYTES = 256 * 1024;
 const MAX_ARG_COUNT = 96;
 const MAX_ARG_BYTES = 64 * 1024;
+
+export const SANDBOX_MCP_LIMITS = Object.freeze({
+  frameBytes: 512 * 1024,
+  queuedCalls: 16,
+  queuedBytes: 4 * 1024 * 1024,
+});
+
+export const SANDBOX_MCP_RESOURCE_ERROR = Object.freeze({
+  code: -32001,
+  queueMessage: "sandbox MCP request queue capacity exceeded",
+  frameMessage: "sandbox MCP request frame exceeds byte limit",
+});
 
 function fail(message) {
   throw new Error(`sandbox bridge: ${message}`);
@@ -139,6 +150,174 @@ function ownerExec(config, argv, cwd, timeoutMs, signal) {
       }
     });
   });
+}
+
+export class BoundedLineFramer {
+  constructor(maxFrameBytes = SANDBOX_MCP_LIMITS.frameBytes) {
+    if (!Number.isInteger(maxFrameBytes) || maxFrameBytes <= 0) {
+      fail("frame byte limit is invalid");
+    }
+    this.maxFrameBytes = maxFrameBytes;
+    this.buffer = Buffer.allocUnsafe(maxFrameBytes);
+    this.bytes = 0;
+    this.oversized = false;
+  }
+
+  push(value) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const frames = [];
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      if (newline < 0) {
+        this.append(chunk.subarray(offset));
+        break;
+      }
+      this.append(chunk.subarray(offset, newline));
+      frames.push(this.finishFrame());
+      offset = newline + 1;
+    }
+    return frames;
+  }
+
+  end() {
+    if (!this.oversized && this.bytes === 0) return [];
+    return [this.finishFrame()];
+  }
+
+  append(part) {
+    if (this.oversized || part.length === 0) return;
+    if (part.length > this.maxFrameBytes - this.bytes) {
+      this.bytes = 0;
+      this.oversized = true;
+      return;
+    }
+    part.copy(this.buffer, this.bytes);
+    this.bytes += part.length;
+  }
+
+  finishFrame() {
+    let frame;
+    if (this.oversized) {
+      frame = Object.freeze({ oversized: true, bytes: this.maxFrameBytes + 1, text: "" });
+    } else {
+      const raw = this.buffer.subarray(0, this.bytes);
+      const body = raw.length > 0 && raw[raw.length - 1] === 0x0d
+        ? raw.subarray(0, raw.length - 1)
+        : raw;
+      frame = Object.freeze({ oversized: false, bytes: this.bytes, text: body.toString("utf8") });
+    }
+    this.bytes = 0;
+    this.oversized = false;
+    return frame;
+  }
+}
+
+export class SandboxCallQueue {
+  constructor(onCapacity = () => {}) {
+    this.onCapacity = onCapacity;
+    this.waiting = [];
+    this.waitingBytes = 0;
+    this.active = null;
+    this.closed = false;
+    this.pressured = false;
+    this.drainWaiters = [];
+  }
+
+  get queuedCalls() {
+    return this.waiting.length;
+  }
+
+  get queuedBytes() {
+    return this.waitingBytes;
+  }
+
+  get atHighWater() {
+    return this.waiting.length >= SANDBOX_MCP_LIMITS.queuedCalls ||
+      this.waitingBytes >= SANDBOX_MCP_LIMITS.queuedBytes;
+  }
+
+  enqueue(bytes, operation) {
+    if (!Number.isInteger(bytes) || bytes < 0 || typeof operation !== "function") {
+      fail("queued call is invalid");
+    }
+    if (this.closed) {
+      return Object.freeze({ admitted: false, reason: "closed" });
+    }
+    if (this.active !== null &&
+      (this.waiting.length >= SANDBOX_MCP_LIMITS.queuedCalls ||
+        bytes > SANDBOX_MCP_LIMITS.queuedBytes - this.waitingBytes)) {
+      this.pressured = true;
+      return Object.freeze({ admitted: false, reason: "capacity" });
+    }
+    let resolve;
+    let reject;
+    const promise = new Promise((resolveEntry, rejectEntry) => {
+      resolve = resolveEntry;
+      reject = rejectEntry;
+    });
+    const entry = { bytes, operation, promise, resolve, reject };
+    if (this.active === null) {
+      this.start(entry);
+    } else {
+      this.waiting.push(entry);
+      this.waitingBytes += bytes;
+      this.updatePressure();
+    }
+    return Object.freeze({
+      admitted: true,
+      promise,
+      atHighWater: this.atHighWater,
+    });
+  }
+
+  start(entry) {
+    this.active = entry;
+    Promise.resolve()
+      .then(entry.operation)
+      .then(entry.resolve, entry.reject)
+      .finally(() => this.finish(entry));
+  }
+
+  finish(entry) {
+    if (this.active !== entry) return;
+    this.active = null;
+    const next = this.waiting.shift();
+    if (next) {
+      this.waitingBytes -= next.bytes;
+      this.start(next);
+    }
+    this.updatePressure();
+    this.settleDrain();
+  }
+
+  updatePressure() {
+    const pressured = this.atHighWater;
+    if (this.pressured && !pressured) this.onCapacity();
+    this.pressured = pressured;
+  }
+
+  close(cancelQueued = false) {
+    this.closed = true;
+    if (cancelQueued) {
+      const error = new Error("sandbox bridge: queued call canceled");
+      for (const entry of this.waiting) entry.reject(error);
+      this.waiting = [];
+      this.waitingBytes = 0;
+      this.updatePressure();
+      this.settleDrain();
+    }
+  }
+
+  drain() {
+    if (this.active === null && this.waiting.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.drainWaiters.push(resolve));
+  }
+
+  settleDrain() {
+    if (this.active !== null || this.waiting.length !== 0) return;
+    for (const resolve of this.drainWaiters.splice(0)) resolve();
+  }
 }
 
 class SandboxClient {
@@ -389,78 +568,182 @@ async function callTool(client, name, args) {
   }
 }
 
-function respond(id, result) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+function respond(write, id, result) {
+  write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 }
 
-function respondError(id, message) {
-  process.stdout.write(`${JSON.stringify({
+function respondError(write, id, message, code = -32000) {
+  write(`${JSON.stringify({
     jsonrpc: "2.0",
     id,
-    error: { code: -32000, message },
+    error: { code, message },
   })}\n`);
 }
 
-export async function drainPendingResponses(pendingResponses, drain) {
-  await Promise.allSettled([...pendingResponses]);
-  await drain();
+export function runSandboxMcpBridge({
+  client,
+  visibleTools,
+  input,
+  write,
+  exit,
+  dispatchTool = callTool,
+}) {
+  const framer = new BoundedLineFramer();
+  let paused = false;
+  let shuttingDown = false;
+  let shutdownPromise = null;
+  let deferredFrames = [];
+  let resumeInput = () => {};
+  const scheduler = new SandboxCallQueue(() => queueMicrotask(resumeInput));
+
+  const shutdown = (graceful) => {
+    if (shutdownPromise !== null) return shutdownPromise;
+    shuttingDown = true;
+    input.pause();
+    scheduler.close(!graceful);
+    if (!graceful) client.close();
+    shutdownPromise = (async () => {
+      await scheduler.drain();
+      await client.drain();
+      exit(0);
+    })();
+    return shutdownPromise;
+  };
+
+  const handleFrame = (frame) => {
+    if (frame.oversized) {
+      respondError(
+        write,
+        null,
+        SANDBOX_MCP_RESOURCE_ERROR.frameMessage,
+        SANDBOX_MCP_RESOURCE_ERROR.code,
+      );
+      return null;
+    }
+    let request;
+    try {
+      request = JSON.parse(frame.text);
+    } catch {
+      return null;
+    }
+    if (request.id === undefined || request.id === null) {
+      if (request.method === "notifications/exit") {
+        void shutdown(true);
+        return "stop";
+      }
+      return null;
+    }
+    switch (request.method) {
+      case "initialize":
+        respond(write, request.id, {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "choir-sandbox", version: "1" },
+        });
+        return null;
+      case "tools/list":
+        respond(write, request.id, { tools: visibleTools });
+        return null;
+      case "tools/call": {
+        const admitted = scheduler.enqueue(frame.bytes, async () => {
+          try {
+            respond(
+              write,
+              request.id,
+              await dispatchTool(
+                client,
+                request.params?.name,
+                request.params?.arguments ?? {},
+              ),
+            );
+          } catch (error) {
+            respond(
+              write,
+              request.id,
+              toolText(
+                error instanceof Error ? error.message : "sandbox bridge failed",
+                true,
+              ),
+            );
+          }
+        });
+        if (!admitted.admitted) {
+          respondError(
+            write,
+            request.id,
+            SANDBOX_MCP_RESOURCE_ERROR.queueMessage,
+            SANDBOX_MCP_RESOURCE_ERROR.code,
+          );
+          return admitted.reason === "capacity" ? "hard-limit" : null;
+        }
+        // A canceled shutdown rejects queued entries before they start. The
+        // bridge has already stopped accepting input, so no response is owed.
+        admitted.promise.catch(() => {});
+        return admitted.atHighWater ? "high-water" : null;
+      }
+      case "ping":
+        respond(write, request.id, {});
+        return null;
+      default:
+        respondError(write, request.id, "unsupported method");
+        return null;
+    }
+  };
+
+  const processFrames = (frames) => {
+    for (let index = 0; index < frames.length; index += 1) {
+      const disposition = handleFrame(frames[index]);
+      if (disposition === "stop") return;
+      if (disposition !== "high-water" && disposition !== "hard-limit") continue;
+      input.pause();
+      paused = true;
+      // stdin is paused at the high-water mark. One frame may already have
+      // been split from the same bounded stream chunk; reject that overrun
+      // deterministically, then retain the bounded remainder until capacity
+      // returns.
+      if (disposition === "high-water" && index + 1 < frames.length) {
+        index += 1;
+        if (handleFrame(frames[index]) === "stop") return;
+      }
+      deferredFrames = frames.slice(index + 1);
+      return;
+    }
+  };
+
+  resumeInput = () => {
+    if (!paused || shuttingDown) return;
+    paused = false;
+    const frames = deferredFrames;
+    deferredFrames = [];
+    processFrames(frames);
+    if (!paused && !shuttingDown) input.resume();
+  };
+
+  const onData = (chunk) => {
+    if (!shuttingDown) processFrames(framer.push(chunk));
+  };
+  const onEnd = () => {
+    if (shuttingDown) return;
+    processFrames(framer.end());
+    if (!shuttingDown) void shutdown(false);
+  };
+  const onError = () => {
+    if (!shuttingDown) void shutdown(false);
+  };
+  input.on("data", onData);
+  input.once("end", onEnd);
+  input.once("error", onError);
+  return Object.freeze({ scheduler, shutdown });
 }
 
 export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
-  const visibleTools = toolsForAccess(client.config.access);
-  const input = readline.createInterface({ input: process.stdin, terminal: false });
-  let gracefulExitRequested = false;
-  const pendingResponses = new Set();
-  input.once("close", () => {
-    if (!gracefulExitRequested) {
-      client.close();
-      setImmediate(() => process.exit(0));
-    }
-  });
-  input.on("line", (line) => {
-    let request;
-    try {
-      request = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (request.id === undefined || request.id === null) {
-      if (request.method === "notifications/exit") {
-        gracefulExitRequested = true;
-        drainPendingResponses(pendingResponses, () => client.drain())
-          .finally(() => process.exit(0));
-      }
-      return;
-    }
-    const response = (async () => {
-      try {
-        switch (request.method) {
-          case "initialize":
-            respond(request.id, {
-              protocolVersion: "2024-11-05",
-              capabilities: { tools: {} },
-              serverInfo: { name: "choir-sandbox", version: "1" },
-            });
-            break;
-          case "tools/list":
-            respond(request.id, { tools: visibleTools });
-            break;
-          case "tools/call":
-            respond(request.id, await callTool(client, request.params?.name, request.params?.arguments ?? {}));
-            break;
-          case "ping":
-            respond(request.id, {});
-            break;
-          default:
-            respondError(request.id, "unsupported method");
-        }
-      } catch (error) {
-        respond(request.id, toolText(error instanceof Error ? error.message : "sandbox bridge failed", true));
-      }
-    })();
-    pendingResponses.add(response);
-    response.finally(() => pendingResponses.delete(response));
+  return runSandboxMcpBridge({
+    client,
+    visibleTools: toolsForAccess(client.config.access),
+    input: process.stdin,
+    write: (message) => process.stdout.write(message),
+    exit: (code) => process.exit(code),
   });
 }
 
