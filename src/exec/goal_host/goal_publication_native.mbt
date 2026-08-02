@@ -27,26 +27,81 @@ fn native_goal_remote_git_environment(
 }
 
 ///|
-async fn capture_native_goal_remote_git(
+priv enum NativeGoalRemoteGitCapture {
+  NativeGoalRemoteGitCompleted(Int, String)
+  NativeGoalRemoteGitInterrupted(String)
+  NativeGoalRemoteGitTimedOut(String)
+  NativeGoalRemoteGitOutputExceeded(String)
+}
+
+///|
+let native_goal_remote_git_output_limit_bytes : Int = 1024 * 1024
+
+///|
+let native_goal_remote_probe_timeout_ms : Int = 30000
+
+///|
+let native_goal_remote_push_timeout_ms : Int = 300000
+
+///|
+async fn capture_native_goal_remote_git_with_timeout(
   repository_root : String,
   arguments : Array[String],
-) -> Result[@git_integration.NativeGitCapture, @types.ChoirError] {
-  let captured = @process.collect_output_merged(
-    "/usr/bin/git",
-    arguments,
-    extra_env=native_goal_remote_git_environment(
-      @git_host.native_git_environment(false),
-    ),
-    inherit_env=false,
-    cwd=repository_root,
-  ) catch {
-    _ => return Err(native_goal_execution_error("remote Git process failed"))
+  timeout_ms : Int,
+) -> Result[NativeGoalRemoteGitCapture, @types.ChoirError] {
+  let (stdin_read, stdin_write) = @process.write_to_process() catch {
+    _ => return Err(native_goal_execution_error("remote Git input pipe failed"))
   }
-  let output = captured.1.text() catch {
-    _ =>
-      return Err(native_goal_execution_error("remote Git output is not UTF-8"))
+  stdin_write.close()
+  let captured = match
+    @process_host.capture_bounded_process(
+      "/usr/bin/git",
+      arguments,
+      native_goal_remote_git_environment(
+        @git_host.native_git_environment(false),
+      ),
+      stdin_read,
+      repository_root,
+      timeout_ms,
+      native_goal_remote_git_output_limit_bytes,
+      fn() { false },
+    ) {
+    Ok(value) => value
+    Err(_) =>
+      return Err(native_goal_execution_error("remote Git process failed"))
   }
-  Ok({ exit_code: captured.0, output })
+  Ok(
+    match captured {
+      @process_host.NativeProcessCompleted(code, output) =>
+        NativeGoalRemoteGitCompleted(code, output)
+      @process_host.NativeProcessInterrupted(detail) =>
+        NativeGoalRemoteGitInterrupted(detail)
+      @process_host.NativeProcessTimedOut(detail) =>
+        NativeGoalRemoteGitTimedOut(detail)
+      @process_host.NativeProcessOutputExceeded(detail) =>
+        NativeGoalRemoteGitOutputExceeded(detail)
+    },
+  )
+}
+
+///|
+async fn capture_native_goal_remote_probe(
+  repository_root : String,
+  arguments : Array[String],
+) -> Result[NativeGoalRemoteGitCapture, @types.ChoirError] {
+  capture_native_goal_remote_git_with_timeout(
+    repository_root, arguments, native_goal_remote_probe_timeout_ms,
+  )
+}
+
+///|
+async fn capture_native_goal_remote_push(
+  repository_root : String,
+  arguments : Array[String],
+) -> Result[NativeGoalRemoteGitCapture, @types.ChoirError] {
+  capture_native_goal_remote_git_with_timeout(
+    repository_root, arguments, native_goal_remote_push_timeout_ms,
+  )
 }
 
 ///|
@@ -105,6 +160,9 @@ test "remote Git remains sterile when SSH inputs are unavailable" {
 priv enum NativeRemoteBranchProbeFailureKind {
   RemoteProbeProcessFailure
   RemoteProbeExitFailure
+  RemoteProbeInterrupted
+  RemoteProbeTimedOut
+  RemoteProbeOutputExceeded
   RemoteProbeMalformedOutput
   RemoteProbeAmbiguousOutput
 } derive(Debug, Eq, ToJson)
@@ -230,12 +288,12 @@ async fn native_goal_publication_remote_identity(
 async fn native_remote_branch_probe_once(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
-  capture? : async (String, Array[String]) -> Result[
-    @git_integration.NativeGitCapture,
+  capture : async (String, Array[String]) -> Result[
+    NativeGoalRemoteGitCapture,
     @types.ChoirError,
-  ] = capture_native_goal_remote_git,
+  ],
 ) -> NativeRemoteBranchProbe {
-  let captured = match
+  let captured_outcome = match
     capture(repository.root, [
       "ls-remote",
       "--refs",
@@ -252,17 +310,44 @@ async fn native_remote_branch_probe_once(
         attempts: 1,
       }
   }
-  if captured.exit_code != 0 {
+  let (exit_code, output) = match captured_outcome {
+    NativeGoalRemoteGitCompleted(exit_code, output) => (exit_code, output)
+    NativeGoalRemoteGitInterrupted(detail) =>
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeInterrupted),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      }
+    NativeGoalRemoteGitTimedOut(detail) =>
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeTimedOut),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      }
+    NativeGoalRemoteGitOutputExceeded(detail) =>
+      return {
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeOutputExceeded),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      }
+  }
+  if exit_code != 0 {
     return {
       observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
       failure_kind: Some(RemoteProbeExitFailure),
-      exit_code: Some(captured.exit_code),
-      detail: native_remote_branch_probe_detail(captured.output),
+      exit_code: Some(exit_code),
+      detail: native_remote_branch_probe_detail(output),
       attempts: 1,
     }
   }
   let observed : Array[@control.GitOid] = []
-  for raw in captured.output.split("\n") {
+  for raw in output.split("\n") {
     let line = raw.trim().to_owned()
     if line == "" {
       continue
@@ -272,8 +357,8 @@ async fn native_remote_branch_probe_once(
       return {
         observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
         failure_kind: Some(RemoteProbeMalformedOutput),
-        exit_code: Some(captured.exit_code),
-        detail: native_remote_branch_probe_detail(captured.output),
+        exit_code: Some(exit_code),
+        detail: native_remote_branch_probe_detail(output),
         attempts: 1,
       }
     }
@@ -282,8 +367,8 @@ async fn native_remote_branch_probe_once(
       return {
         observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
         failure_kind: Some(RemoteProbeMalformedOutput),
-        exit_code: Some(captured.exit_code),
-        detail: native_remote_branch_probe_detail(captured.output),
+        exit_code: Some(exit_code),
+        detail: native_remote_branch_probe_detail(output),
         attempts: 1,
       }
     }
@@ -294,7 +379,7 @@ async fn native_remote_branch_probe_once(
       {
         observation: @workflow.RemoteBranchObservation::RemoteBranchAbsent,
         failure_kind: None,
-        exit_code: Some(captured.exit_code),
+        exit_code: Some(exit_code),
         detail: "",
         attempts: 1,
       }
@@ -302,7 +387,7 @@ async fn native_remote_branch_probe_once(
       {
         observation: @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
         failure_kind: None,
-        exit_code: Some(captured.exit_code),
+        exit_code: Some(exit_code),
         detail: "",
         attempts: 1,
       }
@@ -310,8 +395,8 @@ async fn native_remote_branch_probe_once(
       {
         observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
         failure_kind: Some(RemoteProbeAmbiguousOutput),
-        exit_code: Some(captured.exit_code),
-        detail: native_remote_branch_probe_detail(captured.output),
+        exit_code: Some(exit_code),
+        detail: native_remote_branch_probe_detail(output),
         attempts: 1,
       }
   }
@@ -321,10 +406,10 @@ async fn native_remote_branch_probe_once(
 async fn native_remote_branch_probe(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
-  capture? : async (String, Array[String]) -> Result[
-    @git_integration.NativeGitCapture,
+  capture : async (String, Array[String]) -> Result[
+    NativeGoalRemoteGitCapture,
     @types.ChoirError,
-  ] = capture_native_goal_remote_git,
+  ],
   wait? : async (Int) -> Unit = async fn(milliseconds) {
     @async.sleep(milliseconds)
   },
@@ -334,12 +419,12 @@ async fn native_remote_branch_probe(
     NativeRemoteBranchProbe,
   ) -> Unit = persist_native_remote_branch_probe_diagnostic,
 ) -> NativeRemoteBranchProbe {
-  let mut probe = native_remote_branch_probe_once(repository, intent, capture~)
+  let mut probe = native_remote_branch_probe_once(repository, intent, capture)
   while probe.observation
         is @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain &&
         probe.attempts < 3 {
     wait(if probe.attempts == 1 { 500 } else { 1500 })
-    let next = native_remote_branch_probe_once(repository, intent, capture~)
+    let next = native_remote_branch_probe_once(repository, intent, capture)
     probe = { ..next, attempts: probe.attempts + 1 }
   }
   persist(repository, intent, probe)
@@ -351,7 +436,9 @@ async fn native_remote_branch_observation(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
 ) -> @workflow.RemoteBranchObservation {
-  native_remote_branch_probe(repository, intent).observation
+  native_remote_branch_probe(
+    repository, intent, capture_native_goal_remote_probe,
+  ).observation
 }
 
 ///|
@@ -379,16 +466,17 @@ async test "publication preflight retries read-only observation with backoff" {
   let probe = native_remote_branch_probe(
     repository,
     intent,
-    capture=async fn(_, _) {
+    async fn(_, _) {
       @async.sleep(0)
       calls = calls + 1
       if calls < 3 {
-        Ok({
-          exit_code: 128,
-          output: "ssh: Could not resolve hostname github.com",
-        })
+        Ok(
+          NativeGoalRemoteGitCompleted(
+            128, "ssh: Could not resolve hostname github.com",
+          ),
+        )
       } else {
-        Ok({ exit_code: 0, output: "" })
+        Ok(NativeGoalRemoteGitCompleted(0, ""))
       }
     },
     wait=async fn(milliseconds) {
@@ -432,9 +520,9 @@ async test "publication preflight retains final failure diagnostics" {
   let probe = native_remote_branch_probe(
     repository,
     intent,
-    capture=async fn(_, _) {
+    async fn(_, _) {
       @async.sleep(0)
-      Ok({ exit_code: 128, output: "Permission denied (publickey)." })
+      Ok(NativeGoalRemoteGitCompleted(128, "Permission denied (publickey)."))
     },
     wait=async fn(_) { @async.sleep(0) },
     persist=fn(_, _, _) { () },
@@ -447,6 +535,89 @@ async test "publication preflight retains final failure diagnostics" {
     probe.observation,
     @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
   )
+}
+
+///|
+async test "publication preflight types bounded process failures" {
+  let intent : @workflow.BranchPublicationIntent = {
+    id: @workflow.BranchPublicationIntentId("probe-bounds-test"),
+    goal_id: @control.GoalId("goal-probe-bounds-test"),
+    canonical_repository_id: @workflow.RemoteRepositoryId("remote-test"),
+    remote_name: @workflow.RemoteName("origin"),
+    remote_head_ref: @workflow.GitRefName(
+      "refs/heads/choir/goals/probe-bounds-test",
+    ),
+    expected_prior_remote_oid: None,
+    sealed_head_oid: @control.GitOid("3333333333333333333333333333333333333333"),
+    goal_branch_seal_id: @control.GoalBranchSealId("seal-probe-bounds-test"),
+    goal_branch_seal_digest: @control.Digest("seal-digest"),
+    idempotency_key: "probe-bounds-test",
+    state: @workflow.BranchPublicationState::BranchPublicationPlanned,
+  }
+  let repository : NativeGoalRepositoryIdentity = {
+    root: "/unused",
+    git_directory: "/unused/.git",
+    object_directory: "/unused/.git/objects",
+  }
+  let timed_out = native_remote_branch_probe_once(repository, intent, async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+    Ok(NativeGoalRemoteGitTimedOut("https://secret@github.com/x/y"))
+  })
+  assert_eq(timed_out.failure_kind, Some(RemoteProbeTimedOut))
+  assert_false(timed_out.detail.contains("secret"))
+  let exceeded = native_remote_branch_probe_once(repository, intent, async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+    Ok(NativeGoalRemoteGitOutputExceeded("bounded tail"))
+  })
+  assert_eq(exceeded.failure_kind, Some(RemoteProbeOutputExceeded))
+  let interrupted = native_remote_branch_probe_once(repository, intent, async fn(
+    _,
+    _,
+  ) {
+    @async.sleep(0)
+    Ok(NativeGoalRemoteGitInterrupted("bounded tail"))
+  })
+  assert_eq(interrupted.failure_kind, Some(RemoteProbeInterrupted))
+  assert_eq(native_goal_remote_git_output_limit_bytes, 1048576)
+  assert_eq(native_goal_remote_probe_timeout_ms, 30000)
+  assert_eq(native_goal_remote_push_timeout_ms, 300000)
+}
+
+///|
+test "publication push failures retain mutation uncertainty" {
+  assert_true(
+    native_goal_publication_push_probe(
+      Ok(NativeGoalRemoteGitCompleted(0, "ok")),
+    )
+    is None,
+  )
+  guard native_goal_publication_push_probe(
+      Ok(NativeGoalRemoteGitCompleted(1, "rejected")),
+    )
+    is Some(rejected) else {
+    fail("nonzero push was treated as successful")
+  }
+  assert_eq(rejected.failure_kind, Some(RemoteProbeExitFailure))
+  guard native_goal_publication_push_probe(
+      Ok(NativeGoalRemoteGitTimedOut("timed out")),
+    )
+    is Some(timed_out) else {
+    fail("timed-out push was treated as successful")
+  }
+  assert_eq(timed_out.failure_kind, Some(RemoteProbeTimedOut))
+  guard native_goal_publication_push_probe(
+      Ok(NativeGoalRemoteGitOutputExceeded("too much")),
+    )
+    is Some(exceeded) else {
+    fail("oversized push was treated as successful")
+  }
+  assert_eq(exceeded.failure_kind, Some(RemoteProbeOutputExceeded))
 }
 
 ///|
@@ -475,7 +646,7 @@ async fn native_publication_prior_is_ancestor(
 async fn publish_native_goal_ref(
   repository : NativeGoalRepositoryIdentity,
   intent : @workflow.BranchPublicationIntent,
-) -> Unit {
+) -> Result[NativeGoalRemoteGitCapture, @types.ChoirError] {
   let expected_remote = match intent.expected_prior_remote_oid {
     Some(oid) => oid.0
     None => ""
@@ -487,18 +658,80 @@ async fn publish_native_goal_ref(
   // The exact prior OID is part of the remote mutation, closing the race
   // between preflight observation and push. Authorization separately proves
   // ancestry, so the lease never authorizes a non-fast-forward transition.
-  ignore(
-    capture_native_goal_remote_git(repository.root, [
-      "-c",
-      "core.hooksPath=/dev/null",
-      "push",
-      "--porcelain",
-      "--no-verify",
-      lease,
-      intent.remote_name.0,
-      intent.sealed_head_oid.0 + ":" + intent.remote_head_ref.0,
-    ]),
-  )
+  capture_native_goal_remote_push(repository.root, [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "push",
+    "--porcelain",
+    "--no-verify",
+    lease,
+    intent.remote_name.0,
+    intent.sealed_head_oid.0 + ":" + intent.remote_head_ref.0,
+  ])
+}
+
+///|
+fn native_goal_publication_push_probe(
+  outcome : Result[NativeGoalRemoteGitCapture, @types.ChoirError],
+) -> NativeRemoteBranchProbe? {
+  match outcome {
+    Ok(NativeGoalRemoteGitCompleted(0, _)) => None
+    Ok(NativeGoalRemoteGitCompleted(code, detail)) =>
+      Some({
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeExitFailure),
+        exit_code: Some(code),
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      })
+    Ok(NativeGoalRemoteGitInterrupted(detail)) =>
+      Some({
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeInterrupted),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      })
+    Ok(NativeGoalRemoteGitTimedOut(detail)) =>
+      Some({
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeTimedOut),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      })
+    Ok(NativeGoalRemoteGitOutputExceeded(detail)) =>
+      Some({
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeOutputExceeded),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(detail),
+        attempts: 1,
+      })
+    Err(error) =>
+      Some({
+        observation: @workflow.RemoteBranchObservation::RemoteBranchObservationUncertain,
+        failure_kind: Some(RemoteProbeProcessFailure),
+        exit_code: None,
+        detail: native_remote_branch_probe_detail(error.message()),
+        attempts: 1,
+      })
+  }
+}
+
+///|
+async fn native_goal_publication_observe_push(
+  repository : NativeGoalRepositoryIdentity,
+  intent : @workflow.BranchPublicationIntent,
+  outcome : Result[NativeGoalRemoteGitCapture, @types.ChoirError],
+) -> @workflow.RemoteBranchObservation {
+  match native_goal_publication_push_probe(outcome) {
+    None => native_remote_branch_observation(repository, intent)
+    Some(probe) => {
+      persist_native_remote_branch_probe_diagnostic(repository, intent, probe)
+      probe.observation
+    }
+  }
 }
 
 ///|
@@ -732,7 +965,7 @@ pub async fn advance_native_goal_publication(
                   false,
                 )
               @workflow.RemoteBranchObservation::RemoteBranchAbsent => {
-                publish_native_goal_ref(git, stored.record.intent)
+                let push = publish_native_goal_ref(git, stored.record.intent)
                 if fault ==
                   Some(
                     @workflow.GoalPublicationFaultPoint::PublicationAfterRemoteUpdateBeforeResponse,
@@ -742,7 +975,11 @@ pub async fn advance_native_goal_publication(
                   )
                 }
                 (
-                  native_remote_branch_observation(git, stored.record.intent),
+                  native_goal_publication_observe_push(
+                    git,
+                    stored.record.intent,
+                    push,
+                  ),
                   @workflow.BranchPublicationReceiptOrigin::BranchPublicationMutationApplied,
                   None,
                   true,
@@ -750,7 +987,7 @@ pub async fn advance_native_goal_publication(
               }
               @workflow.RemoteBranchObservation::RemoteBranchAt(oid) if stored.record.intent.expected_prior_remote_oid ==
                 Some(oid) => {
-                publish_native_goal_ref(git, stored.record.intent)
+                let push = publish_native_goal_ref(git, stored.record.intent)
                 if fault ==
                   Some(
                     @workflow.GoalPublicationFaultPoint::PublicationAfterRemoteUpdateBeforeResponse,
@@ -760,7 +997,11 @@ pub async fn advance_native_goal_publication(
                   )
                 }
                 (
-                  native_remote_branch_observation(git, stored.record.intent),
+                  native_goal_publication_observe_push(
+                    git,
+                    stored.record.intent,
+                    push,
+                  ),
                   @workflow.BranchPublicationReceiptOrigin::BranchPublicationMutationApplied,
                   Some(oid),
                   true,
@@ -1007,7 +1248,7 @@ async test "real exec integration: native Goal publication creates, adopts, and 
   if create_race.exit_code != 0 {
     fail("failed to install concurrent publication creation")
   }
-  publish_native_goal_ref(repository, create_race_intent)
+  ignore(publish_native_goal_ref(repository, create_race_intent))
   assert_eq(
     native_remote_branch_observation(repository, create_race_intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(middle_oid),
@@ -1029,7 +1270,7 @@ async test "real exec integration: native Goal publication creates, adopts, and 
   if exact_prior.exit_code != 0 {
     fail("failed to install exact publication prior")
   }
-  publish_native_goal_ref(repository, exact_update_intent)
+  ignore(publish_native_goal_ref(repository, exact_update_intent))
   assert_eq(
     native_remote_branch_observation(repository, exact_update_intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
@@ -1051,7 +1292,7 @@ async test "real exec integration: native Goal publication creates, adopts, and 
   if raced_prior.exit_code != 0 {
     fail("failed to install concurrent publication update")
   }
-  publish_native_goal_ref(repository, update_race_intent)
+  ignore(publish_native_goal_ref(repository, update_race_intent))
   assert_eq(
     native_remote_branch_observation(repository, update_race_intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(middle_oid),
@@ -1060,12 +1301,12 @@ async test "real exec integration: native Goal publication creates, adopts, and 
     native_remote_branch_observation(repository, intent),
     @workflow.RemoteBranchObservation::RemoteBranchAbsent,
   )
-  publish_native_goal_ref(repository, intent)
+  ignore(publish_native_goal_ref(repository, intent))
   assert_eq(
     native_remote_branch_observation(repository, intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
   )
-  publish_native_goal_ref(repository, intent)
+  ignore(publish_native_goal_ref(repository, intent))
   assert_eq(
     native_remote_branch_observation(repository, intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(oid),
@@ -1089,7 +1330,7 @@ async test "real exec integration: native Goal publication creates, adopts, and 
   if other.exit_code != 0 || drift.exit_code != 0 {
     fail("failed to install remote drift")
   }
-  publish_native_goal_ref(repository, intent)
+  ignore(publish_native_goal_ref(repository, intent))
   assert_eq(
     native_remote_branch_observation(repository, intent),
     @workflow.RemoteBranchObservation::RemoteBranchAt(

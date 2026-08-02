@@ -912,6 +912,7 @@ pub async fn run_native_work_order_execution_job(
         snapshot,
         @process_host.capture_command_merged,
         lease.fencing_epoch,
+        dependency_delivery_observer=@goal_host.observe_native_goal_dependency_delivery,
       )
     },
   )
@@ -1082,6 +1083,12 @@ pub async fn admit_observed_native_work_order_successor(
   snapshot : NativeWorkOrderPlanningSnapshot,
   capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch : @control.FencingEpoch,
+  dependency_delivery_observer? : async (
+    String,
+    @workflow.PartWorkflowRepository,
+    @workflow.PartWorkflowRepositoryAdapters,
+    @workflow.GoalExecutionRecord,
+  ) -> @workflow.GoalDependencyDeliveryState = @goal_host.unobserved_native_goal_dependency_delivery,
 ) -> Result[@goal_host.NativeConductorGoalSubmissionReport, @types.ChoirError] {
   let state_root = project_dir + "/.choir/state/control"
   let repository : @workflow.PartWorkflowRepository = {
@@ -1176,6 +1183,7 @@ pub async fn admit_observed_native_work_order_successor(
       work_order_primary_targets=Some(proposal.primary_target_ids),
       nfc_available=@process_host.native_path_nfc_available,
       is_nfc=@process_host.native_path_is_nfc,
+      dependency_delivery_observer~,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1205,7 +1213,12 @@ pub async fn admit_native_work_order_successor(
     Err(error) => return Err(error)
   }
   admit_observed_native_work_order_successor(
-    project_dir, work_order_id, snapshot, capture, fencing_epoch,
+    project_dir,
+    work_order_id,
+    snapshot,
+    capture,
+    fencing_epoch,
+    dependency_delivery_observer=@goal_host.observe_native_goal_dependency_delivery,
   )
 }
 

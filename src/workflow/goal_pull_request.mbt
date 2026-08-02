@@ -388,7 +388,11 @@ fn pull_request_receipt_matches_snapshot(
   snapshot.base_repository_id == intent.base_repository_id &&
   snapshot.base_ref == intent.base_ref &&
   snapshot.observed_head_oid == intent.expected_head_oid &&
-  snapshot.marker_state == PullRequestMarkerState::PullRequestMarkerExact
+  snapshot.marker_state == PullRequestMarkerState::PullRequestMarkerExact &&
+  snapshot.title_digest ==
+  @storage.artifact_digest(@utf8.encode(intent.document.title)) &&
+  snapshot.body_digest ==
+  @storage.artifact_digest(@utf8.encode(intent.document.body))
 }
 
 ///|
@@ -479,6 +483,10 @@ fn goal_pull_request_record_shape_is_valid(
       receipt.goal_branch_seal_digest == record.intent.goal_branch_seal_digest &&
       receipt.observed_marker_state ==
       PullRequestMarkerState::PullRequestMarkerExact &&
+      receipt.observed_title_digest ==
+      @storage.artifact_digest(@utf8.encode(record.intent.document.title)) &&
+      receipt.observed_body_digest ==
+      @storage.artifact_digest(@utf8.encode(record.intent.document.body)) &&
       receipt.observed_at > 0L &&
       record.intent.canonical_remote_pull_request_id ==
       Some(receipt.remote_pull_request_id)

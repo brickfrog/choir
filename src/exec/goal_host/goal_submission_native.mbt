@@ -667,7 +667,7 @@ fn native_goal_dependency_pull_request_snapshot(
 }
 
 ///|
-async fn observe_native_goal_dependency_delivery(
+pub async fn observe_native_goal_dependency_delivery(
   project_dir : String,
   repository : @workflow.PartWorkflowRepository,
   adapters : @workflow.PartWorkflowRepositoryAdapters,
@@ -715,6 +715,20 @@ async fn observe_native_goal_dependency_delivery(
     @workflow.RemotePullRequestState::RemotePullRequestClosed =>
       @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestClosed
   }
+}
+
+///|
+/// Fail closed when a caller has not been given remote-observation authority.
+/// Native composition roots inject `observe_native_goal_dependency_delivery`;
+/// narrow callers and tests can retain a hermetic submission path.
+pub async fn unobserved_native_goal_dependency_delivery(
+  _project_dir : String,
+  _repository : @workflow.PartWorkflowRepository,
+  _adapters : @workflow.PartWorkflowRepositoryAdapters,
+  _execution : @workflow.GoalExecutionRecord,
+) -> @workflow.GoalDependencyDeliveryState {
+  @async.sleep(0)
+  @workflow.GoalDependencyDeliveryState::GoalDependencyPullRequestObservationUncertain
 }
 
 ///|
@@ -1649,7 +1663,7 @@ pub async fn submit_native_conductor_goal_draft(
     @workflow.PartWorkflowRepository,
     @workflow.PartWorkflowRepositoryAdapters,
     @workflow.GoalExecutionRecord,
-  ) -> @workflow.GoalDependencyDeliveryState = observe_native_goal_dependency_delivery,
+  ) -> @workflow.GoalDependencyDeliveryState = unobserved_native_goal_dependency_delivery,
 ) -> Result[NativeConductorGoalSubmissionReport, @types.ChoirError] {
   if !nfc_available() {
     return Err(

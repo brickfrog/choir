@@ -9,6 +9,7 @@ import {
   "choir/src/mcp",
   "choir/src/sys",
   "choir/src/types",
+  "choir/src/workflow",
   "moonbitlang/async",
   "moonbitlang/async/process",
   "moonbitlang/core/env",

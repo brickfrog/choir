@@ -3649,8 +3649,12 @@ pub fn cancellation_ordering_matrix_case() -> HermeticConformanceCase {
         draft: false,
         auto_merge_enabled: false,
         marker_state: @workflow.PullRequestMarkerState::PullRequestMarkerExact,
-        title_digest: audit_fixture_digest_a,
-        body_digest: audit_fixture_digest_b,
+        title_digest: @storage.artifact_digest(
+          @utf8.encode(pull_request.intent.document.title),
+        ),
+        body_digest: @storage.artifact_digest(
+          @utf8.encode(pull_request.intent.document.body),
+        ),
       }
       let abandoned_pull_request = match
         @workflow.record_goal_pull_request_cancellation(
