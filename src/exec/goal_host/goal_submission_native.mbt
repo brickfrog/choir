@@ -1776,6 +1776,11 @@ pub async fn submit_native_conductor_goal_draft(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  match
+    @workflow.validate_conductor_goal_draft_graph(draft, integration_snapshot) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let dependency_observations = match
     capture_native_goal_dependency_observations(
       project_dir, repository, adapters, draft, integration_snapshot, dependency_delivery_observer,

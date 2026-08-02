@@ -328,6 +328,82 @@ test "Conductor draft rejects Git refs owned by choird" {
 }
 
 ///|
+fn bounded_conductor_draft(instruction : String) -> String {
+  "{\"proposal_id\":\"bounded-proposal\",\"goal_id\":\"bounded-goal\",\"pull_request\":{\"title\":\"test: bound Conductor draft\",\"body\":\"Exercises the aggregate draft boundary.\"},\"maximum_parallel_parts\":1,\"parts\":[{\"part_id\":\"bounded-part\",\"commit_title\":\"test: bound Conductor draft\",\"instruction\":\"" +
+  instruction +
+  "\",\"repository_wide\":true,\"moon_args\":[\"test\"]}]}"
+}
+
+///|
+fn conductor_part_row(index : Int, part_id? : String) -> String {
+  let id = part_id.unwrap_or("part-" + index.to_string())
+  "{\"part_id\":\"" +
+  id +
+  "\",\"commit_title\":\"test: bound Part count\",\"instruction\":\"x\",\"repository_wide\":true,\"moon_args\":[\"test\"]}"
+}
+
+///|
+test "Conductor draft byte ceiling is inclusive and measured as UTF-8" {
+  let ceiling = 1048576
+  let empty = bounded_conductor_draft("")
+  let fixed_bytes = @utf8.encode(empty).length()
+  for target in [ceiling - 1, ceiling] {
+    let encoded = bounded_conductor_draft("x".repeat(target - fixed_bytes))
+    assert_eq(@utf8.encode(encoded).length(), target)
+    match @workflow.decode_conductor_goal_draft(encoded) {
+      Ok(_) => ()
+      Err(error) => fail(error.message())
+    }
+  }
+  let oversized = bounded_conductor_draft("x".repeat(ceiling + 1 - fixed_bytes))
+  assert_eq(@utf8.encode(oversized).length(), ceiling + 1)
+  match @workflow.decode_conductor_goal_draft(oversized) {
+    Err(error) => assert_true(error.message().contains("exceeds byte limit"))
+    Ok(_) => fail("a Conductor draft above 1 MiB was admitted")
+  }
+  let multibyte = bounded_conductor_draft(
+    "é".repeat((ceiling - fixed_bytes) / 2 + 1),
+  )
+  assert_true(@utf8.encode(multibyte).length() > ceiling)
+  match @workflow.decode_conductor_goal_draft(multibyte) {
+    Err(error) => assert_true(error.message().contains("exceeds byte limit"))
+    Ok(_) => fail("a multibyte Conductor draft above 1 MiB was admitted")
+  }
+}
+
+///|
+test "Conductor draft Part ceiling is inclusive and duplicates fail closed" {
+  for count in [255, 256, 257] {
+    let rows = Array::makei(count, fn(index) { conductor_part_row(index) })
+    let encoded = "{\"proposal_id\":\"part-count\",\"goal_id\":\"part-count-goal\",\"pull_request\":{\"title\":\"test: bound Part count\",\"body\":\"Exercises the aggregate Part boundary.\"},\"maximum_parallel_parts\":1,\"parts\":[" +
+      rows.join(",") +
+      "]}"
+    let result = @workflow.decode_conductor_goal_draft(encoded)
+    if count <= 256 {
+      match result {
+        Ok(draft) => assert_eq(draft.parts.length(), count)
+        Err(error) => fail(error.message())
+      }
+    } else {
+      match result {
+        Err(error) =>
+          assert_true(error.message().contains("exceeds Part limit"))
+        Ok(_) => fail("257 Conductor Parts were admitted")
+      }
+    }
+  }
+  let duplicated = "{\"proposal_id\":\"duplicate\",\"goal_id\":\"duplicate-goal\",\"pull_request\":{\"title\":\"test: reject duplicate Part\",\"body\":\"Rejects duplicate selected Part identities.\"},\"maximum_parallel_parts\":1,\"parts\":[" +
+    conductor_part_row(0, part_id="duplicate-part") +
+    "," +
+    conductor_part_row(1, part_id="duplicate-part") +
+    "]}"
+  match @workflow.decode_conductor_goal_draft(duplicated) {
+    Err(error) => assert_true(error.message().contains("graph is invalid"))
+    Ok(_) => fail("duplicate selected Part identities were admitted")
+  }
+}
+
+///|
 test "Beads capture snapshots blocking dependencies and relevant revisions" {
   let snapshot = match
     @workflow.goal_selection_snapshot_from_beads_json(
@@ -399,4 +475,72 @@ test "Beads capture rejects incomplete dependency details" {
     )
     is Err(_),
   )
+}
+
+///|
+test "indexed Beads capture coalesces identical records and rejects conflicts" {
+  let identical =
+    #|[{"id":"choir-same","title":"Same","description":"Same record","acceptance_criteria":"Same result","status":"open","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-20T00:00:00Z"},{"id":"choir-same","title":"Same","description":"Same record","acceptance_criteria":"Same result","status":"open","priority":2,"issue_type":"task","dependency_count":0,"updated_at":"2026-07-20T00:00:00Z"}]
+  let coalesced = @workflow.goal_selection_snapshot_from_beads_json(
+    @workflow.RepositoryId("repository-indexed"),
+    @control.GitOid("base-commit"),
+    @control.GitOid("base-tree"),
+    identical,
+  ).unwrap()
+  assert_eq(coalesced.parts.length(), 1)
+  let conflicting = identical.replace_all(
+    old="2026-07-20T00:00:00Z\"}]",
+    new="2026-07-20T00:00:01Z\"}]",
+  )
+  match
+    @workflow.goal_selection_snapshot_from_beads_json(
+      @workflow.RepositoryId("repository-indexed"),
+      @control.GitOid("base-commit"),
+      @control.GitOid("base-tree"),
+      conflicting,
+    ) {
+    Err(error) => assert_true(error.message().contains("conflicting source"))
+    Ok(_) => fail("conflicting repeated Beads records were coalesced")
+  }
+}
+
+///|
+test "selection snapshot decoder rejects duplicate and missing indexed records" {
+  let digest = @storage.artifact_digest(@utf8.encode("snapshot-index-test"))
+  let dependency = @control.PartId("dependency")
+  let source : @workflow.GoalSelectionSourcePart = {
+    part_id: @control.PartId("selected"),
+    source_revision_digest: digest,
+    source_content_digest: digest,
+    dependency_ids: [dependency],
+    state: @workflow.SelectionSourceState::SelectionSourceOpen,
+  }
+  let snapshot : @workflow.GoalSelectionSnapshot = {
+    repository_id: @workflow.RepositoryId("repository-indexed"),
+    base_commit_oid: @control.GitOid("base-commit"),
+    base_tree_oid: @control.GitOid("base-tree"),
+    parts: [source, { ..source, part_id: dependency, dependency_ids: [] }],
+  }
+  assert_true(
+    @workflow.decode_goal_selection_snapshot(
+      @workflow.goal_selection_snapshot_bytes(snapshot),
+    )
+    is Ok(_),
+  )
+  let duplicated = { ..snapshot, parts: [source, source] }
+  match
+    @workflow.decode_goal_selection_snapshot(
+      @workflow.goal_selection_snapshot_bytes(duplicated),
+    ) {
+    Err(error) => assert_true(error.message().contains("duplicate Parts"))
+    Ok(_) => fail("a duplicate source snapshot was admitted")
+  }
+  let missing = { ..snapshot, parts: [source] }
+  match
+    @workflow.decode_goal_selection_snapshot(
+      @workflow.goal_selection_snapshot_bytes(missing),
+    ) {
+    Err(error) => assert_true(error.message().contains("dependency is absent"))
+    Ok(_) => fail("a source snapshot with a missing dependency was admitted")
+  }
 }

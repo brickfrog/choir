@@ -255,12 +255,15 @@ fn sorted_part_ids(ids : Array[@control.PartId]) -> Array[@control.PartId] {
 fn unique_sorted_part_ids(
   ids : Array[@control.PartId],
 ) -> Array[@control.PartId] {
+  let seen : Map[@control.PartId, Unit] = Map([])
   let unique : Array[@control.PartId] = []
-  for id in sorted_part_ids(ids) {
-    if !unique.contains(id) {
+  for id in ids {
+    if !seen.contains(id) {
+      seen[id] = ()
       unique.push(id)
     }
   }
+  unique.sort_by(fn(left, right) { left.compare(right) })
   unique
 }
 
@@ -281,19 +284,6 @@ fn valid_git_ref_name(name : GitRefName) -> Bool {
   !value.contains("?") &&
   !value.contains("*") &&
   !value.contains("[")
-}
-
-///|
-fn source_part(
-  snapshot : GoalSelectionSnapshot,
-  part_id : @control.PartId,
-) -> GoalSelectionSourcePart? {
-  for part in snapshot.parts {
-    if part.part_id == part_id {
-      return Some(part)
-    }
-  }
-  None
 }
 
 ///|
@@ -318,13 +308,25 @@ pub fn select_goal_submission_base(
   integration_target_ref : GitRefName,
   observations : Array[GoalDependencyDeliveryObservation],
 ) -> GoalSubmissionBaseDecision {
+  let source_index : Map[@control.PartId, GoalSelectionSourcePart] = Map([])
+  for part in snapshot.parts {
+    if !source_index.contains(part.part_id) {
+      source_index[part.part_id] = part
+    }
+  }
+  let proposed_part_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in proposed_part_ids {
+    proposed_part_index[part_id] = ()
+  }
   let external_dependency_ids : Array[@control.PartId] = []
+  let external_dependency_index : Map[@control.PartId, Unit] = Map([])
   for proposed_part_id in proposed_part_ids {
-    match source_part(snapshot, proposed_part_id) {
+    match source_index.get(proposed_part_id) {
       Some(part) =>
         for dependency_id in part.dependency_ids {
-          if !proposed_part_ids.contains(dependency_id) &&
-            !external_dependency_ids.contains(dependency_id) {
+          if !proposed_part_index.contains(dependency_id) &&
+            !external_dependency_index.contains(dependency_id) {
+            external_dependency_index[dependency_id] = ()
             external_dependency_ids.push(dependency_id)
           }
         }
@@ -400,47 +402,30 @@ pub fn select_goal_submission_base(
 }
 
 ///|
-fn proposed_part(
-  proposal : GoalProposal,
-  part_id : @control.PartId,
-) -> ConductorPartProposal? {
-  for part in proposal.parts {
-    if part.part_id == part_id {
-      return Some(part)
-    }
-  }
-  None
-}
-
-///|
-fn proposal_part_count(
-  proposal : GoalProposal,
-  part_id : @control.PartId,
-) -> Int {
-  let mut count = 0
-  for part in proposal.parts {
-    if part.part_id == part_id {
-      count = count + 1
-    }
-  }
-  count
-}
-
-///|
 fn add_rejection(
-  rejections : Array[PartSelectionRejection],
+  rejections : Map[@control.PartId, Array[SelectionRejectionReason]],
   part_id : @control.PartId,
   reason : SelectionRejectionReason,
 ) -> Unit {
-  for rejection in rejections {
-    if rejection.part_id == part_id {
-      if !rejection.reasons.contains(reason) {
-        rejection.reasons.push(reason)
-      }
-      return
+  match rejections.get(part_id) {
+    Some(reasons) => if !reasons.contains(reason) { reasons.push(reason) }
+    None => rejections[part_id] = [reason]
+  }
+}
+
+///|
+fn sorted_rejections(
+  ids : Array[@control.PartId],
+  rejections : Map[@control.PartId, Array[SelectionRejectionReason]],
+) -> Array[PartSelectionRejection] {
+  let result : Array[PartSelectionRejection] = []
+  for part_id in ids {
+    match rejections.get(part_id) {
+      Some(reasons) => result.push({ part_id, reasons })
+      None => ()
     }
   }
-  rejections.push({ part_id, reasons: [reason] })
+  result
 }
 
 ///|
@@ -454,85 +439,21 @@ fn snapshot_part_requires_selection(part : GoalSelectionSourcePart) -> Bool {
 }
 
 ///|
-fn proposal_path_reaches(
-  proposal : GoalProposal,
-  current : @control.PartId,
-  target : @control.PartId,
-  visited : Array[@control.PartId],
-) -> Bool {
-  if current == target {
-    return true
-  }
-  if visited.contains(current) {
-    return false
-  }
-  let next_visited = visited.copy()
-  next_visited.push(current)
-  match proposed_part(proposal, current) {
-    Some(part) =>
-      part.dependency_ids.any(fn(dependency_id) {
-        proposal_path_reaches(proposal, dependency_id, target, next_visited)
-      })
-    None => false
-  }
-}
-
-///|
-fn proposal_part_has_cycle(
-  proposal : GoalProposal,
-  part : ConductorPartProposal,
-) -> Bool {
-  part.dependency_ids.any(fn(dependency_id) {
-    proposal_path_reaches(proposal, dependency_id, part.part_id, [])
-  })
-}
-
-///|
-/// Dependency-first deterministic selection order. Part identity breaks ties
-/// only after dependency precedence has been exhausted.
-fn proposal_dependency_order(
-  proposal : GoalProposal,
-  ids : Array[@control.PartId],
-) -> Array[@control.PartId] {
-  let mut remaining = ids.copy()
-  let ordered : Array[@control.PartId] = []
-  while remaining.length() > 0 {
-    let ready = remaining.filter(fn(id) {
-      match proposed_part(proposal, id) {
-        Some(part) =>
-          part.dependency_ids.all(fn(dependency_id) {
-            !ids.contains(dependency_id) || ordered.contains(dependency_id)
-          })
-        None => true
-      }
-    })
-    ready.sort_by(fn(left, right) { left.compare(right) })
-    if ready.length() == 0 {
-      let fallback = remaining.copy()
-      fallback.sort_by(fn(left, right) { left.compare(right) })
-      for id in fallback {
-        ordered.push(id)
-      }
-      break
-    }
-    for id in ready {
-      ordered.push(id)
-    }
-    remaining = remaining.filter(fn(id) { !ready.contains(id) })
-  }
-  ordered
-}
-
-///|
 fn validate_selection_snapshot(
   snapshot : GoalSelectionSnapshot,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[Map[@control.PartId, GoalSelectionSourcePart], @types.ChoirError] {
   if snapshot.repository_id.0 == "" ||
     snapshot.repository_id.0.contains("\u{00}") {
     return Err(goal_submission_error("repository identity is invalid"))
   }
-  for index = 0; index < snapshot.parts.length(); index = index + 1 {
-    let part = snapshot.parts[index]
+  let source_index : Map[@control.PartId, GoalSelectionSourcePart] = Map([])
+  for part in snapshot.parts {
+    if source_index.contains(part.part_id) {
+      return Err(goal_submission_error("source snapshot has duplicate Parts"))
+    }
+    source_index[part.part_id] = part
+  }
+  for part in snapshot.parts {
     match @storage.validate_digest(part.source_revision_digest) {
       Ok(_) => ()
       Err(_) => return Err(goal_submission_error("source revision is invalid"))
@@ -541,21 +462,13 @@ fn validate_selection_snapshot(
       Ok(_) => ()
       Err(_) => return Err(goal_submission_error("source content is invalid"))
     }
-    if part.dependency_ids.contains(part.part_id) {
-      return Err(goal_submission_error("source dependency is self-referential"))
-    }
-    for other = index + 1; other < snapshot.parts.length(); other = other + 1 {
-      if part.part_id == snapshot.parts[other].part_id {
-        return Err(goal_submission_error("source snapshot has duplicate Parts"))
-      }
-    }
     for dependency_id in part.dependency_ids {
-      if source_part(snapshot, dependency_id) is None {
+      if !source_index.contains(dependency_id) {
         return Err(goal_submission_error("source dependency is absent"))
       }
     }
   }
-  Ok(())
+  Ok(source_index)
 }
 
 ///|
@@ -644,9 +557,19 @@ pub fn evaluate_goal_proposal(
   snapshot : GoalSelectionSnapshot,
   is_nfc : (String) -> Bool,
 ) -> Result[GoalSelectionDecision, @types.ChoirError] {
-  match validate_selection_snapshot(snapshot) {
-    Ok(_) => ()
+  let graph_analysis = match
+    analyze_goal_proposal_graph(
+      goal_proposal_graph_rows(proposal),
+      Some(snapshot),
+    ) {
+    Ok(value) => value
     Err(error) => return Err(error)
+  }
+  let proposal_index : Map[@control.PartId, ConductorPartProposal] = Map([])
+  for part in proposal.parts {
+    if !proposal_index.contains(part.part_id) {
+      proposal_index[part.part_id] = part
+    }
   }
   if proposal.id.0 == "" || proposal.id.0.contains("\u{00}") {
     return Err(goal_submission_error("proposal_id is invalid"))
@@ -722,15 +645,17 @@ pub fn evaluate_goal_proposal(
       ),
     )
   }
-  let proposed_part_ids = unique_sorted_part_ids(
-    proposal.parts.map(fn(part) { part.part_id }),
-  )
+  let proposed_part_ids = graph_analysis.canonical_part_ids
+  let proposed_part_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in proposed_part_ids {
+    proposed_part_index[part_id] = ()
+  }
   let primary_target_ids = match proposal.work_order_id {
     Some(_) => unique_sorted_part_ids(proposal.work_order_primary_target_ids)
-    None => proposal_dependency_order(proposal, proposed_part_ids)
+    None => graph_analysis.dependency_order
   }
   if primary_target_ids.length() == 0 ||
-    primary_target_ids.any(fn(id) { !proposed_part_ids.contains(id) }) ||
+    primary_target_ids.any(fn(id) { !proposed_part_index.contains(id) }) ||
     (
       proposal.work_order_id is Some(_) &&
       proposal.work_order_primary_target_ids.length() !=
@@ -738,11 +663,31 @@ pub fn evaluate_goal_proposal(
     ) {
     return Err(goal_submission_error("WorkOrder primary targets are invalid"))
   }
-  let dependency_order = proposal_dependency_order(proposal, proposed_part_ids)
+  let dependency_order = graph_analysis.dependency_order
+  let primary_target_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in primary_target_ids {
+    primary_target_index[part_id] = ()
+  }
   let prerequisite_closure_ids = dependency_order.filter(fn(id) {
-    !primary_target_ids.contains(id)
+    !primary_target_index.contains(id)
   })
-  let rejections : Array[PartSelectionRejection] = []
+  let rejection_index : Map[@control.PartId, Array[SelectionRejectionReason]] = Map([],
+  )
+  let duplicate_part_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in graph_analysis.duplicate_part_ids {
+    duplicate_part_index[part_id] = ()
+  }
+  for part_id in graph_analysis.duplicate_dependency_part_ids {
+    duplicate_part_index[part_id] = ()
+  }
+  let cyclic_part_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in graph_analysis.cyclic_part_ids {
+    cyclic_part_index[part_id] = ()
+  }
+  let missing_dependency_index : Map[@control.PartId, Unit] = Map([])
+  for part_id in graph_analysis.missing_dependency_part_ids {
+    missing_dependency_index[part_id] = ()
+  }
   let migration_refs = proposal.parts.filter_map(fn(part) {
     part.task_contract.migration_contract_ref
   })
@@ -781,51 +726,59 @@ pub fn evaluate_goal_proposal(
       expected_continuation_digest
   }
   for part_id in proposed_part_ids {
-    if proposal_part_count(proposal, part_id) > 1 {
-      add_rejection(rejections, part_id, SelectionDuplicate)
+    if duplicate_part_index.contains(part_id) {
+      add_rejection(rejection_index, part_id, SelectionDuplicate)
       continue
     }
-    let part = match proposed_part(proposal, part_id) {
+    let part = match proposal_index.get(part_id) {
       Some(value) => value
       None => continue
     }
-    let source = match source_part(snapshot, part_id) {
+    let graph_row = match graph_analysis.row_index.get(part_id) {
+      Some(value) => value
+      None => continue
+    }
+    let source = match graph_analysis.snapshot_index.get(part_id) {
       Some(value) => value
       None => {
-        add_rejection(rejections, part_id, SelectionNotFound)
+        add_rejection(rejection_index, part_id, SelectionNotFound)
         continue
       }
     }
     if migration_binding_inconsistent || migration_admission_inconsistent {
-      add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+      add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     match source.state {
       SelectionSourceClosed =>
-        add_rejection(rejections, part_id, SelectionNotOpen)
+        add_rejection(rejection_index, part_id, SelectionNotOpen)
       SelectionSourceAlreadyOwned =>
-        add_rejection(rejections, part_id, SelectionAlreadyOwned)
+        add_rejection(rejection_index, part_id, SelectionAlreadyOwned)
       SelectionSourceAmbiguous =>
-        add_rejection(rejections, part_id, SelectionAmbiguous)
+        add_rejection(rejection_index, part_id, SelectionAmbiguous)
       SelectionSourceOpen => ()
     }
     if part.source_revision_digest != source.source_revision_digest ||
       part.source_content_digest != source.source_content_digest ||
-      sorted_part_ids(part.dependency_ids) !=
+      sorted_part_ids(graph_row.dependency_ids) !=
       sorted_part_ids(source.dependency_ids) ||
       part.task_contract.goal_id != proposal.goal_id ||
       part.task_contract.part_id != part.part_id ||
       part.task_contract.base_commit_oid != snapshot.base_commit_oid ||
       part.task_contract.base_tree_oid != snapshot.base_tree_oid {
-      add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+      add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     match part.task_contract.mutation_declaration {
       @control.MutationDeclaration::CompleteMutationDeclaration(_) => ()
       _ =>
-        add_rejection(rejections, part_id, SelectionInvalidMutationDeclaration)
+        add_rejection(
+          rejection_index,
+          part_id,
+          SelectionInvalidMutationDeclaration,
+        )
     }
     if @control.validate_task_contract_revision(part.task_contract, is_nfc)
       is Err(_) {
-      add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+      add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     match
       (part.task_contract.migration_contract_ref, part.part_context_manifest) {
@@ -835,32 +788,32 @@ pub fn evaluate_goal_proposal(
           manifest.part_task_contract_revision_id != part.task_contract.id ||
           manifest.part_task_contract_digest != part.task_contract.digest ||
           @migration.validate_part_context_manifest(manifest) is Err(_) {
-          add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+          add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
         }
-      _ => add_rejection(rejections, part_id, SelectionInvalidTaskContract)
+      _ => add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     let missing_open_dependency = source.dependency_ids.any(fn(dependency_id) {
-      match source_part(snapshot, dependency_id) {
+      match graph_analysis.snapshot_index.get(dependency_id) {
         Some(dependency) =>
           snapshot_part_requires_selection(dependency) &&
-          !proposed_part_ids.contains(dependency_id)
+          !proposed_part_index.contains(dependency_id)
         None => true
       }
     })
-    if missing_open_dependency {
-      add_rejection(rejections, part_id, SelectionMissingOpenDependency)
+    if missing_open_dependency || missing_dependency_index.contains(part_id) {
+      add_rejection(rejection_index, part_id, SelectionMissingOpenDependency)
     }
-    if proposal_part_has_cycle(proposal, part) {
-      add_rejection(rejections, part_id, SelectionDependencyCycle)
+    if cyclic_part_index.contains(part_id) {
+      add_rejection(rejection_index, part_id, SelectionDependencyCycle)
     }
   }
-  rejections.sort_by(fn(left, right) { left.part_id.compare(right.part_id) })
+  let rejections = sorted_rejections(proposed_part_ids, rejection_index)
   let proposal_digest = goal_proposal_digest(proposal)
   let source_snapshot_digest = goal_selection_snapshot_digest(snapshot)
   let accepted_parts : Array[AcceptedGoalPart] = []
   let goal : @control.Goal? = if rejections.length() == 0 {
     for part_id in dependency_order {
-      guard proposed_part(proposal, part_id) is Some(part) else { continue }
+      guard proposal_index.get(part_id) is Some(part) else { continue }
       accepted_parts.push({
         part: {
           id: part.part_id,
@@ -952,12 +905,24 @@ pub fn decode_goal_selection_decision(
         goal_submission_error("selection decision has the wrong schema"),
       )
   }
+  let graph_analysis = match
+    analyze_goal_proposal_graph(
+      goal_proposal_graph_rows(decision.proposal),
+      None,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   if decision.id.0 == "" ||
     decision.proposal_digest != goal_proposal_digest(decision.proposal) ||
     @storage.validate_digest(decision.source_snapshot_digest) is Err(_) ||
     (decision.outcome == GoalSelectionAccepted) != (decision.goal is Some(_)) ||
     (decision.outcome == GoalSelectionAccepted) !=
-    (decision.rejections.length() == 0) {
+    (decision.rejections.length() == 0) ||
+    (
+      decision.outcome == GoalSelectionAccepted &&
+      goal_proposal_graph_has_structural_failure(graph_analysis)
+    ) {
     Err(goal_submission_error("selection decision identity is invalid"))
   } else {
     Ok(decision)
