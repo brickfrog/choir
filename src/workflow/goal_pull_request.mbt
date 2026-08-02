@@ -1215,25 +1215,16 @@ pub fn record_goal_pull_request_cancellation(
         },
         durable_version: record.durable_version + 1,
       })
-    PullRequestCreateMayHaveBeenIssued | PullRequestRemoteCreateUncertain => {
-      // A definitive empty lookup proves the create never reached the forge,
-      // so the intent can be abandoned. Anything else keeps its uncertainty.
-      if lookup == PullRequestLookupObservation::PullRequestNoMatch {
-        return Ok({
-          ..record,
-          intent: {
-            ..record.intent,
-            state: PullRequestIntentState::PullRequestAbandonedByCancellation,
-          },
-          durable_version: record.durable_version + 1,
-        })
-      }
+    PullRequestCreateMayHaveBeenIssued | PullRequestRemoteCreateUncertain =>
+      // Once create may have been issued, one empty lookup cannot distinguish
+      // a request that never reached the forge from a created pull request
+      // whose query visibility lagged. Keep claims held until exact remote
+      // identity can be reconciled or a separate recovery path proves absence.
       match
         reconcile_goal_pull_request_after_create(record, lookup, observed_at) {
         Ok(reconciled) => Ok(plan_goal_pull_request_cancellation(reconciled))
         Err(error) => Err(error)
       }
-    }
     PullRequestReceipted
     | PullRequestNeedsInput(_)
     | PullRequestAbandonedByCancellation =>
