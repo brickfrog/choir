@@ -77,6 +77,17 @@ fn workflow_session(
 }
 
 ///|
+fn workflow_usage(seed : Int) -> @control.TakeUsage {
+  {
+    input_tokens: seed,
+    output_tokens: seed + 1,
+    cache_read_tokens: seed + 2,
+    cache_creation_tokens: seed + 3,
+    wall_time_ms: seed + 4,
+  }
+}
+
+///|
 fn workflow_goal_assurance_identities(
   goal : @control.Goal,
   head_oid : @control.GitOid,
@@ -120,6 +131,170 @@ fn workflow_goal_assurance_identities(
       workflow_digest_e,
     ),
   }
+}
+
+///|
+test "Goal status attributes unique session usage in fixed provider order" {
+  let first = workflow_fixture()
+  let first_impl = {
+    ..first.identities.implementation_session,
+    id: @control.HarnessSessionId("usage-first-impl"),
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    usage: Some(workflow_usage(10)),
+  }
+  let first_retry = {
+    ..first_impl,
+    id: @control.HarnessSessionId("usage-first-retry"),
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    usage: Some(workflow_usage(20)),
+  }
+  let with_first_usage = {
+    ..first,
+    harness_sessions: [first_impl, first_retry],
+  }
+  let second_part = {
+    ..first.part,
+    id: @control.PartId("part-usage-2"),
+    task_contract_revision_id: @control.RevisionId("revision-usage-2"),
+  }
+  let second_codex = {
+    ..first_impl,
+    id: @control.HarnessSessionId("usage-second-codex"),
+    usage: Some(workflow_usage(30)),
+  }
+  let second = {
+    ..first,
+    workflow_id: @control.WorkflowId("workflow-usage-2"),
+    part: second_part,
+    task_contract: {
+      ..first.task_contract,
+      id: second_part.task_contract_revision_id,
+      part_id: second_part.id,
+    },
+    harness_sessions: [second_codex],
+  }
+  let execution = {
+    ..workflow_execution_for_attach(with_first_usage),
+    part_workflow_ids: [second.workflow_id, with_first_usage.workflow_id],
+  }
+  let report = @workflow.goal_status_report(
+    execution,
+    [with_first_usage, second],
+    None,
+    None,
+    None,
+    None,
+    provider_capacity=None,
+  ).unwrap()
+  assert_eq(report.provider_usage, [
+    {
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      usage: Some(workflow_usage(20)),
+    },
+    {
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      usage: Some(
+        @control.add_take_usage(workflow_usage(10), workflow_usage(30)),
+      ),
+    },
+  ])
+  assert_eq(
+    report.usage,
+    @control.add_take_usage(
+      workflow_usage(20),
+      @control.add_take_usage(workflow_usage(10), workflow_usage(30)),
+    ),
+  )
+  let decoded : @workflow.GoalStatusReport = @json.from_json(report.to_json())
+  assert_eq(decoded, report)
+
+  let missing = {
+    ..second,
+    harness_sessions: [{ ..second_codex, usage: None }],
+  }
+  let missing_report = @workflow.goal_status_report(
+    execution,
+    [missing, with_first_usage],
+    None,
+    None,
+    None,
+    None,
+    provider_capacity=None,
+  ).unwrap()
+  assert_eq(missing_report.provider_usage[1].usage, None)
+  assert_eq(
+    missing_report.usage,
+    @control.add_take_usage(workflow_usage(10), workflow_usage(20)),
+  )
+
+  let duplicate = {
+    ..second,
+    harness_sessions: [{ ..second_codex, id: first_retry.id }],
+  }
+  assert_true(
+    @workflow.goal_status_report(
+      execution,
+      [duplicate, with_first_usage],
+      None,
+      None,
+      None,
+      None,
+      provider_capacity=None,
+    )
+    is Err(_),
+  )
+  let invalid = {
+    ..second,
+    harness_sessions: [
+      { ..second_codex, usage: Some({ ..workflow_usage(1), input_tokens: -1 }) },
+    ],
+  }
+  assert_true(
+    @workflow.goal_status_report(
+      execution,
+      [invalid, with_first_usage],
+      None,
+      None,
+      None,
+      None,
+      provider_capacity=None,
+    )
+    is Err(_),
+  )
+  let overflowing = {
+    ..second,
+    harness_sessions: [
+      {
+        ..second_codex,
+        usage: Some({ ..workflow_usage(1), input_tokens: 2147483647 }),
+      },
+    ],
+  }
+  assert_true(
+    @workflow.goal_status_report(
+      execution,
+      [overflowing, with_first_usage],
+      None,
+      None,
+      None,
+      None,
+      provider_capacity=None,
+    )
+    is Err(_),
+  )
+  let empty_first = { ..with_first_usage, harness_sessions: [] }
+  let empty_second = { ..second, harness_sessions: [] }
+  let empty_report = @workflow.goal_status_report(
+    execution,
+    [empty_second, empty_first],
+    None,
+    None,
+    None,
+    None,
+    provider_capacity=None,
+  ).unwrap()
+  assert_eq(empty_report.usage, @control.empty_take_usage())
+  assert_eq(empty_report.provider_usage, [])
 }
 
 ///|
@@ -2354,6 +2529,26 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     assured.identities.audit_sandbox.generation_id,
   )
   assert_eq(assured.effect_receipts.length(), 5)
+  integrated = {
+    ..integrated,
+    harness_sessions: integrated.harness_sessions.map(fn(session) {
+      {
+        ..session,
+        surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+        usage: Some(workflow_usage(10)),
+      }
+    }),
+  }
+  assured = {
+    ..assured,
+    harness_sessions: assured.harness_sessions.map(fn(session) {
+      {
+        ..session,
+        surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        usage: Some(workflow_usage(20)),
+      }
+    }),
+  }
   let status = match
     @workflow.goal_status_report(
       execution,
@@ -2377,6 +2572,51 @@ test "integrated Parts authorize one immutable Goal branch seal" {
   assert_eq(status.assurance_effect_receipt_count, 5)
   assert_eq(status.goal_verification_receipt_count, 1)
   assert_true(status.goal_audit_receipt_present)
+  assert_eq(status.provider_usage.length(), 2)
+  assert_eq(status.provider_usage[0], {
+    surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+    usage: Some(
+      integrated.harness_sessions.fold(init=@control.empty_take_usage(), fn(
+        total,
+        session,
+      ) {
+        @control.add_take_usage(total, session.usage.unwrap())
+      }),
+    ),
+  })
+  assert_eq(status.provider_usage[1], {
+    surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+    usage: Some(workflow_usage(20)),
+  })
+  assert_eq(
+    status.usage,
+    @control.add_take_usage(
+      status.provider_usage[0].usage.unwrap(),
+      workflow_usage(20),
+    ),
+  )
+  assert_eq(
+    @workflow.conductor_goal_display(status, 1_000L).unwrap().spent_tokens,
+    @control.take_usage_total_tokens(status.usage),
+  )
+  let duplicate_assurance = {
+    ..assured,
+    harness_sessions: [
+      { ..assured.harness_sessions[0], id: integrated.harness_sessions[0].id },
+    ],
+  }
+  assert_true(
+    @workflow.goal_status_report(
+      execution,
+      [integrated],
+      Some(duplicate_assurance),
+      None,
+      None,
+      None,
+      provider_capacity=None,
+    )
+    is Err(_),
+  )
   assert_eq(
     status.parts[0].implementation_take_lifecycle,
     integrated.implementation_take.lifecycle,

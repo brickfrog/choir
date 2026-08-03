@@ -116,6 +116,7 @@ fn projection_report(
     pull_request_draft: None,
     readiness_observed_draft: None,
     usage: @control.empty_take_usage(),
+    provider_usage: [],
     provider_capacity,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,
@@ -150,6 +151,24 @@ test "material fingerprint ignores counter churn but tracks stage movement" {
   assert_eq(
     @workflow.goal_report_material_fingerprint(running),
     @workflow.goal_report_material_fingerprint(count_only),
+  )
+  let token_only = {
+    ..running,
+    usage: { ..running.usage, input_tokens: 500 },
+    provider_usage: [
+      {
+        surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+        usage: Some({ ..running.usage, input_tokens: 500 }),
+      },
+    ],
+  }
+  assert_eq(
+    @workflow.goal_report_material_fingerprint(running),
+    @workflow.goal_report_material_fingerprint(token_only),
+  )
+  assert_eq(
+    goal_display(token_only).unwrap().spent_tokens,
+    goal_display(running).unwrap().spent_tokens + 500,
   )
   let stage_moved = projection_report(parts=[
     projection_part(

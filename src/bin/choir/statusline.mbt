@@ -649,6 +649,7 @@ fn conductor_statusline_test_report(
     pull_request_draft: None,
     readiness_observed_draft: None,
     usage,
+    provider_usage: [],
     provider_capacity,
     pull_request_merge_state: None,
     pull_request_receipt_present: false,

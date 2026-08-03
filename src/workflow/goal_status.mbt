@@ -128,6 +128,12 @@ pub(all) struct SemanticRunProjection {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct ProviderSurfaceUsageStatus {
+  surface : @control.ProviderSurfaceId
+  usage : @control.TakeUsage?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct GoalStatusReport {
   goal_id : @control.GoalId
   state : GoalExecutionState
@@ -183,10 +189,14 @@ pub(all) struct GoalStatusReport {
   /// When the cancellation cutoff was installed, so a report can be ordered
   /// against the event stream it cut.
   cancellation_cutoff_sequence : @control.EventSequence?
-  /// What every Part of this Goal reported consuming, so a Goal's cost against
-  /// the user's paid subscription allowance is one number rather than an
-  /// inference across sessions.
+  /// What every provider-backed Part and Goal-assurance session reported
+  /// consuming. Missing observations contribute nothing to this aggregate so
+  /// existing readers keep their historical best-known-total behavior.
   usage : @control.TakeUsage
+  /// Usage attributed to the surface recorded on each harness session. A
+  /// surface is present only when it owns a session, and its observation is
+  /// unknown when any one of those sessions omitted usage.
+  provider_usage : Array[ProviderSurfaceUsageStatus]
   /// What each provider surface is holding against its configured bound, on
   /// the same reporting path as `usage`: the cost of this Goal and the
   /// pressure it is competing for are read from one report rather than two.
@@ -196,6 +206,118 @@ pub(all) struct GoalStatusReport {
   semantic_run_projection : SemanticRunProjection?
   parts : Array[GoalPartStatus]
 } derive(Debug, Eq, ToJson, FromJson)
+
+///|
+fn goal_usage_can_add(
+  left : @control.TakeUsage,
+  right : @control.TakeUsage,
+) -> Bool {
+  let maximum = 2147483647
+  right.input_tokens <= maximum - left.input_tokens &&
+  right.output_tokens <= maximum - left.output_tokens &&
+  right.cache_read_tokens <= maximum - left.cache_read_tokens &&
+  right.cache_creation_tokens <= maximum - left.cache_creation_tokens &&
+  right.wall_time_ms <= maximum - left.wall_time_ms
+}
+
+///|
+fn goal_reported_usage(
+  snapshots : Array[PartWorkflowSnapshot],
+  assurance : GoalAssuranceRecord?,
+) -> Result[
+  (@control.TakeUsage, Array[ProviderSurfaceUsageStatus]),
+  @types.ChoirError,
+] {
+  let sessions : Array[@control.HarnessSession] = []
+  for snapshot in snapshots {
+    for session in snapshot.harness_sessions {
+      sessions.push(session)
+    }
+  }
+  match assurance {
+    Some(value) =>
+      for session in value.harness_sessions {
+        sessions.push(session)
+      }
+    None => ()
+  }
+  let seen : Array[@control.HarnessSessionId] = []
+  let mut aggregate = @control.empty_take_usage()
+  let mut claude = @control.empty_take_usage()
+  let mut codex = @control.empty_take_usage()
+  let mut claude_sessions = 0
+  let mut codex_sessions = 0
+  let mut claude_complete = true
+  let mut codex_complete = true
+  for session in sessions {
+    if seen.contains(session.id) {
+      return Err(
+        goal_execution_error("status contains a duplicate harness session"),
+      )
+    }
+    seen.push(session.id)
+    match session.surface {
+      @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+        claude_sessions = claude_sessions + 1
+      @control.ProviderSurfaceId::CodexSubscriptionCli =>
+        codex_sessions = codex_sessions + 1
+    }
+    match session.usage {
+      Some(usage) => {
+        if !@control.validate_take_usage(usage) {
+          return Err(goal_execution_error("status contains invalid usage"))
+        }
+        if !goal_usage_can_add(aggregate, usage) {
+          return Err(goal_execution_error("status usage sum is invalid"))
+        }
+        aggregate = @control.add_take_usage(aggregate, usage)
+        match session.surface {
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli => {
+            if !goal_usage_can_add(claude, usage) {
+              return Err(goal_execution_error("status usage sum is invalid"))
+            }
+            claude = @control.add_take_usage(claude, usage)
+          }
+          @control.ProviderSurfaceId::CodexSubscriptionCli => {
+            if !goal_usage_can_add(codex, usage) {
+              return Err(goal_execution_error("status usage sum is invalid"))
+            }
+            codex = @control.add_take_usage(codex, usage)
+          }
+        }
+      }
+      None =>
+        match session.surface {
+          @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
+            claude_complete = false
+          @control.ProviderSurfaceId::CodexSubscriptionCli =>
+            codex_complete = false
+        }
+    }
+  }
+  let provider_usage : Array[ProviderSurfaceUsageStatus] = []
+  if claude_sessions > 0 {
+    provider_usage.push({
+      surface: @control.ProviderSurfaceId::ClaudeSubscriptionCli,
+      usage: if claude_complete {
+        Some(claude)
+      } else {
+        None
+      },
+    })
+  }
+  if codex_sessions > 0 {
+    provider_usage.push({
+      surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
+      usage: if codex_complete {
+        Some(codex)
+      } else {
+        None
+      },
+    })
+  }
+  Ok((aggregate, provider_usage))
+}
 
 ///|
 pub(all) enum GoalTakeOrigin {
@@ -757,6 +879,10 @@ pub fn goal_status_report(
     Some(value) => value.blocked_reason
     None => None
   }
+  let usage_status = match goal_reported_usage(snapshots, assurance) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
   match publication {
     Some(value) if value.goal_id != record.goal.id =>
       return Err(goal_execution_error("publication belongs to another Goal"))
@@ -862,9 +988,8 @@ pub fn goal_status_report(
     cancellation_cutoff_sequence: record.cancellation_request.map(fn(request) {
       request.cutoff_sequence
     }),
-    usage: parts.fold(init=@control.empty_take_usage(), fn(total, part) {
-      @control.add_take_usage(total, part.usage)
-    }),
+    usage: usage_status.0,
+    provider_usage: usage_status.1,
     provider_capacity: match provider_capacity {
       Some(observation) => provider_surface_capacity_statuses(observation)
       None => []
