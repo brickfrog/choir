@@ -133,7 +133,6 @@ async fn real_exec_integration_assurance_loop_fixture(
       body: "Exercises the Goal assurance provider bound.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref,
     branch_initialization: {
       ..initialization,

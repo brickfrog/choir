@@ -4,6 +4,17 @@
 
 - **Gates must not satisfy themselves.** If a gate (validation, precondition, receipt check) fails for a caller that has no way to produce the required artifact, the fix is NEVER to make the gate produce the artifact itself by spawning a worker / running a sidecar / inlining the missing work. The fix is to (a) give the caller the capability, or (b) move the gate to a caller that already has it. Heartbeats, cycle caps, soft-fail timeouts, and "incomplete" status fields layered onto a self-satisfying gate are all symptoms — when you see them, the gate is in the wrong place. (Historical case: file_pr's 900-line audit-on-file-pr subsystem.)
 
+## Product Discipline: Stop Building Elaborate Machinery
+
+- **Default to the smallest change that solves an observed user problem.** A narrow direct implementation is the preferred architecture. General frameworks, new protocols, extra state machines, artifact pipelines, abstraction layers, and configurable extension points require proof that the simple path cannot meet the current need.
+- **Do not propose or build speculative infrastructure.** Future portability, hypothetical scale, possible providers, imagined compatibility, and "we may need this later" are not requirements. Wait for a concrete request or repeated measured failure.
+- **Do not create elaborate evaluations or process theater.** Benchmarks, multi-cell matrices, anonymous judging systems, canary suites, bespoke evidence stores, and multi-PR delivery waves are forbidden unless the user explicitly requests that exact rigor and its cost is justified by a current high-stakes decision. Prefer one representative real task and a direct before/after measurement.
+- **Complexity must pay rent immediately.** Before adding machinery, identify the current user-visible pain, the evidence that it occurs, the simplest viable fix, and why that fix is insufficient. If those answers are missing, do not suggest the machinery.
+- **Optimize for deletion and simplification.** When existing complexity is not earning its maintenance cost, remove or collapse it instead of documenting, generalizing, or layering more controls around it. Sunk cost is not a reason to preserve code.
+- **Keep verification proportional to risk.** Use the narrowest test that proves the behavior plus the repository's ordinary admission gates. Do not build a new harness or broad integration fixture for a local behavior.
+- **Stop when the requested outcome works.** Do not expand a fix into cleanup, a feature into a platform, or a useful command into an orchestration subsystem. Any material scope expansion requires explicit user approval before design or implementation.
+- In plans and reviews, call out overengineering as a defect. Prefer boring, inspectable code with fewer concepts, files, states, and failure modes.
+
 ## Test Boundaries
 
 - Do not add shell-harness tests that drive large `sh` scripts, temp git repos, or broad filesystem mutation when the behavior can be covered by a unit test or a narrow adapter test.
@@ -22,7 +33,7 @@ Do not place public-API-only tests inline in source files. Do not place tests th
 
 ## Effect Architecture
 
-- **No direct I/O in the authoritative control plane.** Code in `src/control/`, `src/workflow/`, `src/migration/`, `src/command/`, `src/harness/`, `src/conformance/`, `src/sandbox/`, `src/storage/`, and `src/types/` must not call `@sys.*` or `@process.*` directly. Emit typed decisions and effects or accept injected capabilities. `choir_lint` enforces this at the manifest: those packages may not import `choir/src/sys`, `choir/src/exec`, or any `moonbitlang/async/*` subpackage (`control-plane-host-import`).
+- **No direct I/O in the authoritative control plane.** Code in `src/control/`, `src/workflow/`, `src/command/`, `src/harness/`, `src/sandbox/`, `src/storage/`, and `src/types/` must not call `@sys.*` or `@process.*` directly. Emit typed decisions and effects or accept injected capabilities. Those packages may not import `choir/src/sys`, `choir/src/exec`, or any `moonbitlang/async/*` subpackage.
 - **Keep host effects at the host boundary.** Git, GitHub, provider, process, and filesystem execution belongs in `src/exec/`. `src/sys/` supplies low-level host primitives, and `src/bin/` is the native composition root that may invoke those boundaries. Tooling helpers outside the authoritative control plane must keep host reads injectable for narrow tests.
 - **Use enums, not strings, for fixed domains.** Providers, lifecycle states, completion modes, cancellation causes, and other closed workflow values use enums or typed newtypes. Do not introduce a new `String` field for a fixed domain.
 - **Use `ChoirError` suberror, not `String`, for errors.** New error paths should return `Result[T, ChoirError]` or `raise ChoirError`, not `Result[T, String]`. The `ChoirError` type in `src/types/error.mbt` has variants for common cases.

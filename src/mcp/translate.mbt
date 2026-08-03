@@ -57,10 +57,10 @@ fn conductor_tools() -> Array[CatalogTool] {
       }.to_json(),
     }.to_json(),
     "exact_paths": conductor_string_array_schema(
-      "Exact case-sensitive Git paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/lint/lint.mbt, not choir/src/lint/lint.mbt); use [] for repository-wide or path-tree scope",
+      "Exact case-sensitive Git paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/command/doctor.mbt, not choir/src/command/doctor.mbt); use [] for repository-wide or path-tree scope",
     ),
     "path_trees": conductor_string_array_schema(
-      "Case-sensitive Git directory paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/lint, not choir/src/lint); use [] when none",
+      "Case-sensitive Git directory paths from the repository root that this Part may mutate; never prepend the moon.mod module name or use a Moon package spec (for module choir, use src/command, not choir/src/command); use [] when none",
     ),
     "repository_wide": {
       "type": "boolean".to_json(),
@@ -80,41 +80,6 @@ fn conductor_tools() -> Array[CatalogTool] {
       "minimum": (1).to_json(),
       "maximum": (600000).to_json(),
     }.to_json(),
-    "migration_contract_id": conductor_string_schema(
-      "Optional migration contract ID; all migration identity and context fields are required together",
-    ),
-    "migration_lineage_id": conductor_string_schema(
-      "Optional migration lineage ID",
-    ),
-    "migration_contract_revision": {
-      "type": "integer".to_json(),
-      "description": "Optional positive migration contract revision".to_json(),
-      "minimum": (1).to_json(),
-    }.to_json(),
-    "migration_contract_artifact_digest": conductor_string_schema(
-      "Optional 64-character migration contract artifact digest",
-    ),
-    "context_assembly_policy_digest": conductor_string_schema(
-      "Optional 64-character context assembly policy digest",
-    ),
-    "rulebook_section_digests": conductor_string_array_schema(
-      "Optional non-empty migration rulebook section digests",
-    ),
-    "dependency_neighborhood_digest": conductor_string_schema(
-      "Optional migration dependency-neighborhood digest",
-    ),
-    "applicable_gap_entry_digests": conductor_string_array_schema(
-      "Optional migration gap-entry digests",
-    ),
-    "source_path_manifest_digest": conductor_string_schema(
-      "Optional migration source-path manifest digest",
-    ),
-    "prior_take_context_digest": conductor_string_schema(
-      "Optional prior-Take context digest",
-    ),
-    "migration_continuation_ref_digest": conductor_string_schema(
-      "Optional migration continuation reference digest",
-    ),
   }
   let part_schema : Json = {
     "type": "object".to_json(),

@@ -9,21 +9,6 @@ let submission_process_digest : @control.Digest = @control.Digest(
 )
 
 ///|
-fn submission_migration_admission(
-  reference : @control.MigrationContractRef,
-) -> @migration.MigrationProductionAdmissionRef {
-  {
-    migration_contract_ref: reference,
-    contract_acceptance_digest: submission_digest,
-    judge_definition_digest: submission_digest,
-    judge_qualification_report_digest: submission_digest,
-    judge_qualification_evidence_ref_digest: submission_digest,
-    rehearsal_evidence_ref_digest: None,
-    migration_continuation_ref_digest: None,
-  }
-}
-
-///|
 fn submission_contract(
   goal_id : @control.GoalId,
   part_id : @control.PartId,
@@ -56,8 +41,6 @@ fn submission_contract(
       },
     ],
     audit_policy_digest: submission_digest,
-    migration_contract_ref: None,
-    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: submission_digest,
     verification_capability_profile_digest: submission_digest,
     audit_capability_profile_digest: submission_digest,
@@ -103,7 +86,6 @@ fn submission_part(
     ),
     provider_surface: surface,
     provider_failover_surfaces: [],
-    part_context_manifest: None,
   }
 }
 
@@ -140,7 +122,6 @@ fn submission_proposal(
       body: "Exercises Goal submission.",
       draft: false,
     }),
-    migration_production_admission: None,
     maximum_parallel_parts: 2,
     parts,
     work_order_id: None,
@@ -394,180 +375,6 @@ test "Goal submission rejects non-linear and undelivered dependency Goals" {
         ],
       ),
     ),
-  )
-}
-
-///|
-test "accepted migration Part retains its exact context manifest" {
-  let goal_id = @control.GoalId("goal-migration-context")
-  let base = submission_part(
-    goal_id,
-    "migration-part",
-    [],
-    @control.ProviderSurfaceId::CodexSubscriptionCli,
-  )
-  let reference : @control.MigrationContractRef = {
-    contract_id: @control.MigrationContractId("migration-contract-1"),
-    migration_lineage_id: @control.MigrationLineageId("migration-lineage-1"),
-    revision: 1,
-    contract_artifact_digest: submission_digest,
-  }
-  let contract = {
-    ..base.task_contract,
-    migration_contract_ref: Some(reference),
-  }
-  let manifest : @migration.PartContextManifest = {
-    migration_contract_ref: reference,
-    part_task_contract_revision_id: contract.id,
-    part_task_contract_digest: contract.digest,
-    context_assembly_policy_digest: submission_digest,
-    rulebook_section_digests: [submission_digest],
-    dependency_neighborhood_digest: submission_digest,
-    applicable_gap_entry_digests: [],
-    source_path_manifest_digest: submission_digest,
-    prior_take_context_digest: None,
-  }
-  let proposal = {
-    ..submission_proposal(goal_id, [
-      { ..base, task_contract: contract, part_context_manifest: Some(manifest) },
-    ]),
-    migration_production_admission: Some(
-      submission_migration_admission(reference),
-    ),
-  }
-  let decision = @workflow.evaluate_goal_proposal(
-    proposal,
-    submission_snapshot([
-      submission_source(
-        "migration-part",
-        [],
-        @workflow.SelectionSourceState::SelectionSourceOpen,
-      ),
-    ]),
-    fn(_) { true },
-  ).unwrap()
-  assert_eq(
-    decision.outcome,
-    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
-  )
-  assert_eq(decision.accepted_parts[0].part_context_manifest, Some(manifest))
-  assert_eq(
-    decision.proposal.migration_production_admission,
-    proposal.migration_production_admission,
-  )
-  let execution = @workflow.goal_execution_record_from_selection(
-    decision,
-    @workflow.goal_selection_decision_digest(decision),
-    ["migration-workflow"],
-  ).unwrap()
-  assert_eq(
-    execution.migration_production_admission,
-    proposal.migration_production_admission,
-  )
-  assert_true(
-    @workflow.evaluate_goal_proposal(
-      { ..proposal, migration_production_admission: None },
-      submission_snapshot([
-        submission_source(
-          "migration-part",
-          [],
-          @workflow.SelectionSourceState::SelectionSourceOpen,
-        ),
-      ]),
-      fn(_) { true },
-    ).unwrap().outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
-  )
-  let continued_contract = {
-    ..contract,
-    migration_continuation_ref_digest: Some(submission_process_digest),
-  }
-  let continued_part = {
-    ..proposal.parts[0],
-    task_contract: continued_contract,
-    part_context_manifest: Some({
-      ..manifest,
-      part_task_contract_revision_id: continued_contract.id,
-      part_task_contract_digest: continued_contract.digest,
-    }),
-  }
-  let unbound_continuation = { ..proposal, parts: [continued_part] }
-  assert_true(
-    @workflow.evaluate_goal_proposal(
-      unbound_continuation,
-      submission_snapshot([
-        submission_source(
-          "migration-part",
-          [],
-          @workflow.SelectionSourceState::SelectionSourceOpen,
-        ),
-      ]),
-      fn(_) { true },
-    ).unwrap().outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
-  )
-  let bound_continuation = {
-    ..unbound_continuation,
-    migration_production_admission: proposal.migration_production_admission.map(fn(
-        admission,
-      ) {
-        {
-          ..admission,
-          migration_continuation_ref_digest: Some(submission_process_digest),
-        }
-      },
-    ),
-  }
-  assert_true(
-    @workflow.evaluate_goal_proposal(
-      bound_continuation,
-      submission_snapshot([
-        submission_source(
-          "migration-part",
-          [],
-          @workflow.SelectionSourceState::SelectionSourceOpen,
-        ),
-      ]),
-      fn(_) { true },
-    ).unwrap().outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionAccepted,
-  )
-  assert_true(
-    @workflow.evaluate_goal_proposal(
-      {
-        ..proposal,
-        migration_production_admission: Some({
-          ..submission_migration_admission(reference),
-          migration_contract_ref: { ..reference, revision: 2 },
-        }),
-      },
-      submission_snapshot([
-        submission_source(
-          "migration-part",
-          [],
-          @workflow.SelectionSourceState::SelectionSourceOpen,
-        ),
-      ]),
-      fn(_) { true },
-    ).unwrap().outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
-  )
-  assert_true(
-    @workflow.evaluate_goal_proposal(
-      {
-        ..proposal,
-        parts: [{ ..proposal.parts[0], part_context_manifest: None }],
-      },
-      submission_snapshot([
-        submission_source(
-          "migration-part",
-          [],
-          @workflow.SelectionSourceState::SelectionSourceOpen,
-        ),
-      ]),
-      fn(_) { true },
-    ).unwrap().outcome ==
-    @workflow.GoalSelectionOutcome::GoalSelectionRejected,
   )
 }
 
@@ -1024,14 +831,6 @@ fn maximal_goal_execution_record() -> @workflow.GoalExecutionRecord raise {
     pause: paused.pause,
     active_input_request: paused.active_input_request,
     work_order_id: Some(@workflow.WorkOrderId("work-order-maximal")),
-    migration_production_admission: Some(
-      submission_migration_admission({
-        contract_id: @control.MigrationContractId("migration-contract-1"),
-        migration_lineage_id: @control.MigrationLineageId("migration-lineage-1"),
-        revision: 1,
-        contract_artifact_digest: submission_digest,
-      }),
-    ),
   }
 }
 
@@ -1551,177 +1350,6 @@ test "evidence-only Goal binds completion and cancels only after assurance" {
   assert_eq(
     replayed.cancellation_request.map(fn(request) { request.cause }),
     Some(@workflow.GoalCancellationCause::GoalCancellationUserRequested),
-  )
-  let previous_contract_ref : @control.MigrationContractRef = {
-    contract_id: @control.MigrationContractId("supersession-contract"),
-    migration_lineage_id: @control.MigrationLineageId("supersession-lineage"),
-    revision: 1,
-    contract_artifact_digest: submission_digest,
-  }
-  let next_contract_ref = {
-    ..previous_contract_ref,
-    revision: 2,
-    contract_artifact_digest: submission_process_digest,
-  }
-  let impact_set = @migration.compute_migration_contract_revision_impact_set(
-    previous_contract_ref,
-    next_contract_ref,
-    [
-      {
-        kind: @migration.MigrationChangedArtifactKind::ChangedRulebook,
-        previous_digest: submission_digest,
-        next_digest: submission_process_digest,
-      },
-    ],
-    [
-      {
-        part_id: @control.PartId("a"),
-        effective_task_contract_revision_id: @control.RevisionId("revision-a"),
-        dependency_artifact_digests: [submission_digest],
-        integrated: true,
-        dependency_complete: true,
-      },
-    ],
-  ).unwrap()
-  let supersession = @workflow.authorize_migration_goal_supersession(
-    assured,
-    impact_set,
-    [@control.PartId("a")],
-    @control.GitOid("supersession-observed-head"),
-    101L,
-  ).unwrap()
-  let publishable_assured = {
-    ..assured,
-    completion_mode: @workflow.GoalCompletionMode::GoalPublishable,
-  }
-  let succeeded_before_supersession = @workflow.advance_goal_execution_state(
-    publishable_assured,
-    @workflow.GoalExecutionState::GoalExecutionSucceeded,
-  ).unwrap()
-  assert_true(
-    @workflow.authorize_migration_goal_supersession(
-      succeeded_before_supersession,
-      impact_set,
-      [@control.PartId("a")],
-      @control.GitOid("supersession-observed-head"),
-      101L,
-    )
-    is Err(_),
-  )
-  assert_true(
-    @workflow.advance_goal_execution_state(
-      supersession.canceling_record,
-      @workflow.GoalExecutionState::GoalExecutionSucceeded,
-    )
-    is Err(_),
-  )
-  assert_eq(
-    supersession.canceling_record.cancellation_request.map(fn(request) {
-      request.cause
-    }),
-    Some(
-      @workflow.GoalCancellationCause::GoalCancellationSupersededByContractRevision(
-        supersession.supersession_artifact_digest,
-      ),
-    ),
-  )
-  let released_supersession = @workflow.reconcile_goal_source_release(
-    @workflow.authorize_goal_source_release(
-      supersession.canceling_record,
-      supersession.canceling_record.source_claims[0].part_id,
-    ).unwrap(),
-    supersession.canceling_record.source_claims[0].part_id,
-    @workflow.GoalSourceClaimObservation::GoalSourceUnclaimedExact,
-    102L,
-  ).unwrap()
-  let canceled_supersession = @workflow.commit_goal_execution_cancellation(
-    released_supersession,
-  ).unwrap()
-  guard canceled_supersession.goal.lifecycle
-    is @control.GoalLifecycle::GoalCanceled(summary_id) else {
-    fail("superseded Goal did not reach ordinary cancellation")
-  }
-  let terminal_head = @control.GitOid("supersession-terminal-head")
-  let continuation : @migration.MigrationContinuationRef = {
-    prior_goal_id: assured.goal.id,
-    supersession_artifact_digest: supersession.supersession_artifact_digest,
-    cancellation_summary_id: summary_id,
-    terminal_preserved_head: terminal_head,
-    next_contract_ref,
-  }
-  assert_true(
-    @workflow.validate_migration_continuation_terminal(
-      continuation,
-      supersession.supersession,
-      canceled_supersession,
-      terminal_head,
-      terminal_head,
-    )
-    is Ok(_),
-  )
-  assert_true(
-    @workflow.validate_migration_continuation_terminal(
-      continuation,
-      supersession.supersession,
-      canceled_supersession,
-      @control.GitOid("supersession-observed-head"),
-      @control.GitOid("supersession-observed-head"),
-    )
-    is Err(_),
-  )
-  let continuation_digest = @migration.migration_continuation_ref_digest(
-    continuation,
-  )
-  let continuation_contract = {
-    ..submission_contract(
-      @control.GoalId("continued-goal"),
-      @control.PartId("continued-part"),
-      @control.MutationDeclaration::CompleteMutationDeclaration([
-        @control.MutationClaim::ExactPath(
-          @control.RepoPath("src/continued.mbt"),
-        ),
-      ]),
-    ),
-    base_commit_oid: terminal_head,
-    migration_contract_ref: Some(next_contract_ref),
-    migration_continuation_ref_digest: Some(continuation_digest),
-  }
-  let continuation_admission = @workflow.validate_migration_continuation_selection(
-    submission_migration_admission(next_contract_ref),
-    continuation,
-    supersession.supersession,
-    canceled_supersession,
-    terminal_head,
-    terminal_head,
-    [continuation_contract],
-  ).unwrap()
-  assert_eq(
-    continuation_admission.migration_continuation_ref_digest,
-    Some(continuation_digest),
-  )
-  assert_true(
-    @workflow.validate_migration_continuation_selection(
-      submission_migration_admission(next_contract_ref),
-      continuation,
-      supersession.supersession,
-      supersession.canceling_record,
-      terminal_head,
-      terminal_head,
-      [continuation_contract],
-    )
-    is Err(_),
-  )
-  assert_true(
-    @workflow.validate_migration_continuation_selection(
-      submission_migration_admission(next_contract_ref),
-      continuation,
-      supersession.supersession,
-      canceled_supersession,
-      terminal_head,
-      terminal_head,
-      [{ ..continuation_contract, migration_continuation_ref_digest: None }],
-    )
-    is Err(_),
   )
 }
 

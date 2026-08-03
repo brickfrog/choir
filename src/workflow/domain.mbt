@@ -63,11 +63,9 @@ pub(all) struct PartCommandPreparationPlan {
   task_contract_revision_id : @control.RevisionId
   task_contract_digest : @control.Digest
   instruction_artifact_digest : @control.Digest
-  migration_contract_ref : @control.MigrationContractRef?
   provider_surface : @control.ProviderSurfaceId
   provider_surface_and_profile_digest : @control.Digest
   context_assembly_policy_digest : @control.Digest
-  context_manifest : @migration.PartContextManifest?
   template_digest : @control.Digest
   maximum_command_bytes : Int
 } derive(Debug, Eq, ToJson, FromJson)
@@ -281,7 +279,6 @@ pub(all) struct PartWorkflowSnapshot {
   part : @control.GoalPart
   task_contract : @control.TaskContractRevision
   task_contract_history : Array[@control.TaskContractRevision]
-  part_context_manifest : @migration.PartContextManifest?
   identities : PartIdentityPlan
   /// Every provider surface this Part's captured contract admits, in the order
   /// the contract named them. The identity plan runs on one of these and

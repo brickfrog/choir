@@ -30,28 +30,8 @@ fn sorted_unique_digests(
 ///|
 pub fn required_part_context_digests(
   instruction_digest : @control.Digest,
-  manifest : @migration.PartContextManifest?,
 ) -> Array[@control.Digest] {
-  let values = [instruction_digest]
-  match manifest {
-    None => ()
-    Some(value) => {
-      values.push(value.migration_contract_ref.contract_artifact_digest)
-      for digest in value.rulebook_section_digests {
-        values.push(digest)
-      }
-      values.push(value.dependency_neighborhood_digest)
-      for digest in value.applicable_gap_entry_digests {
-        values.push(digest)
-      }
-      values.push(value.source_path_manifest_digest)
-      match value.prior_take_context_digest {
-        Some(digest) => values.push(digest)
-        None => ()
-      }
-    }
-  }
-  sorted_unique_digests(values)
+  sorted_unique_digests([instruction_digest])
 }
 
 ///|
@@ -81,22 +61,6 @@ fn subject_matches_request(request : CommandPreparationRequest) -> Bool {
 }
 
 ///|
-fn migration_context_matches(request : CommandPreparationRequest) -> Bool {
-  match (request.migration_contract_ref, request.context_manifest) {
-    (None, None) => true
-    (Some(reference), Some(manifest)) =>
-      reference == manifest.migration_contract_ref &&
-      manifest.part_task_contract_revision_id ==
-      request.task_contract_revision_id &&
-      manifest.part_task_contract_digest == request.task_contract_digest &&
-      manifest.context_assembly_policy_digest ==
-      request.context_assembly_policy_digest &&
-      @migration.validate_part_context_manifest(manifest) is Ok(_)
-    _ => false
-  }
-}
-
-///|
 fn context_artifact_index(
   artifacts : Array[CommandContextArtifact],
   digest : @control.Digest,
@@ -115,7 +79,6 @@ fn ordered_context_artifacts(
 ) -> Result[Array[CommandContextArtifact], @types.ChoirError] {
   let expected = required_part_context_digests(
     request.instruction_artifact_digest,
-    request.context_manifest,
   )
   let actual_digests = request.context_artifacts.map(fn(value) { value.digest })
   let actual = sorted_unique_digests(actual_digests)
@@ -189,17 +152,6 @@ fn build_exact_command_bytes(
     @utf8.decode_lossy(canonical_command_subject_bytes(request.subject)),
   )
   append_framed_text(buffer, "TEMPLATE", template)
-  match request.context_manifest {
-    Some(manifest) =>
-      append_framed_text(
-        buffer,
-        "PART_CONTEXT_MANIFEST",
-        @utf8.decode_lossy(
-          @migration.canonical_part_context_manifest_bytes(manifest),
-        ),
-      )
-    None => ()
-  }
   for artifact in ordered_context {
     let content = @utf8.decode(artifact.content) catch {
       _ => return Err(@types.ChoirError::command_preparation_stale_binding())
@@ -225,8 +177,7 @@ pub fn prepare_command(
       request.context_assembly_policy_digest,
       request.template.digest,
     ].all(fn(digest) { digest_valid(digest) }) ||
-    !subject_matches_request(request) ||
-    !migration_context_matches(request) {
+    !subject_matches_request(request) {
     return Err(@types.ChoirError::command_preparation_stale_binding())
   }
   if request.template.schema_version != 1 ||
@@ -254,13 +205,6 @@ pub fn prepare_command(
     )
   }
   let ordered_digests = ordered_context.map(fn(value) { value.digest })
-  let manifest_digest = match request.context_manifest {
-    None => None
-    Some(manifest) =>
-      Some(
-        digest_bytes(@migration.canonical_part_context_manifest_bytes(manifest)),
-      )
-  }
   let command_artifact_digest = digest_bytes(command_bytes)
   Ok({
     command_bytes,
@@ -272,12 +216,10 @@ pub fn prepare_command(
       goal_contract_digest: request.goal_contract_digest,
       task_contract_revision_id: request.task_contract_revision_id,
       task_contract_digest: request.task_contract_digest,
-      migration_contract_ref: request.migration_contract_ref,
       template_digest: request.template.digest,
       provider_surface: request.provider_surface,
       provider_surface_and_profile_digest: request.provider_surface_and_profile_digest,
       context_assembly_policy_digest: request.context_assembly_policy_digest,
-      context_manifest_digest: manifest_digest,
       context_projection_digest: digest_bytes(
         canonical_context_projection_bytes(ordered_digests),
       ),

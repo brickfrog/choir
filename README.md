@@ -184,18 +184,9 @@ Read the documentation overview in [English](docs/overview.md) or
 
 The [security boundary](docs/security-boundary.md) states the threat model,
 trusted computing base, enforced isolation, evidence binding, cleanup rules,
-and explicit non-goals. The recorded
-[`choir take` comparison attempt](docs/evaluations/choir-take-comparison.md)
-ended before a valid nine-cell matrix existed, so it produced no comparative
-result and did not authorize portable verification toolchains.
+and explicit non-goals.
 
 ## Operations
-
-Use the [dependency and runtime upgrade runbook](docs/runbooks/dependency-upgrades.md)
-to audit or qualify provider CLIs, BoxLite, Beads, MoonBit, native libraries,
-and CI/release infrastructure. It defines a read-only audit mode, component
-qualification gates, promotion boundaries, and the required report format for
-human or agent-driven maintenance.
 
 Use the [Goal troubleshooting runbook](docs/runbooks/troubleshooting.md) when a
 Goal stops making progress: it maps the on-disk operational surface, the typed
@@ -208,8 +199,6 @@ commands that recover from each.
 node --test scripts/choir_sandbox_mcp_test.mjs
 moon check --target native
 moon test --target native
-moon run --target native src/bin/choir_lint
-moon run --target native src/bin/choir_conformance -- hermetic
 ```
 
 ## License

@@ -613,7 +613,6 @@ async test "an assurance tick refused by capacity leaves the Goal assuring" {
       body: "Exercises the capacity deferral outcome.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_store_initialized_branch(
       integrated.goal.id,

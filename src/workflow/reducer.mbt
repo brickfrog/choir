@@ -550,10 +550,6 @@ fn prepared_command_matches_plan(
   artifact_exists : (@control.ArtifactReference) -> Bool,
 ) -> Bool {
   let provenance = prepared.provenance
-  let expected_manifest_digest = match plan.context_manifest {
-    None => None
-    Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
-  }
   prepared.plan == plan &&
   artifact_exists(prepared.command_artifact) &&
   provenance.schema_version == 1 &&
@@ -564,14 +560,12 @@ fn prepared_command_matches_plan(
   provenance.goal_contract_digest == plan.goal_contract_digest &&
   provenance.task_contract_revision_id == plan.task_contract_revision_id &&
   provenance.task_contract_digest == plan.task_contract_digest &&
-  provenance.migration_contract_ref == plan.migration_contract_ref &&
   provenance.template_digest == plan.template_digest &&
   provenance.provider_surface == plan.provider_surface &&
   provenance.provider_surface_and_profile_digest ==
   plan.provider_surface_and_profile_digest &&
   provenance.context_assembly_policy_digest ==
   plan.context_assembly_policy_digest &&
-  provenance.context_manifest_digest == expected_manifest_digest &&
   @storage.validate_digest(provenance.context_projection_digest) is Ok(_) &&
   provenance.maximum_command_bytes == plan.maximum_command_bytes &&
   provenance.command_artifact_digest == prepared.command_artifact.digest &&

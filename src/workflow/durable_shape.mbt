@@ -171,37 +171,6 @@ let durable_shape_goal_part : @control.GoalPart = {
 }
 
 ///|
-let durable_shape_migration_contract_id : @control.MigrationContractId = @control.MigrationContractId(
-  "",
-)
-
-///|
-let durable_shape_migration_lineage_id : @control.MigrationLineageId = @control.MigrationLineageId(
-  "",
-)
-
-///|
-let durable_shape_migration_contract_ref : @control.MigrationContractRef = {
-  contract_id: durable_shape_migration_contract_id,
-  migration_lineage_id: durable_shape_migration_lineage_id,
-  revision: 0,
-  contract_artifact_digest: durable_shape_digest,
-}
-
-///|
-let durable_shape_part_context_manifest : @migration.PartContextManifest = {
-  migration_contract_ref: durable_shape_migration_contract_ref,
-  part_task_contract_revision_id: durable_shape_revision_id,
-  part_task_contract_digest: durable_shape_digest,
-  context_assembly_policy_digest: durable_shape_digest,
-  rulebook_section_digests: [durable_shape_digest],
-  dependency_neighborhood_digest: durable_shape_digest,
-  applicable_gap_entry_digests: [durable_shape_digest],
-  source_path_manifest_digest: durable_shape_digest,
-  prior_take_context_digest: Some(durable_shape_digest),
-}
-
-///|
 let durable_shapes_provider_surface_id : Array[@control.ProviderSurfaceId] = [
   @control.ProviderSurfaceId::ClaudeSubscriptionCli,
   @control.ProviderSurfaceId::CodexSubscriptionCli,
@@ -419,8 +388,6 @@ let durable_shape_task_contract_revision : @control.TaskContractRevision = {
   mutation_declaration: durable_shapes_mutation_declaration[0],
   verification_specs: [durable_shape_verification_spec],
   audit_policy_digest: durable_shape_digest,
-  migration_contract_ref: Some(durable_shape_migration_contract_ref),
-  migration_continuation_ref_digest: Some(durable_shape_digest),
   implementation_capability_profile_digest: durable_shape_digest,
   verification_capability_profile_digest: durable_shape_digest,
   audit_capability_profile_digest: durable_shape_digest,
@@ -434,7 +401,6 @@ let durable_shape_accepted_goal_part : AcceptedGoalPart = {
   task_contract: durable_shape_task_contract_revision,
   provider_surface: durable_shapes_provider_surface_id[0],
   provider_failover_surfaces: [durable_shapes_provider_surface_id[1]],
-  part_context_manifest: Some(durable_shape_part_context_manifest),
 }
 
 ///|
@@ -815,12 +781,10 @@ let durable_shape_command_preparation_provenance : @command.CommandPreparationPr
   goal_contract_digest: durable_shape_digest,
   task_contract_revision_id: durable_shape_revision_id,
   task_contract_digest: durable_shape_digest,
-  migration_contract_ref: Some(durable_shape_migration_contract_ref),
   template_digest: durable_shape_digest,
   provider_surface: durable_shapes_provider_surface_id[0],
   provider_surface_and_profile_digest: durable_shape_digest,
   context_assembly_policy_digest: durable_shape_digest,
-  context_manifest_digest: Some(durable_shape_digest),
   context_projection_digest: durable_shape_digest,
   maximum_command_bytes: 0,
   command_artifact_digest: durable_shape_digest,
@@ -853,7 +817,6 @@ let durable_shape_conductor_part_proposal : ConductorPartProposal = {
   task_contract: durable_shape_task_contract_revision,
   provider_surface: durable_shapes_provider_surface_id[0],
   provider_failover_surfaces: [durable_shapes_provider_surface_id[1]],
-  part_context_manifest: Some(durable_shape_part_context_manifest),
 }
 
 ///|
@@ -2300,17 +2263,6 @@ let durable_shape_goal_source_claim : GoalSourceClaim = {
 }
 
 ///|
-let durable_shape_migration_production_admission_ref : @migration.MigrationProductionAdmissionRef = {
-  migration_contract_ref: durable_shape_migration_contract_ref,
-  contract_acceptance_digest: durable_shape_digest,
-  judge_definition_digest: durable_shape_digest,
-  judge_qualification_report_digest: durable_shape_digest,
-  judge_qualification_evidence_ref_digest: durable_shape_digest,
-  rehearsal_evidence_ref_digest: Some(durable_shape_digest),
-  migration_continuation_ref_digest: Some(durable_shape_digest),
-}
-
-///|
 let durable_shape_pull_request_document : PullRequestDocument = {
   title: "",
   body: "",
@@ -2627,16 +2579,6 @@ let durable_shape_conductor_part_draft : ConductorPartDraft = {
   verification: durable_shape_conductor_verification_draft,
   provider_surface: @control.ProviderSurfaceId::CodexSubscriptionCli,
   provider_failover_surfaces: [],
-  migration_contract_ref: Some(durable_shape_migration_contract_ref),
-  migration_continuation_ref_digest: Some(durable_shape_digest),
-  migration_context: Some({
-    context_assembly_policy_digest: durable_shape_digest,
-    rulebook_section_digests: [durable_shape_digest],
-    dependency_neighborhood_digest: durable_shape_digest,
-    applicable_gap_entry_digests: [durable_shape_digest],
-    source_path_manifest_digest: durable_shape_digest,
-    prior_take_context_digest: Some(durable_shape_digest),
-  }),
 }
 
 ///|
@@ -2769,9 +2711,6 @@ let durable_shape_goal_execution_record : GoalExecutionRecord = {
   integration_target_ref: durable_shape_git_ref_name,
   completion_mode: durable_shapes_goal_completion_mode[0],
   pull_request_document: Some(durable_shape_pull_request_document),
-  migration_production_admission: Some(
-    durable_shape_migration_production_admission_ref,
-  ),
   goal_ref: durable_shape_git_ref_name,
   branch_initialization: durable_shape_goal_branch_initialization,
   source_claims: [durable_shape_goal_source_claim],
@@ -2973,9 +2912,6 @@ let durable_shape_goal_proposal : GoalProposal = {
   selection_policy: durable_shapes_goal_selection_policy[0],
   completion_mode: durable_shapes_goal_completion_mode[0],
   pull_request_document: Some(durable_shape_pull_request_document),
-  migration_production_admission: Some(
-    durable_shape_migration_production_admission_ref,
-  ),
   maximum_parallel_parts: 0,
   parts: [durable_shape_conductor_part_proposal],
   work_order_id: Some(WorkOrderId("work-order")),
@@ -3526,11 +3462,9 @@ let durable_shape_part_command_preparation_plan : PartCommandPreparationPlan = {
   task_contract_revision_id: durable_shape_revision_id,
   task_contract_digest: durable_shape_digest,
   instruction_artifact_digest: durable_shape_digest,
-  migration_contract_ref: Some(durable_shape_migration_contract_ref),
   provider_surface: durable_shapes_provider_surface_id[0],
   provider_surface_and_profile_digest: durable_shape_digest,
   context_assembly_policy_digest: durable_shape_digest,
-  context_manifest: Some(durable_shape_part_context_manifest),
   template_digest: durable_shape_digest,
   maximum_command_bytes: 0,
 }
@@ -3916,7 +3850,6 @@ let durable_shape_part_workflow_snapshot : PartWorkflowSnapshot = {
   part: durable_shape_goal_part,
   task_contract: durable_shape_task_contract_revision,
   task_contract_history: [durable_shape_task_contract_revision],
-  part_context_manifest: Some(durable_shape_part_context_manifest),
   identities: durable_shape_part_identity_plan,
   implementation_take: durable_shape_take,
   verification_take: durable_shape_take,
@@ -4629,18 +4562,6 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
         durable_guard_integration_witness_observation,
       ),
     ),
-    durable_shape_entry("MigrationContractId", [
-      durable_shape_migration_contract_id,
-    ]),
-    durable_shape_entry("MigrationContractRef", [
-      durable_shape_migration_contract_ref,
-    ]),
-    durable_shape_entry("MigrationLineageId", [
-      durable_shape_migration_lineage_id,
-    ]),
-    durable_shape_entry("MigrationProductionAdmissionRef", [
-      durable_shape_migration_production_admission_ref,
-    ]),
     durable_shape_entry(
       "ModelIdentity",
       durable_shapes_model_identity.map(durable_guard_model_identity),
@@ -4662,9 +4583,6 @@ fn durable_shape_table() -> Array[DurableShapeEntry] {
     ),
     durable_shape_entry("PartCommandPreparationPlan", [
       durable_shape_part_command_preparation_plan,
-    ]),
-    durable_shape_entry("PartContextManifest", [
-      durable_shape_part_context_manifest,
     ]),
     durable_shape_entry("PartDispatchDiagnostic", [
       durable_shape_part_dispatch_diagnostic,

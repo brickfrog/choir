@@ -1036,7 +1036,6 @@ fn compile_native_conductor_part_proposal(
       verification_spec_digest.to_json(),
       process_artifact.digest.to_json(),
       audit_policy_digest.to_json(),
-      part.migration_contract_ref.to_json(),
       implementation_profile_digest.to_json(),
       verification_profile_digest.to_json(),
       audit_profile_digest.to_json(),
@@ -1066,31 +1065,9 @@ fn compile_native_conductor_part_proposal(
       },
     ],
     audit_policy_digest,
-    migration_contract_ref: part.migration_contract_ref,
-    migration_continuation_ref_digest: part.migration_continuation_ref_digest,
     implementation_capability_profile_digest: implementation_profile_digest,
     verification_capability_profile_digest: verification_profile_digest,
     audit_capability_profile_digest: audit_profile_digest,
-  }
-  let part_context_manifest : @migration.PartContextManifest? = match
-    (part.migration_contract_ref, part.migration_context) {
-    (None, None) => None
-    (Some(reference), Some(context)) =>
-      Some({
-        migration_contract_ref: reference,
-        part_task_contract_revision_id: contract.id,
-        part_task_contract_digest: contract.digest,
-        context_assembly_policy_digest: context.context_assembly_policy_digest,
-        rulebook_section_digests: context.rulebook_section_digests,
-        dependency_neighborhood_digest: context.dependency_neighborhood_digest,
-        applicable_gap_entry_digests: context.applicable_gap_entry_digests,
-        source_path_manifest_digest: context.source_path_manifest_digest,
-        prior_take_context_digest: context.prior_take_context_digest,
-      })
-    _ =>
-      return Err(
-        native_goal_submission_error("migration context binding is incomplete"),
-      )
   }
   Ok({
     part_id: part.part_id,
@@ -1100,7 +1077,6 @@ fn compile_native_conductor_part_proposal(
     task_contract: contract,
     provider_surface: part.provider_surface,
     provider_failover_surfaces: part.provider_failover_surfaces,
-    part_context_manifest,
   })
 }
 
@@ -1294,7 +1270,6 @@ fn native_goal_submission_part_snapshot(
     admitted_provider_surfaces=@workflow.accepted_part_admitted_surfaces(
       accepted,
     ),
-    part_context_manifest=accepted.part_context_manifest,
   )
 }
 
@@ -1328,7 +1303,6 @@ fn native_goal_part_plan_matches(
   stored.part.task_contract_revision_id ==
   expected.part.task_contract_revision_id &&
   stored.task_contract == expected.task_contract &&
-  stored.part_context_manifest == expected.part_context_manifest &&
   stored.identities == expected.identities
 }
 
@@ -1553,8 +1527,6 @@ fn native_goal_execution_plan_matches(
   stored.base_commit_oid == expected.base_commit_oid &&
   stored.base_tree_oid == expected.base_tree_oid &&
   stored.integration_target_ref == expected.integration_target_ref &&
-  stored.migration_production_admission ==
-  expected.migration_production_admission &&
   stored.goal_ref == expected.goal_ref &&
   stored.source_claims == expected.source_claims &&
   stored.maximum_parallel_parts == expected.maximum_parallel_parts &&
@@ -1652,7 +1624,6 @@ pub async fn submit_native_conductor_goal_draft(
   draft_json : String,
   capture : async (@process_host.Command) -> (Int, String),
   fencing_epoch? : @control.FencingEpoch = current_native_goal_fencing_epoch(),
-  migration_production_admission? : @migration.MigrationProductionAdmissionRef? = None,
   work_order_authority? : @workflow.WorkOrderRecord? = None,
   work_order_round_id? : @workflow.WorkOrderPlanningRoundId? = None,
   work_order_primary_targets? : Array[@control.PartId]? = None,
@@ -1719,9 +1690,7 @@ pub async fn submit_native_conductor_goal_draft(
         )
       }
       if stored.decision.proposal.conductor_draft_digest !=
-        conductor_draft_digest ||
-        stored.decision.proposal.migration_production_admission !=
-        migration_production_admission {
+        conductor_draft_digest {
         return Err(
           native_goal_submission_error(
             "the replayed draft disagrees with its durable selection; this identity conflict is permanent and must not be retried in this user turn",
@@ -1881,7 +1850,6 @@ pub async fn submit_native_conductor_goal_draft(
     selection_policy: @workflow.GoalSelectionPolicy::ExactClosure,
     completion_mode: draft.completion_mode,
     pull_request_document: draft.pull_request_document,
-    migration_production_admission,
     maximum_parallel_parts: draft.maximum_parallel_parts,
     parts,
     work_order_id: match (draft.work_order, work_order_authority) {

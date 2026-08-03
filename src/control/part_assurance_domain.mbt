@@ -160,34 +160,6 @@ pub(all) struct VerificationSpec {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
-pub(all) struct MigrationContractId(String) derive (
-  Debug,
-  Eq,
-  Compare,
-  Hash,
-  ToJson,
-  FromJson,
-)
-
-///|
-pub(all) struct MigrationLineageId(String) derive (
-  Debug,
-  Eq,
-  Compare,
-  Hash,
-  ToJson,
-  FromJson,
-)
-
-///|
-pub(all) struct MigrationContractRef {
-  contract_id : MigrationContractId
-  migration_lineage_id : MigrationLineageId
-  revision : Int
-  contract_artifact_digest : Digest
-} derive(Debug, Eq, ToJson, FromJson)
-
-///|
 pub(all) enum AuditRepairScope {
   PartAuditRepair
   GoalAuditRepair
@@ -251,8 +223,6 @@ pub(all) struct TaskContractRevision {
   mutation_declaration : MutationDeclaration
   verification_specs : Array[VerificationSpec]
   audit_policy_digest : Digest
-  migration_contract_ref : MigrationContractRef?
-  migration_continuation_ref_digest : Digest?
   implementation_capability_profile_digest : Digest
   verification_capability_profile_digest : Digest
   audit_capability_profile_digest : Digest

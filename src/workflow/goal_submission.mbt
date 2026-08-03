@@ -106,7 +106,6 @@ pub(all) struct ConductorPartProposal {
   /// preference order. Empty means the Part is admitted under one provider
   /// authority and waits rather than spending another allowance.
   provider_failover_surfaces : Array[@control.ProviderSurfaceId]
-  part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -122,7 +121,6 @@ pub(all) struct GoalProposal {
   selection_policy : GoalSelectionPolicy
   completion_mode : GoalCompletionMode
   pull_request_document : PullRequestDocument?
-  migration_production_admission : @migration.MigrationProductionAdmissionRef?
   maximum_parallel_parts : Int
   parts : Array[ConductorPartProposal]
   work_order_id : WorkOrderId?
@@ -165,7 +163,6 @@ pub(all) struct AcceptedGoalPart {
   task_contract : @control.TaskContractRevision
   provider_surface : @control.ProviderSurfaceId
   provider_failover_surfaces : Array[@control.ProviderSurfaceId]
-  part_context_manifest : @migration.PartContextManifest?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
@@ -495,11 +492,6 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
   parts.sort_by(fn(left, right) { left.part_id.compare(right.part_id) })
   let rows : Array[Json] = []
   for part in parts {
-    let context_manifest_digest : @control.Digest? = match
-      part.part_context_manifest {
-      None => None
-      Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
-    }
     rows.push(
       [
         part.part_id.to_json(),
@@ -510,7 +502,6 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
         part.task_contract.digest.to_json(),
         part.provider_surface.to_json(),
         part.provider_failover_surfaces.to_json(),
-        context_manifest_digest.to_json(),
       ].to_json(),
     )
   }
@@ -526,11 +517,6 @@ fn canonical_goal_proposal_json(proposal : GoalProposal) -> Json {
     proposal.selection_policy.to_json(),
     proposal.completion_mode.to_json(),
     proposal.pull_request_document.to_json(),
-    proposal.migration_production_admission
-    .map(fn(reference) {
-      @migration.migration_production_admission_ref_digest(reference)
-    })
-    .to_json(),
     proposal.maximum_parallel_parts.to_json(),
     proposal.work_order_id.to_json(),
     proposal.work_order_planning_round_id.to_json(),
@@ -688,43 +674,6 @@ pub fn evaluate_goal_proposal(
   for part_id in graph_analysis.missing_dependency_part_ids {
     missing_dependency_index[part_id] = ()
   }
-  let migration_refs = proposal.parts.filter_map(fn(part) {
-    part.task_contract.migration_contract_ref
-  })
-  let continuation_digests = proposal.parts.filter_map(fn(part) {
-    part.task_contract.migration_continuation_ref_digest
-  })
-  let expected_continuation_digest = if continuation_digests.length() == 0 {
-    None
-  } else {
-    Some(continuation_digests[0])
-  }
-  let migration_binding_inconsistent = (
-      migration_refs.length() > 0 &&
-      migration_refs.length() != proposal.parts.length()
-    ) ||
-    migration_refs.any(fn(reference) { reference != migration_refs[0] }) ||
-    (
-      continuation_digests.length() > 0 &&
-      (
-        continuation_digests.length() != proposal.parts.length() ||
-        continuation_digests.any(fn(digest) {
-          digest != continuation_digests[0]
-        })
-      )
-    )
-  let migration_admission_inconsistent = match
-    (migration_refs.length(), proposal.migration_production_admission) {
-    (0, None) => false
-    (0, Some(_)) => true
-    (_, None) => true
-    (_, Some(admission)) =>
-      @migration.validate_migration_production_admission_ref(admission)
-      is Err(_) ||
-      admission.migration_contract_ref != migration_refs[0] ||
-      admission.migration_continuation_ref_digest !=
-      expected_continuation_digest
-  }
   for part_id in proposed_part_ids {
     if duplicate_part_index.contains(part_id) {
       add_rejection(rejection_index, part_id, SelectionDuplicate)
@@ -744,9 +693,6 @@ pub fn evaluate_goal_proposal(
         add_rejection(rejection_index, part_id, SelectionNotFound)
         continue
       }
-    }
-    if migration_binding_inconsistent || migration_admission_inconsistent {
-      add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     match source.state {
       SelectionSourceClosed =>
@@ -779,18 +725,6 @@ pub fn evaluate_goal_proposal(
     if @control.validate_task_contract_revision(part.task_contract, is_nfc)
       is Err(_) {
       add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
-    }
-    match
-      (part.task_contract.migration_contract_ref, part.part_context_manifest) {
-      (None, None) => ()
-      (Some(reference), Some(manifest)) =>
-        if reference != manifest.migration_contract_ref ||
-          manifest.part_task_contract_revision_id != part.task_contract.id ||
-          manifest.part_task_contract_digest != part.task_contract.digest ||
-          @migration.validate_part_context_manifest(manifest) is Err(_) {
-          add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
-        }
-      _ => add_rejection(rejection_index, part_id, SelectionInvalidTaskContract)
     }
     let missing_open_dependency = source.dependency_ids.any(fn(dependency_id) {
       match graph_analysis.snapshot_index.get(dependency_id) {
@@ -827,7 +761,6 @@ pub fn evaluate_goal_proposal(
         task_contract: part.task_contract,
         provider_surface: part.provider_surface,
         provider_failover_surfaces: part.provider_failover_surfaces,
-        part_context_manifest: part.part_context_manifest,
       })
     }
     Some({

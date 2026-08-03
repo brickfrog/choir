@@ -49,7 +49,7 @@ install -Dm755 /absolute/path/to/corrected-boxlite-v0.9.7 ~/.local/libexec/choir
 cp -a /absolute/path/to/corrected-runtime ~/.local/libexec/choir/boxlite-runtime
 ```
 
-Development and conformance runs may instead select them explicitly with
+Development runs may instead select them explicitly with
 `CHOIR_BOXLITE_BINARY` and `CHOIR_BOXLITE_RUNTIME_DIR`.
 
 The qualification evidence records both checked-in patch hashes. Choir hashes
@@ -64,9 +64,3 @@ authorization through an inherited stdin pipe using `--header @-`. The
 per-Take owner execution capability remains environment-only and scoped to its
 owner-only Unix socket. Live qualification reads the server's `/proc` command
 line and requires both authenticated success and unauthenticated rejection.
-
-Verify the installed bundle:
-
-```sh
-moon run --target native src/bin/choir_conformance -- sandbox --runtime boxlite --live
-```

@@ -114,10 +114,12 @@ test "Conductor catalog exposes only Goal and Beads operations" {
   assert_true(
     exact_paths_description.contains("Git paths from the repository root"),
   )
-  assert_true(exact_paths_description.contains("not choir/src/lint/lint.mbt"))
+  assert_true(
+    exact_paths_description.contains("not choir/src/command/doctor.mbt"),
+  )
   assert_true(path_trees_description.contains("Git directory paths"))
   assert_true(
-    path_trees_description.contains("use src/lint, not choir/src/lint"),
+    path_trees_description.contains("use src/command, not choir/src/command"),
   )
   guard part_properties.get("verify_timeout_ms") is Some(Object(timeout_schema)) else {
     fail("expected verification timeout schema")

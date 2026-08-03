@@ -5,11 +5,7 @@ Choir runs Claude Code and Codex implementation Takes in network-disabled BoxLit
 ## Index
 
 - [Security boundary](security-boundary.md)
-- [`choir take` comparison attempt](evaluations/choir-take-comparison.md)
 - [BoxLite runtime](boxlite-runtime.md)
-- [Migration slice 1 verification](migration-slice1-verification.md)
-- [Migration slice 2 verification](migration-slice2-verification.md)
-- [Dependency and runtime upgrades](runbooks/dependency-upgrades.md)
 - [Goal troubleshooting](runbooks/troubleshooting.md)
 
 ## Workflow

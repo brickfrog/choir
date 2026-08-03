@@ -37,11 +37,9 @@ pub(all) struct CommandPreparationRequest {
   task_contract_revision_id : @control.RevisionId
   task_contract_digest : @control.Digest
   instruction_artifact_digest : @control.Digest
-  migration_contract_ref : @control.MigrationContractRef?
   provider_surface : @control.ProviderSurfaceId
   provider_surface_and_profile_digest : @control.Digest
   context_assembly_policy_digest : @control.Digest
-  context_manifest : @migration.PartContextManifest?
   template : CommandTemplate
   context_artifacts : Array[CommandContextArtifact]
   maximum_command_bytes : Int
@@ -56,12 +54,10 @@ pub(all) struct CommandPreparationProvenance {
   goal_contract_digest : @control.Digest
   task_contract_revision_id : @control.RevisionId
   task_contract_digest : @control.Digest
-  migration_contract_ref : @control.MigrationContractRef?
   template_digest : @control.Digest
   provider_surface : @control.ProviderSurfaceId
   provider_surface_and_profile_digest : @control.Digest
   context_assembly_policy_digest : @control.Digest
-  context_manifest_digest : @control.Digest?
   context_projection_digest : @control.Digest
   maximum_command_bytes : Int
   command_artifact_digest : @control.Digest

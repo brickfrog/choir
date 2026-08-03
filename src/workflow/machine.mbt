@@ -154,7 +154,6 @@ pub fn initialize_part_workflow(
   fencing_epoch : @control.FencingEpoch,
   is_nfc : (String) -> Bool,
   admitted_provider_surfaces~ : Array[@control.ProviderSurfaceId],
-  part_context_manifest? : @migration.PartContextManifest? = None,
 ) -> Result[PartWorkflowSnapshot, @types.ChoirError] {
   if workflow_id.0 == "" || workflow_id.0.contains("\u{00}") {
     return Err(workflow_error("workflow identity is empty or invalid"))
@@ -187,17 +186,6 @@ pub fn initialize_part_workflow(
   match @control.validate_task_contract_revision(contract, is_nfc) {
     Ok(_) => ()
     Err(error) => return Err(error)
-  }
-  match (contract.migration_contract_ref, part_context_manifest) {
-    (None, None) => ()
-    (Some(reference), Some(manifest)) =>
-      if reference != manifest.migration_contract_ref ||
-        manifest.part_task_contract_revision_id != contract.id ||
-        manifest.part_task_contract_digest != contract.digest ||
-        @migration.validate_part_context_manifest(manifest) is Err(_) {
-        return Err(workflow_error("migration Part context is stale"))
-      }
-    _ => return Err(workflow_error("migration Part context is incomplete"))
   }
   if identities.implementation_take.lifecycle !=
     @control.TakeLifecycle::TakePlanned ||
@@ -278,7 +266,6 @@ pub fn initialize_part_workflow(
     part: executing,
     task_contract: contract,
     task_contract_history: [contract],
-    part_context_manifest,
     identities,
     admitted_provider_surfaces,
     provider_failovers: [],
@@ -513,22 +500,6 @@ pub fn plan_part_conflict_repair(
     task_contract_revision_id: contract.id,
     lifecycle: @control.PartLifecycle::PartPending,
   }
-  let repair_context_manifest = match snapshot.part_context_manifest {
-    Some(manifest) =>
-      Some({
-        ..manifest,
-        migration_contract_ref: match contract.migration_contract_ref {
-          Some(reference) => reference
-          None =>
-            return Err(
-              workflow_error("conflict repair drops migration context"),
-            )
-        },
-        part_task_contract_revision_id: contract.id,
-        part_task_contract_digest: contract.digest,
-      })
-    None => None
-  }
   let initialized = match
     initialize_part_workflow(
       snapshot.workflow_id,
@@ -539,7 +510,6 @@ pub fn plan_part_conflict_repair(
       snapshot.fencing_epoch,
       is_nfc,
       admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
-      part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -680,20 +650,6 @@ pub fn plan_part_audit_repair(
     task_contract_revision_id: contract.id,
     lifecycle: @control.PartLifecycle::PartPending,
   }
-  let repair_context_manifest = match snapshot.part_context_manifest {
-    Some(manifest) =>
-      Some({
-        ..manifest,
-        migration_contract_ref: match contract.migration_contract_ref {
-          Some(reference) => reference
-          None =>
-            return Err(workflow_error("audit repair drops migration context"))
-        },
-        part_task_contract_revision_id: contract.id,
-        part_task_contract_digest: contract.digest,
-      })
-    None => None
-  }
   let initialized = match
     initialize_part_workflow(
       snapshot.workflow_id,
@@ -704,7 +660,6 @@ pub fn plan_part_audit_repair(
       snapshot.fencing_epoch,
       is_nfc,
       admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
-      part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -856,22 +811,6 @@ pub fn plan_part_verification_repair(
     task_contract_revision_id: contract.id,
     lifecycle: @control.PartLifecycle::PartPending,
   }
-  let repair_context_manifest = match snapshot.part_context_manifest {
-    Some(manifest) =>
-      Some({
-        ..manifest,
-        migration_contract_ref: match contract.migration_contract_ref {
-          Some(reference) => reference
-          None =>
-            return Err(
-              workflow_error("verification repair drops migration context"),
-            )
-        },
-        part_task_contract_revision_id: contract.id,
-        part_task_contract_digest: contract.digest,
-      })
-    None => None
-  }
   let initialized = match
     initialize_part_workflow(
       snapshot.workflow_id,
@@ -882,7 +821,6 @@ pub fn plan_part_verification_repair(
       snapshot.fencing_epoch,
       is_nfc,
       admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
-      part_context_manifest=repair_context_manifest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -990,7 +928,6 @@ pub fn plan_part_retry(
       snapshot.fencing_epoch,
       is_nfc,
       admitted_provider_surfaces=snapshot.admitted_provider_surfaces,
-      part_context_manifest=snapshot.part_context_manifest,
     ) {
     Ok(value) => value
     Err(error) => return Err(error)
@@ -1112,10 +1049,7 @@ fn part_command_preparation_plan(
   session : @control.HarnessSession,
   subject : @command.CommandExecutionSubject,
 ) -> PartCommandPreparationPlan {
-  let policy_digest = match snapshot.part_context_manifest {
-    Some(manifest) => manifest.context_assembly_policy_digest
-    None => @command.default_part_context_policy_digest()
-  }
+  let policy_digest = @command.default_part_context_policy_digest()
   let template = @command.default_command_template(role)
   {
     role,
@@ -1126,7 +1060,6 @@ fn part_command_preparation_plan(
     task_contract_revision_id: snapshot.task_contract.id,
     task_contract_digest: snapshot.task_contract.digest,
     instruction_artifact_digest: snapshot.task_contract.instruction_artifact.digest,
-    migration_contract_ref: snapshot.task_contract.migration_contract_ref,
     provider_surface: session.surface,
     provider_surface_and_profile_digest: @command.provider_surface_and_profile_digest(
       session.surface,
@@ -1134,7 +1067,6 @@ fn part_command_preparation_plan(
       command_capability_profile_digest(snapshot, role),
     ),
     context_assembly_policy_digest: policy_digest,
-    context_manifest: snapshot.part_context_manifest,
     template_digest: template.digest,
     maximum_command_bytes: 1048576,
   }

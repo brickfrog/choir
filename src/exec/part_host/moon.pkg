@@ -4,7 +4,6 @@ import {
   "choir/src/control",
   "choir/src/sys",
   "choir/src/harness",
-  "choir/src/migration",
   "choir/src/exec/git_integration",
   "choir/src/exec/part_adapter",
   "choir/src/exec/storage_host",
@@ -31,6 +30,5 @@ options(
     "effect_native.mbt": [ "native" ],
     "runtime_dependencies_native.mbt": [ "native" ],
     "process_execution_native.mbt": [ "native" ],
-    "migration_artifact_native.mbt": [ "native" ],
   },
 )

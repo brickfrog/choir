@@ -143,7 +143,7 @@ fn native_codex_role_prompt(role : @harness.CodexTakeRole) -> String {
     @harness.CodexTakeRole::CodexAuditTake =>
       common +
       "Your first action must be a read_file call for a repository path named in the supplied Part task. Call read_file for every path the Part task permits to change, and do not return before those calls succeed. Independently audit the supplied candidate. Return outcome passed with zero counts when clean, otherwise outcome findings with exact total and blocking counts." +
-      native_migration_audit_output_instruction()
+      native_audit_repair_output_instruction()
     @harness.CodexTakeRole::CodexWorkOrderPlanningTake =>
       common +
       "Act only as the read-only planner for the supplied accepted WorkOrder. Inspect repository evidence, but do not edit files or invoke mutating tools. Return exactly one proposal matching the supplied JSON schema. The proposal is advisory: Choir alone may deliver Beads or admit a Goal."
@@ -172,11 +172,9 @@ fn native_codex_output_schema(role : @harness.CodexTakeRole) -> String {
         "minimum": (0).to_json(),
       }.to_json()
       properties["repair_findings"] = native_repair_findings_output_schema()
-      properties["migration_findings"] = native_migration_findings_output_schema()
       required.push("total_findings")
       required.push("blocking_findings")
       required.push("repair_findings")
-      required.push("migration_findings")
     }
     @harness.CodexTakeRole::CodexWorkOrderPlanningTake =>
       return native_work_order_planning_output_schema()
@@ -3089,10 +3087,9 @@ test "native Codex Take schemas constrain every terminal role" {
   assert_true(audit.contains("\"total_findings\""))
   assert_true(audit.contains("\"blocking_findings\""))
   assert_true(audit.contains("\"repair_findings\""))
-  assert_true(audit.contains("\"migration_findings\""))
   assert_true(
     audit.contains(
-      "\"required\":[\"outcome\",\"total_findings\",\"blocking_findings\",\"repair_findings\",\"migration_findings\"]",
+      "\"required\":[\"outcome\",\"total_findings\",\"blocking_findings\",\"repair_findings\"]",
     ),
   )
   assert_true(audit.contains("\"additionalProperties\":false"))

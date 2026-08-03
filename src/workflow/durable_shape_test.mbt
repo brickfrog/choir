@@ -147,22 +147,6 @@ fn maximal_part_snapshot() -> @workflow.PartWorkflowSnapshot raise {
   let driven = drive_to_integration_authorized()
   {
     ..driven,
-    part_context_manifest: Some({
-      migration_contract_ref: {
-        contract_id: @control.MigrationContractId("migration-contract-1"),
-        migration_lineage_id: @control.MigrationLineageId("migration-lineage-1"),
-        revision: 1,
-        contract_artifact_digest: workflow_digest_a,
-      },
-      part_task_contract_revision_id: driven.task_contract.id,
-      part_task_contract_digest: driven.task_contract.digest,
-      context_assembly_policy_digest: workflow_digest_b,
-      rulebook_section_digests: [workflow_digest_c],
-      dependency_neighborhood_digest: workflow_digest_d,
-      applicable_gap_entry_digests: [workflow_digest_e],
-      source_path_manifest_digest: workflow_digest_a,
-      prior_take_context_digest: Some(workflow_digest_b),
-    }),
     pending_effect: Some({
       effect_id: @control.EffectId("effect-maximal-1"),
       kind: @workflow.PartEffectKind::PrepareVerificationSandbox(

@@ -4,7 +4,6 @@ import {
   "choir/src/control",
   "choir/src/sys",
   "choir/src/harness",
-  "choir/src/migration",
   "choir/src/exec/git_integration",
   "choir/src/exec/test_support",
   "choir/src/exec/part_adapter",

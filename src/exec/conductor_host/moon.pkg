@@ -2,7 +2,6 @@ import {
   "choir/src/command",
   "choir/src/control",
   "choir/src/harness",
-  "choir/src/migration",
   "choir/src/exec/process_host",
   "choir/src/exec/beads_host",
   "choir/src/exec/goal_host",

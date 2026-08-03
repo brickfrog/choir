@@ -5,11 +5,7 @@ Choir 在禁用网络的 BoxLite microVM 中运行 Claude Code 和 Codex 的实�
 ## 索引
 
 - [安全边界](security-boundary.md)
-- [`choir take` 对比尝试](evaluations/choir-take-comparison.md)
 - [BoxLite 运行时](boxlite-runtime.md)
-- [迁移切片 1 验证](migration-slice1-verification.md)
-- [迁移切片 2 验证](migration-slice2-verification.md)
-- [依赖项与运行时升级](runbooks/dependency-upgrades.md)
 - [Goal 故障排查](runbooks/troubleshooting.md)
 
 ## 工作流

@@ -1235,8 +1235,6 @@ fn native_retry_identity_fixture(
       },
     ],
     audit_policy_digest: digest("retry-identity-audit-policy"),
-    migration_contract_ref: None,
-    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: digest(
       "retry-identity-implementation-profile",
     ),
@@ -1266,7 +1264,6 @@ fn native_retry_identity_fixture(
       task_contract: contract,
       provider_surface: surface,
       provider_failover_surfaces: [failover],
-      part_context_manifest: None,
     },
     fn(_) { true },
     @control.FencingEpoch(1L),
@@ -2744,7 +2741,6 @@ fn native_source_claim_test_record(
       body: "Exercises native source-claim handling.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref,
     branch_initialization: @workflow.initial_goal_branch_initialization(
       goal_id,

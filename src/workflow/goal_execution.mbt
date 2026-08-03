@@ -308,7 +308,6 @@ pub(all) struct GoalExecutionRecord {
   integration_target_ref : GitRefName
   completion_mode : GoalCompletionMode
   pull_request_document : PullRequestDocument?
-  migration_production_admission : @migration.MigrationProductionAdmissionRef?
   goal_ref : GitRefName
   branch_initialization : GoalBranchInitialization
   source_claims : Array[GoalSourceClaim]
@@ -858,7 +857,6 @@ pub fn goal_execution_record_from_selection(
     integration_target_ref: decision.proposal.integration_target_ref,
     completion_mode: decision.proposal.completion_mode,
     pull_request_document: decision.proposal.pull_request_document,
-    migration_production_admission: decision.proposal.migration_production_admission,
     goal_ref,
     branch_initialization: initial_goal_branch_initialization(
       goal.id,
@@ -938,7 +936,6 @@ pub fn decode_goal_execution_record(
       record.completion_mode,
       record.pull_request_document,
     ) ||
-    !goal_migration_admission_is_valid(record.migration_production_admission) ||
     record.part_workflow_ids.length() == 0 ||
     record.part_workflow_ids.any(fn(id) { id.0 == "" }) ||
     record.durable_version <= 0 ||
@@ -959,17 +956,6 @@ pub fn decode_goal_execution_record(
     Err(goal_execution_error("record identity is invalid"))
   } else {
     Ok(record)
-  }
-}
-
-///|
-fn goal_migration_admission_is_valid(
-  admission : @migration.MigrationProductionAdmissionRef?,
-) -> Bool {
-  match admission {
-    None => true
-    Some(reference) =>
-      @migration.validate_migration_production_admission_ref(reference) is Ok(_)
   }
 }
 

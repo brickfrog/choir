@@ -96,9 +96,7 @@ Direct Takes do not create Beads, Goals, branches, commits, receipts, or pull
 requests.
 
 Repository verification is currently MoonBit-only. `--verify` selects a
-bounded `moon` argument vector, not an arbitrary host command. Portable
-per-project verification toolchains were not authorized by the recorded
-[comparison attempt](evaluations/choir-take-comparison.md).
+bounded `moon` argument vector, not an arbitrary host command.
 
 ## Audit context and receipt binding
 

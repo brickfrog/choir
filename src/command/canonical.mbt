@@ -92,30 +92,6 @@ pub fn take_purpose_digest(purpose : @control.TakePurpose) -> @control.Digest {
 }
 
 ///|
-fn optional_digest_fields(value : @control.Digest?) -> Array[String] {
-  match value {
-    None => ["none"]
-    Some(digest) => ["some", digest.0]
-  }
-}
-
-///|
-fn optional_contract_fields(
-  value : @control.MigrationContractRef?,
-) -> Array[String] {
-  match value {
-    None => ["none"]
-    Some(reference) =>
-      [
-        "some",
-        @utf8.decode_lossy(
-          @migration.canonical_migration_contract_ref_bytes(reference),
-        ),
-      ]
-  }
-}
-
-///|
 pub fn canonical_command_provenance_bytes(
   provenance : CommandPreparationProvenance,
 ) -> Bytes {
@@ -128,16 +104,10 @@ pub fn canonical_command_provenance_bytes(
     provenance.task_contract_revision_id.0,
     provenance.task_contract_digest.0,
   ]
-  for field in optional_contract_fields(provenance.migration_contract_ref) {
-    fields.push(field)
-  }
   fields.push(provenance.template_digest.0)
   fields.push(provider_surface_tag(provenance.provider_surface))
   fields.push(provenance.provider_surface_and_profile_digest.0)
   fields.push(provenance.context_assembly_policy_digest.0)
-  for field in optional_digest_fields(provenance.context_manifest_digest) {
-    fields.push(field)
-  }
   fields.push(provenance.context_projection_digest.0)
   fields.push(provenance.maximum_command_bytes.to_string())
   fields.push(provenance.command_artifact_digest.0)

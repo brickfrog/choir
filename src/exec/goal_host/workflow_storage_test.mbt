@@ -161,8 +161,6 @@ fn workflow_store_fixture() -> @workflow.PartWorkflowSnapshot raise {
       },
     ],
     audit_policy_digest: workflow_store_digest_a,
-    migration_contract_ref: None,
-    migration_continuation_ref_digest: None,
     implementation_capability_profile_digest: workflow_store_digest_a,
     verification_capability_profile_digest: workflow_store_digest_b,
     audit_capability_profile_digest: workflow_store_digest_a,
@@ -577,10 +575,6 @@ fn workflow_driver_observation(
   intent : @workflow.PartEffectIntent,
 ) -> Result[@workflow.PartEffectObservation, @types.ChoirError] {
   let prepared_command = fn(plan : @workflow.PartCommandPreparationPlan) {
-    let context_manifest_digest = match plan.context_manifest {
-      None => None
-      Some(manifest) => Some(@migration.part_context_manifest_digest(manifest))
-    }
     let command_artifact : @control.ArtifactReference = {
       artifact_id: "prepared-command-store-" + plan.take.id.0,
       digest: plan.template_digest,
@@ -596,12 +590,10 @@ fn workflow_driver_observation(
         goal_contract_digest: plan.goal_contract_digest,
         task_contract_revision_id: plan.task_contract_revision_id,
         task_contract_digest: plan.task_contract_digest,
-        migration_contract_ref: plan.migration_contract_ref,
         template_digest: plan.template_digest,
         provider_surface: plan.provider_surface,
         provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
         context_assembly_policy_digest: plan.context_assembly_policy_digest,
-        context_manifest_digest,
         context_projection_digest: plan.template_digest,
         maximum_command_bytes: plan.maximum_command_bytes,
         command_artifact_digest: command_artifact.digest,
@@ -2060,7 +2052,6 @@ async test "Goal cancellation atomically rejects stale seal authorization" {
       body: "Exercises persisted Goal assurance.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(integrated.goal.id),
     branch_initialization: workflow_store_initialized_branch(
       integrated.goal.id,
@@ -2251,7 +2242,6 @@ async test "Goal steering persists revision history and paused Goals do not run"
       body: "Exercises persisted Goal steering.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: @workflow.initial_goal_branch_initialization(
       fixture.goal.id,
@@ -2388,7 +2378,6 @@ async test "Goal finalization input request and answer survive restart" {
       body: "Exercises persisted Goal input handling.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: workflow_store_initialized_branch(
       fixture.goal.id,
@@ -2868,7 +2857,6 @@ async test "a stopped WorkOrder budget survives restart and is not resurrected" 
       body: "Exercises a durable WorkOrder budget.",
       draft: false,
     }),
-    migration_production_admission: None,
     goal_ref: @workflow.goal_execution_ref(fixture.goal.id),
     branch_initialization: @workflow.initial_goal_branch_initialization(
       fixture.goal.id,

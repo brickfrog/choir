@@ -1,6 +1,5 @@
 import {
   "choir/src/control",
-  "choir/src/migration",
   "choir/src/types",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
@@ -10,7 +9,6 @@ import {
 
 import {
   "moonbitlang/core/debug",
-  "moonbitlang/quickcheck",
 } for "test"
 
 options(

@@ -180,7 +180,6 @@ fn execute_native_command_preparation(
   for
     digest in @command.required_part_context_digests(
       plan.instruction_artifact_digest,
-      plan.context_manifest,
     ) {
     let content = match
       read_native_effect_artifact(runtime, digest, plan.maximum_command_bytes) {
@@ -203,11 +202,9 @@ fn execute_native_command_preparation(
       task_contract_revision_id: plan.task_contract_revision_id,
       task_contract_digest: plan.task_contract_digest,
       instruction_artifact_digest: plan.instruction_artifact_digest,
-      migration_contract_ref: plan.migration_contract_ref,
       provider_surface: plan.provider_surface,
       provider_surface_and_profile_digest: plan.provider_surface_and_profile_digest,
       context_assembly_policy_digest: plan.context_assembly_policy_digest,
-      context_manifest: plan.context_manifest,
       template,
       context_artifacts,
       maximum_command_bytes: plan.maximum_command_bytes,
@@ -1439,33 +1436,19 @@ async fn execute_native_audit(
       }
     Err(error) => return Err(error)
   }
-  let findings = match snapshot.task_contract.migration_contract_ref {
-    Some(_) =>
-      match
-        native_migration_findings_artifact(
-          runtime,
-          snapshot,
-          take_id,
-          subject,
-          provider.terminal_response,
-          total,
-          blocking,
-        ) {
-        Ok(value) => value
-        Err(error) => return Err(error)
-      }
-    None if total == 0 => None
-    None =>
-      match
-        adopt_native_effect_artifact(
-          runtime,
-          snapshot.goal.id,
-          @utf8.encode(provider.terminal_response),
-          @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
-        ) {
-        Ok(value) => Some(value)
-        Err(error) => return Err(error)
-      }
+  let findings = if total == 0 {
+    None
+  } else {
+    match
+      adopt_native_effect_artifact(
+        runtime,
+        snapshot.goal.id,
+        @utf8.encode(provider.terminal_response),
+        @storage.ArtifactProvenance::ArtifactAuditFindings(take_id),
+      ) {
+      Ok(value) => Some(value)
+      Err(error) => return Err(error)
+    }
   }
   Ok(
     @workflow.PartEffectObservation::AuditCompleted(
