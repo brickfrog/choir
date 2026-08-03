@@ -1,14 +1,16 @@
 # Documentation
 
-Choir is a durable, sandboxed orchestration system for Claude Code and Codex coding agents: an interactive Conductor proposes a Goal, `choird` records and decomposes the accepted work into Parts, subscription-backed Takes run in BoxLite microVMs, candidates are independently verified and audited, and successful work is integrated serially, verified as a combined tree, and published as one pull request. The current workflow targets Linux with KVM; the first two migration slices are implemented, while later migration slices and the native macOS host port remain staged or deferred work as described by the charters.
+Choir runs Claude Code and Codex implementation Takes in network-disabled BoxLite microVMs, independently verifies their bounded patches with MoonBit, and applies a direct Take only on explicit request after identity checks. Durable Goals add independently audited Parts, receipt-bound serialized integration, combined-tree assurance, and one reviewed pull request. The current host is Linux with KVM, and repository verification is limited to controlled `moon` commands.
 
 ## Index
 
-- [Architecture charters](charters/README.md)
+- [Security boundary](security-boundary.md)
+- [`choir take` comparison attempt](evaluations/choir-take-comparison.md)
 - [BoxLite runtime](boxlite-runtime.md)
 - [Migration slice 1 verification](migration-slice1-verification.md)
 - [Migration slice 2 verification](migration-slice2-verification.md)
-- [Operational runbooks](runbooks/)
+- [Dependency and runtime upgrades](runbooks/dependency-upgrades.md)
+- [Goal troubleshooting](runbooks/troubleshooting.md)
 
 ## Workflow
 
