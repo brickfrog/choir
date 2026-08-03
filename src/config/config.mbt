@@ -1,4 +1,45 @@
 ///|
+fn validate_config_doc(
+  doc : TomlDoc,
+  source : String,
+) -> Result[Unit, @types.ChoirError] {
+  let allowed_sections = ["capacity", "delivery"]
+  let unknown_sections : Array[String] = []
+  for section in doc.sections {
+    if !allowed_sections.contains(section) {
+      unknown_sections.push(section)
+    }
+  }
+  unknown_sections.sort()
+  if unknown_sections.length() > 0 {
+    return Err(
+      @types.ChoirError::validation_error(
+        source + " has unknown tables: " + unknown_sections.join(", "),
+      ),
+    )
+  }
+  let allowed_fields = [
+    "capacity.claude", "capacity.codex", "capacity.global", "capacity.goals", "capacity.work_orders",
+    "delivery.merge_method", "delivery.pull_requests",
+  ]
+  let unknown_fields : Array[String] = []
+  doc.values.each(fn(key, _) {
+    if !allowed_fields.contains(key) {
+      unknown_fields.push(key)
+    }
+  })
+  unknown_fields.sort()
+  if unknown_fields.length() > 0 {
+    return Err(
+      @types.ChoirError::validation_error(
+        source + " has unknown fields: " + unknown_fields.join(", "),
+      ),
+    )
+  }
+  Ok(())
+}
+
+///|
 fn config_value(
   primary : TomlDoc,
   machine : TomlDoc,
@@ -92,6 +133,14 @@ pub fn parse_config(
 ) -> Result[@types.Config, @types.ChoirError] {
   let primary = parse_toml_doc(content)
   let machine = parse_toml_doc(local_content.unwrap_or(""))
+  match validate_config_doc(primary, ".choir/config.toml") {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  match validate_config_doc(machine, ".choir/config.local.toml") {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
   let defaults = @types.Config::default()
   let delivery_mode = match
     parse_pull_request_delivery_mode(

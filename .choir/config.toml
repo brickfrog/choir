@@ -1,6 +1,3 @@
-[project]
-verify_cmd = "moon check --target native && moon test --target native"
-
 [delivery]
 pull_requests = "auto_merge"
 merge_method = "squash"

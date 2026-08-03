@@ -1,6 +1,7 @@
 ///|
 pub(all) struct TomlDoc {
   values : Map[String, String]
+  sections : Array[String]
 } derive(Debug)
 
 ///|
@@ -75,15 +76,19 @@ fn toml_value_without_comment(raw : String) -> String {
 ///|
 pub fn parse_toml_doc(content : String) -> TomlDoc {
   let map : Map[String, String] = Map([], capacity=0)
+  let sections : Array[String] = []
   let lines = content.split("\n")
   let mut section = ""
   for line in lines {
-    let str = line.to_owned().trim().to_owned()
-    if str.has_prefix("#") || str == "" {
+    let str = toml_value_without_comment(line.to_owned().trim().to_owned())
+    if str == "" {
       continue
     }
     if str.has_prefix("[") && str.has_suffix("]") && str.length() >= 2 {
       section = str[1:str.length() - 1].to_owned().trim().to_owned()
+      if !sections.contains(section) {
+        sections.push(section)
+      }
       continue
     }
     let mut idx = -1
@@ -96,7 +101,7 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
     if idx != -1 {
       let raw_key = str[0:idx].to_owned().trim().to_owned()
       let key = if section == "" { raw_key } else { section + "." + raw_key }
-      let mut val = toml_value_without_comment(str[idx + 1:].to_owned())
+      let mut val = str[idx + 1:].to_owned().trim().to_owned()
       if val.has_prefix("\"") && val.has_suffix("\"") && val.length() >= 2 {
         val = unescape_basic_toml_string(val[1:val.length() - 1].to_owned())
       } else if val.has_prefix("'") && val.has_suffix("'") && val.length() >= 2 {
@@ -105,5 +110,5 @@ pub fn parse_toml_doc(content : String) -> TomlDoc {
       map.set(key, val)
     }
   }
-  { values: map }
+  { values: map, sections }
 }
