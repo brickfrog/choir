@@ -57,6 +57,38 @@ For an unpackaged development build, set `CHOIR_RUNTIME_ASSET_DIR` to the
 absolute `scripts` directory before starting Choir. Choir never loads these
 trusted host-side programs from the target repository.
 
+## One isolated change
+
+For a single MoonBit task, `choir take` is the smallest useful Choir surface.
+It needs no Bead, Goal, daemon, branch, commit, or pull request:
+
+```bash
+choir take --provider codex --scope src \
+  --verify "test --target native" \
+  "Reject empty package names and add focused tests"
+```
+
+Choir captures an exact clean `HEAD`, gives exactly one selected subscription
+provider only the Choir sandbox tools inside a network-disabled BoxLite guest,
+seals the candidate read-only, and runs the registered Moon tool independently.
+The bounded patch, changed paths, verification result, provider usage, and
+identity digests are printed to the terminal. The command is a dry run by
+default. Add `--apply` to apply only that verified patch after Choir rechecks
+the clean `HEAD` and patch digest immediately before mutation:
+
+```bash
+choir take --provider claude --scope src --apply \
+  "Fix the parser boundary and cover the regression"
+```
+
+Omitting `--scope` deliberately admits the whole repository. This first
+surface is MoonBit-first: verification is a controlled `moon` invocation
+(`moon test --target native` by default), not an arbitrary host command.
+Provider output cannot apply to the host, mint a verification receipt, or
+create durable workflow state. Use a durable Goal when the task needs multiple
+dependency-ordered Parts, independent audit, crash-resumable execution, or
+receipt-bound pull-request promotion.
+
 `choir init` creates the local project state, starts `choird`, and opens the
 selected Conductor in the current terminal (Claude by default). Later sessions
 can use `choir start`.
@@ -114,8 +146,9 @@ choir stop --purge
 ```
 
 Normal stop preserves recoverable Goal state for restart. `stop --purge`
-requires exact ownership receipts for every repository runtime, reconciles
-their BoxLite boxes, removes the canonical repository-scoped BoxLite home,
+requires exact ownership receipts for every direct Take and Goal runtime,
+reconciles their BoxLite boxes, removes the canonical repository-scoped
+BoxLite home,
 deletes durable state and exact local Goal/witness refs, and reports the
 reclaimed bytes. It does not delete global caches, external version bundles,
 user branches, remote branches, PRs, or source Beads. Missing or ambiguous

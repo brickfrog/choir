@@ -1,0 +1,37 @@
+import {
+  "choir/src/control",
+  "choir/src/command",
+  "choir/src/exec/git_host",
+  "choir/src/exec/git_integration",
+  "choir/src/exec/goal_host",
+  "choir/src/exec/process_host",
+  "choir/src/exec/provider_host",
+  "choir/src/exec/take_host",
+  "choir/src/harness",
+  "choir/src/sandbox",
+  "choir/src/storage",
+  "choir/src/sys",
+  "choir/src/types",
+  "choir/src/workflow",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/ref",
+  "moonbitlang/async",
+}
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/ref",
+} for "test"
+
+options(
+  "is-main": false,
+  targets: {
+    "git_native.mbt": [ "native" ],
+    "git_native_test.mbt": [ "native" ],
+    "runtime_native.mbt": [ "native" ],
+    "runtime_native_test.mbt": [ "native" ],
+    "runtime_boxlite_native.mbt": [ "native" ],
+  },
+)
