@@ -151,7 +151,20 @@ fn part_attention_summary(part : GoalPartStatus) -> String? {
     Some(diagnostic) => ": " + diagnostic.detail
     None => ""
   }
-  Some("Part " + part.part_id.0 + " " + reason + detail)
+  // A failing verification carries its outcome and the artifact holding the
+  // real `moon` output. Without them the log named the block and nothing else,
+  // which is not enough to tell a failing test from a sandbox that never ran.
+  let verification = match part.verification_failure {
+    Some(failure) =>
+      ": " +
+      failure.outcome.to_json().stringify(indent=0) +
+      " execution=" +
+      failure.verification_execution_id.0 +
+      " evidence=" +
+      failure.evidence.artifact_id
+    None => ""
+  }
+  Some("Part " + part.part_id.0 + " " + reason + detail + verification)
 }
 
 ///|

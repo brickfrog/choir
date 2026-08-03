@@ -1,4 +1,35 @@
 ///|
+/// The last verification receipt this Part recorded that did not pass, or
+/// `None` while every receipt passed or none exists yet. Receipts are appended
+/// in execution order, so the last non-passing one is the failure a blocked
+/// Part is currently sitting on.
+fn part_verification_failure(
+  snapshot : PartWorkflowSnapshot,
+) -> PartVerificationFailure? {
+  let mut failure : PartVerificationFailure? = None
+  for receipt in snapshot.verification_receipts {
+    if receipt.outcome != @control.VerificationOutcome::VerificationPassed {
+      failure = Some({
+        outcome: receipt.outcome,
+        verification_execution_id: receipt.verification_execution_id,
+        evidence: receipt.evidence,
+      })
+    }
+  }
+  failure
+}
+
+///|
+/// Why a Part's verification did not pass, and where its output lives.
+pub(all) struct PartVerificationFailure {
+  outcome : @control.VerificationOutcome
+  verification_execution_id : @control.VerificationExecutionId
+  /// The stored verification output. Retrieve it to read the actual `moon`
+  /// exit status and stderr rather than re-running the Part to find out.
+  evidence : @control.ArtifactReference
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
 pub(all) struct GoalPartStatus {
   workflow_id : @control.WorkflowId
   part_id : @control.PartId
@@ -23,6 +54,13 @@ pub(all) struct GoalPartStatus {
   audit_blocking_findings_count : Int
   integration_receipt_present : Bool
   dispatch_diagnostic : PartDispatchDiagnostic?
+  /// The latest verification receipt that did not pass, once one exists. A Part
+  /// blocked on `PartVerificationFailed` used to report only that it was
+  /// blocked, so an operator reading `serve.log` could not tell a failing
+  /// `moon test` from a sandbox that never started, and the evidence artifact
+  /// holding the real output was unreachable without querying durable state by
+  /// hand. Read from the receipt, never inferred.
+  verification_failure : PartVerificationFailure?
   /// Every surface this Part moved to, and why. `provider_surface` reports
   /// where it runs now; this reports how it got there, so a changed provider
   /// is read rather than inferred.
@@ -877,6 +915,7 @@ pub fn goal_status_report(
       },
       integration_receipt_present: snapshot.integration_receipt is Some(_),
       dispatch_diagnostic: snapshot.dispatch_diagnostic,
+      verification_failure: part_verification_failure(snapshot),
       provider_failovers: snapshot.provider_failovers,
       admitted_provider_surfaces: snapshot.admitted_provider_surfaces,
       leased_provider_surface: match provider_capacity {

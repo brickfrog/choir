@@ -45,6 +45,7 @@ fn projection_part(
     audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
+    verification_failure: None,
     provider_failovers,
     admitted_provider_surfaces,
     leased_provider_surface,
@@ -493,6 +494,40 @@ test "an attention summary names the durable cause, not the counters" {
   assert_true(summary.contains("part-a"))
   assert_true(summary.contains("PartRecoveryUncertain"))
   assert_true(summary.contains("codex exit 1"))
+}
+
+///|
+test "a failed verification names its outcome and evidence artifact" {
+  let failed = {
+    ..projection_part(@workflow.PartWorkflowStage::PartVerificationSandboxPrepared),
+    lifecycle: @control.PartLifecycle::PartBlocked(
+      @control.PartBlockReason::PartVerificationFailed,
+    ),
+    verification_failure: Some({
+      outcome: @control.VerificationOutcome::VerificationFailed,
+      verification_execution_id: @control.VerificationExecutionId("verify-7"),
+      evidence: {
+        artifact_id: "artifact-verify-7",
+        digest: @control.Digest("sha256-abc"),
+      },
+    }),
+  }
+  let summary = match
+    @workflow.goal_report_attention_summary(
+      projection_report(
+        state=@workflow.GoalExecutionState::GoalExecutionBlocked,
+        parts=[failed],
+      ),
+    ) {
+    Some(value) => value
+    None => fail("a Part blocked on verification reported no cause")
+  }
+  assert_true(summary.contains("PartVerificationFailed"))
+  // The three facts a bare block reason omitted: which way it failed, which
+  // execution produced it, and where the `moon` output is stored.
+  assert_true(summary.contains("VerificationFailed"))
+  assert_true(summary.contains("verify-7"))
+  assert_true(summary.contains("artifact-verify-7"))
 }
 
 ///|

@@ -570,6 +570,7 @@ fn conductor_statusline_test_part(
     audit_blocking_findings_count: 0,
     integration_receipt_present: false,
     dispatch_diagnostic: None,
+    verification_failure: None,
     provider_failovers: [],
     admitted_provider_surfaces: [
       @control.ProviderSurfaceId::CodexSubscriptionCli,
