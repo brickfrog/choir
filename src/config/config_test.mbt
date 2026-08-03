@@ -70,10 +70,9 @@ test "provider capacity is read as typed positive bounds" {
   assert_true(parse_config("[capacity]\ncodex = \"-1\"\n") is Err(_))
   assert_true(parse_config("[capacity]\nglobal = \"0\"\n") is Err(_))
   assert_true(parse_config("[capacity]\nclaude = \"many\"\n") is Err(_))
-  // The per-Goal ceiling is a different knob and is not read from here.
+  // The per-Goal ceiling is a different knob and is rejected here.
   assert_true(
-    parse_config("[capacity]\nmaximum_parallel_parts = \"9\"\n").unwrap().provider_capacity ==
-    @types.Config::default().provider_capacity,
+    parse_config("[capacity]\nmaximum_parallel_parts = \"9\"\n") is Err(_),
   )
 }
 
@@ -92,15 +91,71 @@ test "machine-local capacity overrides the checked-in capacity" {
 }
 
 ///|
-test "repository path settings are obsolete and ignored" {
+test "supported dotted fields retain the primary and local overlay contract" {
   let config = parse_config(
-    "project_dir = \"/checked-in\"\nlisten_uds = \"/checked-in.sock\"\n",
+    "delivery.pull_requests = \"review_only\"\ncapacity.claude = \"2\"\n",
     local_content=Some(
-      "project_dir = \"/local repo\"\nlisten_uds = \"/local.sock\"\n",
+      "delivery.pull_requests = \"auto_merge\"\ncapacity.codex = \"3\"\n",
     ),
   ).unwrap()
-  assert_eq(config.project_dir, ".")
-  assert_eq(config.listen_uds, ".choir/run/server.sock")
+  assert_eq(
+    config.pull_request_delivery.mode,
+    @types.PullRequestDeliveryMode::PullRequestAutoMerge,
+  )
+  assert_eq(config.provider_capacity.claude_subscription_cli, 2)
+  assert_eq(config.provider_capacity.codex_subscription_cli, 3)
+}
+
+///|
+test "primary and local configuration reject unknown tables and fields" {
+  match parse_config("[project]\nverify_cmd = \"moon test\"\n") {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains(".choir/config.toml has unknown tables: project"),
+      )
+    Ok(_) => fail("expected an unknown primary table to be rejected")
+  }
+  match parse_config("project_dir = \"/checked-in\"\n") {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains(".choir/config.toml has unknown fields: project_dir"),
+      )
+    Ok(_) => fail("expected an unknown primary field to be rejected")
+  }
+  match
+    parse_config(
+      "[delivery]\npull_requests = \"review_only\"\n",
+      local_content=Some("[project]\nverify_cmd = \"moon test\"\n"),
+    ) {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains(".choir/config.local.toml has unknown tables: project"),
+      )
+    Ok(_) => fail("expected an unknown local table to be rejected")
+  }
+  match
+    parse_config(
+      "",
+      local_content=Some(
+        "listen_uds = \"/local.sock\"\nproject_dir = \"/local\"\n",
+      ),
+    ) {
+    Err(error) =>
+      assert_true(
+        error
+        .message()
+        .contains(
+          ".choir/config.local.toml has unknown fields: listen_uds, project_dir",
+        ),
+      )
+    Ok(_) => fail("expected unknown local fields to be rejected")
+  }
 }
 
 ///|
@@ -113,4 +168,12 @@ test "TOML reader preserves quoted values and ignores comments" {
     doc.get_optional_nonempty("listen_uds"),
     Some("/tmp/choir.sock"),
   )
+}
+
+///|
+test "TOML reader retains unique table declarations" {
+  let doc = parse_toml_doc(
+    "[delivery] # policy\npull_requests = \"review_only\"\n[capacity]\nclaude = \"2\"\n[delivery]\nmerge_method = \"squash\"\n",
+  )
+  @debug.assert_eq(doc.sections, ["delivery", "capacity"])
 }

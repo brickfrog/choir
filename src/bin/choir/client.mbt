@@ -290,7 +290,7 @@ test "Goal client uses the fixed Conductor launch environment" {
     path_exists=fn(path) { path == ".choir/config.toml" },
     read_file=fn(path) {
       if path == ".choir/config.toml" {
-        "project_dir = \"/configured/repo\"\nlisten_uds = \"/configured.sock\"\n"
+        "# project configuration\n"
       } else {
         ""
       }
@@ -309,7 +309,7 @@ test "Goal client derives local launch authority from the canonical cwd" {
       if path == ".choir/config.toml" {
         "# project configuration\n"
       } else {
-        "project_dir = \"/local/repo\"\nlisten_uds = \"/local/choir.sock\"\n"
+        "# machine-local overrides\n"
       }
     },
     canonicalize=fn(path) {

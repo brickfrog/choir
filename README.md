@@ -75,6 +75,13 @@ durable WorkOrder coordinators and their read-only planner sandboxes (also
 default `4`). A Part or planner refused a provider slot is told when to come
 back rather than retried in a loop.
 
+Project configuration is deliberately closed: `.choir/config.toml` and its
+machine-local overlay `.choir/config.local.toml` accept only
+`delivery.pull_requests`, `delivery.merge_method`, `capacity.claude`,
+`capacity.codex`, `capacity.global`, `capacity.goals`, and
+`capacity.work_orders`. Unknown tables and fields are rejected instead of being
+silently ignored; the local file may override the same supported fields.
+
 Choir does not install a slash command or skill named `goal`: `/goal` remains
 Claude Code's built-in session goal. While a durable Choir Goal is running, a
 deterministic Stop hook parks Claude instead of letting the built-in Goal loop
