@@ -104,10 +104,13 @@ choir stop --purge
 ```
 
 Normal stop preserves recoverable Goal state for restart. `stop --purge`
-removes every recorded Goal runtime and exact local Goal/witness ref before
-deleting durable state. It does not delete user branches, remote branches, PRs,
-or source Beads. If external cleanup fails, Choir keeps the database and exits
-nonzero so the purge can be retried safely.
+requires exact ownership receipts for every repository runtime, reconciles
+their BoxLite boxes, removes the canonical repository-scoped BoxLite home,
+deletes durable state and exact local Goal/witness refs, and reports the
+reclaimed bytes. It does not delete global caches, external version bundles,
+user branches, remote branches, PRs, or source Beads. Missing or ambiguous
+ownership and any external cleanup failure keep the database and exit nonzero
+so the purge can be retried safely.
 
 `goal archive` is the selective alternative: it reclaims one finished Goal
 instead of wiping the installation. Archiving is not deleting. It keeps the

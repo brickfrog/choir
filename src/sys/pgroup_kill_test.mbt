@@ -58,6 +58,18 @@ test "list_dir_all includes hidden entries without dot traversal" {
 }
 
 ///|
+test "checked directory listing distinguishes empty and unavailable paths" {
+  let tmp = "/tmp/choir-list-dir-checked-" + get_pid().to_string()
+  ignore(rm_rf(tmp))
+  assert_true(create_dir_all(tmp))
+  assert_eq(list_dir_all_complete(tmp), Some([]))
+  assert_true(write_file_atomic(tmp + "/entry", "owned"))
+  assert_eq(list_dir_all_complete(tmp), Some(["entry"]))
+  ignore(rm_rf(tmp))
+  assert_eq(list_dir_all_complete(tmp), None)
+}
+
+///|
 /// Hermetic /tmp integration: a setsid'd sleeper (its own pgroup leader) must
 /// die from the TERM→pause→KILL pgroup sequence, while guarded inputs
 /// (pgid <= 1, negative) must signal nothing.
