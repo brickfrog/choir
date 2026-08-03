@@ -1,14 +1,16 @@
 # 文档
 
-Choir 是一个面向 Claude Code 和 Codex 编程智能体的持久化沙箱编排系统：交互式 Conductor 提议 Goal，`choird` 记录已接受的工作并将其分解为 Parts，由订阅支持的 Takes 在 BoxLite microVM 中运行，候选结果经过独立验证与审计，成功的工作随后被串行集成、以组合后的代码树进行验证，并作为单个拉取请求发布。当前工作流以启用 KVM 的 Linux 为目标；迁移工作的前两个切片已实现，而后续迁移切片和原生 macOS 主机移植仍是章程中所述的分阶段或延期工作。
+Choir 在禁用网络的 BoxLite microVM 中运行 Claude Code 和 Codex 的实现 Take，使用 MoonBit 独立验证有大小限制的补丁，并且仅在明确请求且身份复核通过后应用直接 Take。持久化 Goal 在此基础上增加独立审计的 Part、与收据绑定的串行集成、组合代码树保证以及一个供审查的拉取请求。当前主机平台是启用 KVM 的 Linux，仓库验证仅支持受控的 `moon` 命令。
 
 ## 索引
 
-- [架构章程](charters/README.md)
+- [安全边界](security-boundary.md)
+- [`choir take` 对比尝试](evaluations/choir-take-comparison.md)
 - [BoxLite 运行时](boxlite-runtime.md)
 - [迁移切片 1 验证](migration-slice1-verification.md)
 - [迁移切片 2 验证](migration-slice2-verification.md)
-- [运维手册](runbooks/)
+- [依赖项与运行时升级](runbooks/dependency-upgrades.md)
+- [Goal 故障排查](runbooks/troubleshooting.md)
 
 ## 工作流
 

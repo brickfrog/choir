@@ -1,14 +1,21 @@
 # Choir
 
-Choir provides durable, sandboxed orchestration for Claude Code and Codex coding
-agents. Either provider can act as the interactive Conductor; `choird` turns an
-accepted Goal into durable Parts, runs subscription-backed Takes in BoxLite
-microVMs, verifies and audits each candidate independently, serializes
-promotion, verifies the combined tree, and publishes one final pull request.
+Choir gives Claude Code and Codex one-command, isolated implementation with
+`choir take`. The provider can use only Choir's admitted tools inside a
+network-disabled BoxLite guest: it cannot use host tools, read sibling
+repositories, or access the host subscription credential that authenticated
+the provider client. Choir independently runs the registered MoonBit
+verification and returns a bounded patch; the host checkout changes only when
+you explicitly pass `--apply`, after fresh identity checks.
 
-Provider sessions never own workflow state. SQLite, typed effects, receipts,
-leases, and reconciliation remain authoritative across client exits and daemon
-restarts.
+For work that needs several dependency-ordered Parts and one reviewed pull
+request, durable Goals add receipt-bound audit and serialized promotion of the
+exact reviewed trees. Provider sessions never own workflow state or mint their
+own verification, audit, integration, or publication receipts.
+
+**Current limitation:** repository verification is MoonBit-only. `choir take`
+and durable Goals run controlled `moon` commands; arbitrary per-project
+toolchains are not admitted.
 
 ## Install
 
@@ -174,6 +181,13 @@ daemon start.
 
 Read the documentation overview in [English](docs/overview.md) or
 [简体中文](docs/overview.zh.md)（语言/中文）。
+
+The [security boundary](docs/security-boundary.md) states the threat model,
+trusted computing base, enforced isolation, evidence binding, cleanup rules,
+and explicit non-goals. The recorded
+[`choir take` comparison attempt](docs/evaluations/choir-take-comparison.md)
+ended before a valid nine-cell matrix existed, so it produced no comparative
+result and did not authorize portable verification toolchains.
 
 ## Operations
 
