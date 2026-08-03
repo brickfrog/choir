@@ -391,6 +391,68 @@ async fn execute_native_goal_verification(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  if post_tree != subject.goal_tree_oid {
+    return Err(native_goal_execution_error("verified sealed tree changed"))
+  }
+  let verification_passed = processes.all(fn(entry) { entry.1.exit_code == 0 })
+  let audit_context = if verification_passed {
+    let audit_capture = match
+      @git_host.capture_native_audit_context(
+        runtime.config.git_workspace,
+        record.base_tree_oid,
+        subject.goal_tree_oid,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let expected_paths : Array[@control.RepoPath] = []
+    let paths_text = @utf8.decode(audit_capture.changed_paths_z) catch {
+      _ =>
+        return Err(
+          native_goal_execution_error("audit context paths are invalid"),
+        )
+    }
+    for raw in paths_text.split("\u{0000}") {
+      if raw != "" {
+        expected_paths.push(@control.RepoPath(raw.to_owned()))
+      }
+    }
+    let audit_artifact = match
+      @audit.build_audit_context_from_git_capture(
+        @audit.AuditContextKind::GoalAuditContext(
+          record.goal_id,
+          subject.goal_branch_seal_id,
+          subject.goal_branch_seal_digest,
+          subject.goal_head_oid,
+          record.goal_contract_digest,
+          record.audit_context_parts,
+        ),
+        record.base_tree_oid,
+        subject.goal_tree_oid,
+        expected_paths,
+        audit_capture,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match
+      @part_host.adopt_native_effect_artifact(
+        runtime,
+        record.goal_id,
+        audit_artifact.content,
+        @storage.ArtifactProvenance::ArtifactAuditContext(record.goal_id),
+      ) {
+      Ok(value) if value.digest == audit_artifact.reference.digest =>
+        Some(value)
+      Ok(_) =>
+        return Err(
+          native_goal_execution_error("audit context receipt is false"),
+        )
+      Err(error) => return Err(error)
+    }
+  } else {
+    None
+  }
   let executions : Array[@workflow.GoalVerificationSpecExecution] = []
   let evidence_references : Array[@control.ArtifactReference] = []
   for entry in processes {
@@ -450,6 +512,7 @@ async fn execute_native_goal_verification(
       subject,
       executions,
       evidence_manifest,
+      audit_context,
     }),
   )
 }
@@ -474,17 +537,38 @@ async fn execute_native_goal_audit(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let task_summary = match native_goal_assurance_task_summary(runtime, record) {
+  let _ = match native_goal_assurance_task_summary(runtime, record) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  let instruction = "Independently audit the complete sealed Goal tree " +
-    subject.goal_head_oid.0 +
-    " after combined verification authorization " +
-    subject.goal_verification_receipt_set_digest.0 +
-    " against these exact persisted Part tasks:\n" +
-    task_summary +
-    "\nInspect cross-Part interactions, the exact declared checks, and the final combined result. Report every concrete finding attributable to this sealed tree. Do not modify the workspace."
+  let audit_context = match record.audit_context {
+    Some(value) if value.digest == subject.audit_context_digest => value
+    _ =>
+      return Err(
+        native_goal_execution_error("audit context is missing or stale"),
+      )
+  }
+  let context_content = match
+    @part_host.read_native_effect_artifact(
+      runtime,
+      audit_context.digest,
+      2097152,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @take_host.upload_native_boxlite_audit_context(
+      sandbox,
+      audit_context.digest,
+      context_content,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let instruction = "Use read_audit_context with digest " +
+    audit_context.digest.0 +
+    " starting at cursor 0. Read consecutive chunks through EOF before returning the independent combined Goal audit result."
   let provider = match
     @part_host.run_native_part_provider_take(
       runtime,

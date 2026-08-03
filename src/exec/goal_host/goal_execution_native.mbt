@@ -6270,6 +6270,28 @@ async fn advance_native_goal_assurance_attempt(
           _ => ()
         }
         let record = stored.record
+        if record.stage == @workflow.GoalAssuranceStage::GoalVerified ||
+          record.stage == @workflow.GoalAssuranceStage::GoalAuditPending {
+          let context = match (record.audit_subject, record.audit_context) {
+            (Some(subject), Some(value)) if subject.audit_context_digest ==
+              value.digest => value
+            _ =>
+              return Err(
+                native_goal_execution_error("audit context is missing or stale"),
+              )
+          }
+          match
+            (adapters.artifacts.contains)(
+              repository.artifact_store,
+              context.digest,
+            ) {
+            Ok(true) => ()
+            _ =>
+              return Err(
+                native_goal_execution_error("audit context artifact is absent"),
+              )
+          }
+        }
         // Portfolio admission, before this tick authorizes or runs anything on
         // a provider surface. It sits ahead of the whole `pending_effect`
         // match, not inside one arm, so the authorize step and the retry-safe

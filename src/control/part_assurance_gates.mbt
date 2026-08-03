@@ -204,7 +204,8 @@ pub fn evaluate_part_audit_gate(
     is HarnessSessionIngestionClosedCleanly(HarnessCompleted)) {
     return AuditGateRejected(AuditSessionNotCleanlyClosed)
   }
-  if !artifact_exists(subject.verification_evidence_manifest_digest) {
+  if !artifact_exists(subject.audit_context_digest) ||
+    !artifact_exists(subject.verification_evidence_manifest_digest) {
     return AuditGateCorrupt(AuditArtifactMissing)
   }
   match receipt.findings_artifact {

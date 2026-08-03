@@ -21,10 +21,19 @@ fn record_verification_completion(
     Some(value) => value
     None => return Err(workflow_error("verification subject is missing"))
   }
+  let audit_context = match (result.outcome, result.audit_context) {
+    (@control.VerificationOutcome::VerificationPassed, Some(value)) if artifact_exists(
+        value,
+      ) => Some(value)
+    (@control.VerificationOutcome::VerificationFailed, None) => None
+    _ =>
+      return Err(workflow_error("verification audit context is inconsistent"))
+  }
   if result.take_id != snapshot.verification_take.id ||
     result.subject != subject ||
     result.verification_spec != snapshot.task_contract.verification_specs[0] ||
-    !artifact_exists(result.evidence) {
+    !artifact_exists(result.evidence) ||
+    result.subject_post_tree_oid != result.subject.candidate_tree_oid {
     return Err(workflow_error("verification result is stale or incomplete"))
   }
   let receipt_id = @control.ReceiptId(
@@ -107,7 +116,11 @@ fn record_verification_completion(
         Ok(value) => value
         Err(error) => return Err(error)
       }
-      let audit_subject = audit_subject(subject, authorization)
+      let context = match audit_context {
+        Some(value) => value
+        None => return Err(workflow_error("audit context is missing"))
+      }
+      let audit_subject = audit_subject(subject, authorization, context.digest)
       let audit_take = {
         ..snapshot.audit_take,
         purpose: @control.TakePurpose::PartAudit(
@@ -128,6 +141,7 @@ fn record_verification_completion(
           verification_receipts: receipts,
           verification_authorization: Some(authorization),
           audit_subject: Some(audit_subject),
+          audit_context: Some(context),
         },
         observation,
         observed_at,
@@ -231,6 +245,14 @@ fn record_audit_completion(
   let (closed, durable_events) = match
     validate_closed_trace(initial, events, final_session) {
     Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @control.validate_audit_context_read_coverage(
+      subject.audit_context_digest,
+      @control.retained_audit_context_reads(durable_events),
+    ) {
+    Ok(_) => ()
     Err(error) => return Err(error)
   }
   let sessions = match

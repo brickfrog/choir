@@ -266,6 +266,7 @@ fn publication_integrated_part(
     verification_receipts: [],
     verification_authorization: None,
     audit_subject: None,
+    audit_context: None,
     audit_result: None,
     audit_receipt: None,
     integration_lease: None,
@@ -322,6 +323,7 @@ fn publication_audited_assurance(
     integration_receipt_set_digest: planned.integration_receipt_set_digest,
     goal_verification_receipt_set_digest: authorization.receipt_set_digest,
     goal_verification_evidence_manifest_digest: authorization.evidence_manifest_digest,
+    audit_context_digest: authorization.evidence_manifest_digest,
     subject_digest: publication_digest("audit-subject"),
   }
   let result_digest = publication_digest("audit-result")

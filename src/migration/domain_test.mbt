@@ -176,6 +176,7 @@ fn audit_subject_fixture(
     task_contract_digest: migration_digest_a,
     verification_receipt_set_digest: migration_digest_b,
     verification_evidence_manifest_digest: migration_digest_c,
+    audit_context_digest: migration_digest_a,
     subject_digest,
   }
 }

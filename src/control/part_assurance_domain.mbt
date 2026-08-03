@@ -453,6 +453,7 @@ pub(all) enum HarnessEventKind {
   HarnessStarted
   HarnessToolStarted(String)
   HarnessToolFinished(String, HarnessToolDisposition)
+  HarnessAuditContextReadFinished(String, AuditContextReadObservation)
   HarnessTerminal(HarnessTerminalObservation)
 } derive(Debug, Eq, ToJson, FromJson)
 
@@ -587,6 +588,7 @@ pub(all) struct PartAuditSubject {
   task_contract_digest : Digest
   verification_receipt_set_digest : Digest
   verification_evidence_manifest_digest : Digest
+  audit_context_digest : Digest
   subject_digest : Digest
 } derive(Debug, Eq, ToJson, FromJson)
 

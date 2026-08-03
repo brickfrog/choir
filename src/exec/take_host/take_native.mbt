@@ -1526,7 +1526,7 @@ async fn copy_native_boxlite_input_online(
       ),
     )
   }
-  if destination != "/workspace" {
+  if destination != "/workspace" && destination != "/run/choir/audit-context" {
     return Err(
       @types.ChoirError::validation_error(
         "BoxLite online transfer destination is not admitted",
@@ -1673,6 +1673,91 @@ async fn copy_native_boxlite_input_online(
     return Err(native_boxlite_take_error("transfer assembly failed"))
   }
   Ok(())
+}
+
+///|
+/// Upload one digest-addressed immutable audit context and verify the exact
+/// guest bytes before provider dispatch.
+pub async fn upload_native_boxlite_audit_context(
+  take : NativeBoxLiteTakeSandbox,
+  digest : @control.Digest,
+  content : Bytes,
+) -> Result[Unit, @types.ChoirError] {
+  if !digest.is_valid() || @storage.artifact_digest(content) != digest {
+    return Err(
+      @types.ChoirError::validation_error("audit context upload is invalid"),
+    )
+  }
+  let source = take.prepared.server.config.root +
+    "/staging/audit-context-" +
+    digest.0
+  if @sys.path_exists(source) ||
+    !@sys.create_dir_all(source) ||
+    @sys.realpath_native(source) != Some(source) {
+    return Err(native_boxlite_take_error("audit context staging failed"))
+  }
+  defer ignore(@sys.rm_rf(source))
+  let staged = match
+    @process_host.capture_bounded_process_bytes(
+      "/bin/sh",
+      [
+        "-c",
+        "set -eu; umask 077; /bin/dd of=\"$1\" status=none",
+        "choir-stage-audit-context",
+        source + "/" + digest.0,
+      ],
+      native_boxlite_environment(take.prepared.server, false),
+      content,
+      take.prepared.server.config.root,
+      30000,
+      4096,
+      fn() { false },
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !(staged
+    is @process_host.NativeBoundedBytesProcessOutcome::NativeBytesProcessCompleted(
+      0,
+      _
+    )) {
+    return Err(native_boxlite_take_error("audit context staging failed"))
+  }
+  match
+    copy_native_boxlite_input_online(
+      take.prepared.server,
+      take.box_id,
+      source,
+      "/run/choir/audit-context",
+      digest.0,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let verified = match
+    capture_native_boxlite_cli(
+      take.prepared.server,
+      [
+        "exec",
+        take.box_id,
+        "--",
+        "/bin/sh",
+        "-c",
+        "set -eu; test \"$(sha256sum \"$1\" | cut -d ' ' -f1)\" = \"$2\"; chmod 0444 \"$1\"; chmod 0555 /run/choir/audit-context",
+        "choir-audit-context",
+        "/run/choir/audit-context/" + digest.0,
+        digest.0,
+      ],
+      30000,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if verified.exit_code == 0 {
+    Ok(())
+  } else {
+    Err(native_boxlite_take_error("guest audit context digest mismatch"))
+  }
 }
 
 ///|
@@ -2272,6 +2357,7 @@ pub fn native_boxlite_take_mcp_arguments(
   take : NativeBoxLiteTakeSandbox,
   script : String,
   owner_socket? : String? = None,
+  tool_surface? : @sandbox.BoxLiteMcpToolSurface? = None,
 ) -> Result[Array[String], @types.ChoirError] {
   let owner_socket = owner_socket.unwrap_or(take.prepared.server.owner_socket)
   if !script.has_prefix("/") || !owner_socket.has_prefix("/") {
@@ -2283,6 +2369,16 @@ pub fn native_boxlite_take_mcp_arguments(
     @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
     @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject =>
       "read-only-subject"
+  }
+  let tools = match tool_surface {
+    Some(@sandbox.BoxLiteMcpToolSurface::BoxLiteMutableTools) => "mutable"
+    Some(@sandbox.BoxLiteMcpToolSurface::BoxLiteAssuranceTools) => "assurance"
+    Some(@sandbox.BoxLiteMcpToolSurface::BoxLitePlannerTools) => "planner"
+    None =>
+      match take.workspace_access {
+        @sandbox.BoxLiteWorkspaceAccess::BoxLiteMutableWorkspace => "mutable"
+        @sandbox.BoxLiteWorkspaceAccess::BoxLiteReadOnlySubject => "assurance"
+      }
   }
   // The execution token is deliberately absent. It is a bearer capability that
   // authorizes exec inside the box, and the owner socket authenticates on
@@ -2297,6 +2393,8 @@ pub fn native_boxlite_take_mcp_arguments(
     take.box_id,
     "--access",
     access,
+    "--tools",
+    tools,
   ])
 }
 

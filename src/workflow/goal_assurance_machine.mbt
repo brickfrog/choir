@@ -100,8 +100,19 @@ fn next_goal_assurance_effect_kind(
       }
     }
     GoalVerified =>
-      Ok(Some(PrepareGoalAuditSandbox(record.identities.audit_sandbox)))
+      match (record.audit_subject, record.audit_context) {
+        (Some(subject), Some(context)) if subject.audit_context_digest ==
+          context.digest =>
+          Ok(Some(PrepareGoalAuditSandbox(record.identities.audit_sandbox)))
+        _ => Err(goal_assurance_error("audit context is missing or stale"))
+      }
     GoalAuditPending => {
+      match (record.audit_subject, record.audit_context) {
+        (Some(subject), Some(context)) if subject.audit_context_digest ==
+          context.digest => ()
+        _ =>
+          return Err(goal_assurance_error("audit context is missing or stale"))
+      }
       if record.audit_result is Some(_) {
         return Ok(None)
       }
@@ -358,6 +369,7 @@ fn goal_assurance_verification_subject(
 fn goal_assurance_audit_subject(
   verification : @control.GoalVerificationSubject,
   authorization : @control.GoalVerificationAuthorizationSet,
+  audit_context_digest : @control.Digest,
 ) -> @control.GoalAuditSubject {
   let subject_digest = goal_assurance_domain_digest(
     "choir.goal-audit-subject.v1",
@@ -365,6 +377,7 @@ fn goal_assurance_audit_subject(
       verification.to_json(),
       authorization.receipt_set_digest.to_json(),
       authorization.evidence_manifest_digest.to_json(),
+      audit_context_digest.to_json(),
     ].to_json(),
   )
   {
@@ -378,6 +391,7 @@ fn goal_assurance_audit_subject(
     integration_receipt_set_digest: verification.integration_receipt_set_digest,
     goal_verification_receipt_set_digest: authorization.receipt_set_digest,
     goal_verification_evidence_manifest_digest: authorization.evidence_manifest_digest,
+    audit_context_digest,
     subject_digest,
   }
 }
@@ -627,6 +641,11 @@ fn apply_goal_verification_completion(
   )
   let passed = gate
     is @control.VerificationGateObservation::VerificationGateValid(_)
+  if !passed && result.audit_context is Some(_) {
+    return Err(
+      goal_assurance_error("failed verification retained audit context"),
+    )
+  }
   let take = match
     finish_goal_verification_take(
       record.verification_take,
@@ -648,7 +667,21 @@ fn apply_goal_verification_completion(
         ),
         evidence_manifest_digest: result.evidence_manifest.digest,
       }
-      let audit_subject = goal_assurance_audit_subject(subject, authorization)
+      let context = match result.audit_context {
+        Some(value) if artifact_exists(value) => value
+        _ =>
+          return Err(goal_assurance_error("audit context is missing or stale"))
+      }
+      if result.executions.any(fn(execution) {
+          execution.subject_post_tree_oid != subject.goal_tree_oid
+        }) {
+        return Err(goal_assurance_error("audit context is missing or stale"))
+      }
+      let audit_subject = goal_assurance_audit_subject(
+        subject,
+        authorization,
+        context.digest,
+      )
       finish_goal_assurance_observation(
         record,
         {
@@ -665,6 +698,7 @@ fn apply_goal_verification_completion(
           verification_receipts: receipts,
           verification_authorization: Some(authorization),
           audit_subject: Some(audit_subject),
+          audit_context: Some(context),
           stage: GoalVerified,
         },
         observation,
@@ -758,6 +792,14 @@ fn apply_goal_audit_completion(
   let (closed, durable_events) = match
     close_goal_assurance_trace(initial, events, final_session) {
     Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @control.validate_audit_context_read_coverage(
+      subject.audit_context_digest,
+      @control.retained_audit_context_reads(durable_events),
+    ) {
+    Ok(_) => ()
     Err(error) => return Err(error)
   }
   let sessions = match

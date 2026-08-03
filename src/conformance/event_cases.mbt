@@ -299,6 +299,7 @@ fn event_authorized_provider_dispatch_fixture() -> (
     verification_receipts: [],
     verification_authorization: None,
     audit_subject: None,
+    audit_context: None,
     audit_result: None,
     audit_receipt: None,
     integration_lease: None,

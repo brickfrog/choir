@@ -278,7 +278,7 @@ fn native_work_order_planner_session(
         client_version: "",
         permission_mode: "dontAsk",
         api_key_source: "none",
-        tools: [..@sandbox.boxlite_assurance_mcp_tools(), "StructuredOutput"],
+        tools: [..@sandbox.boxlite_planner_mcp_tools(), "StructuredOutput"],
         mcp_servers: [
           { name: server, status: @harness.McpConnectionState::McpConnected },
         ],
@@ -289,7 +289,7 @@ fn native_work_order_planner_session(
       })
     @control.ProviderSurfaceId::CodexSubscriptionCli =>
       @harness.codex_effective_surface_manifest_digest(
-        @sandbox.boxlite_assurance_codex_mcp_tools(),
+        @sandbox.boxlite_planner_codex_mcp_tools(),
         server,
       )
   }
@@ -541,6 +541,7 @@ async fn execute_native_work_order_planner(
       sandbox,
       mcp_script,
       owner_socket=Some(@provider_host.native_provider_owner_socket_path()),
+      tool_surface=Some(@sandbox.BoxLiteMcpToolSurface::BoxLitePlannerTools),
     ) {
     Ok(value) => value
     Err(error) => {
@@ -586,7 +587,7 @@ async fn execute_native_work_order_planner(
   }
   let terminal = match round.planner_surface {
     @control.ProviderSurfaceId::ClaudeSubscriptionCli => {
-      let tools = @sandbox.boxlite_assurance_mcp_tools()
+      let tools = @sandbox.boxlite_planner_mcp_tools()
       match
         @provider_host.run_native_claude_take(
           {
@@ -624,7 +625,7 @@ async fn execute_native_work_order_planner(
       }
     }
     @control.ProviderSurfaceId::CodexSubscriptionCli => {
-      let tools = @sandbox.boxlite_assurance_codex_mcp_tools()
+      let tools = @sandbox.boxlite_planner_codex_mcp_tools()
       match
         @provider_host.run_native_codex_take(
           {

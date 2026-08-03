@@ -722,6 +722,9 @@ pub fn evaluate_codex_driver_capture(
     Ok(value) => value
     Err(error) => return Err(codex_provider_violation(request.capture, error))
   }
+  let audit_context_reads = retained_audit_context_reads_by_execution(
+    request.capture.output,
+  )
   let (outcome, terminal_response) = match
     validate_codex_response(request.role, response) {
     Ok(value) => value
@@ -750,14 +753,19 @@ pub fn evaluate_codex_driver_capture(
       CodexToolStarted(id, _) =>
         @control.HarnessEventKind::HarnessToolStarted(id)
       CodexToolFinished(id, succeeded) =>
-        @control.HarnessEventKind::HarnessToolFinished(
-          id,
-          if succeeded {
-            @control.HarnessToolDisposition::HarnessToolSucceeded
-          } else {
-            @control.HarnessToolDisposition::HarnessToolFailed
-          },
-        )
+        match audit_context_reads.get(id) {
+          Some(read) =>
+            @control.HarnessEventKind::HarnessAuditContextReadFinished(id, read)
+          _ =>
+            @control.HarnessEventKind::HarnessToolFinished(
+              id,
+              if succeeded {
+                @control.HarnessToolDisposition::HarnessToolSucceeded
+              } else {
+                @control.HarnessToolDisposition::HarnessToolFailed
+              },
+            )
+        }
     }
     session = match
       append_codex_take_event(

@@ -28,6 +28,7 @@ pub(all) enum ArtifactProvenance {
   ArtifactHarnessCommand(@control.TakeId)
   ArtifactVerificationEvidence(@control.TakeId)
   ArtifactAuditFindings(@control.TakeId)
+  ArtifactAuditContext(@control.GoalId)
   ArtifactConformanceEvidence
   ArtifactGoalSelectionSnapshot(@control.GoalId)
   ArtifactGoalSelectionDecision(@control.GoalId)

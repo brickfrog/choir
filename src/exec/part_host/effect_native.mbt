@@ -1225,10 +1225,60 @@ async fn execute_native_verification(
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  if post_tree != candidate.tree_oid {
+    return Err(native_part_effect_error("verified candidate tree changed"))
+  }
   let outcome = if process_result.exit_code == 0 {
     @control.VerificationOutcome::VerificationPassed
   } else {
     @control.VerificationOutcome::VerificationFailed
+  }
+  let audit_context = if outcome ==
+    @control.VerificationOutcome::VerificationPassed {
+    let audit_capture = match
+      @git_host.capture_native_audit_context(
+        runtime.config.git_workspace,
+        snapshot.task_contract.base_tree_oid,
+        candidate.tree_oid,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    let audit_artifact = match
+      @audit.build_audit_context_from_git_capture(
+        @audit.AuditContextKind::PartAuditContext(
+          snapshot.goal.id,
+          snapshot.part.id,
+          candidate.id,
+          candidate.take_id,
+          candidate.commit_oid,
+          snapshot.task_contract.id,
+          snapshot.task_contract.digest,
+          snapshot.task_contract.mutation_declaration,
+        ),
+        snapshot.task_contract.base_tree_oid,
+        candidate.tree_oid,
+        candidate.changed_paths,
+        audit_capture,
+      ) {
+      Ok(value) => value
+      Err(error) => return Err(error)
+    }
+    match
+      adopt_native_effect_artifact(
+        runtime,
+        snapshot.goal.id,
+        audit_artifact.content,
+        @storage.ArtifactProvenance::ArtifactAuditContext(snapshot.goal.id),
+      ) {
+      Ok(value) if value.digest == audit_artifact.reference.digest =>
+        Some(value)
+      Ok(_) =>
+        return Err(native_part_effect_error("audit context receipt is false"))
+      Err(error) => return Err(error)
+    }
+  } else {
+    None
   }
   let evidence_fields : Map[String, Json] = {
     "subject": subject.to_json(),
@@ -1262,6 +1312,7 @@ async fn execute_native_verification(
       subject_pre_tree_oid: candidate.tree_oid,
       subject_post_tree_oid: post_tree,
       evidence,
+      audit_context,
       started_at,
       finished_at,
       outcome,
@@ -1304,10 +1355,32 @@ async fn execute_native_audit(
       native_part_effect_error("audit lacks passed verification evidence"),
     )
   }
-  let instruction = match read_native_harness_command(runtime, command) {
+  let audit_context = match snapshot.audit_context {
+    Some(value) if value.digest == subject.audit_context_digest => value
+    _ =>
+      return Err(native_part_effect_error("audit context is missing or stale"))
+  }
+  let _ = match read_native_harness_command(runtime, command) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
+  let context_content = match
+    read_native_effect_artifact(runtime, audit_context.digest, 2097152) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  match
+    @take_host.upload_native_boxlite_audit_context(
+      sandbox,
+      audit_context.digest,
+      context_content,
+    ) {
+    Ok(_) => ()
+    Err(error) => return Err(error)
+  }
+  let instruction = "Use read_audit_context with digest " +
+    audit_context.digest.0 +
+    " starting at cursor 0. Read consecutive chunks through EOF before returning the independent audit result."
   let provider = match
     run_native_part_provider_take(
       runtime,

@@ -49,6 +49,8 @@ pub(all) struct GoalAssuranceRecord {
   goal_ref : GitRefName
   goal_contract_digest : @control.Digest
   base_commit_oid : @control.GitOid
+  base_tree_oid : @control.GitOid
+  audit_context_parts : Array[@audit.GoalAuditContextPart]
   integration_receipts : Array[@control.IntegrationReceipt]
   integration_receipt_set_digest : @control.Digest
   assurance_policy_revision : @control.RevisionId
@@ -68,6 +70,7 @@ pub(all) struct GoalAssuranceRecord {
   verification_receipts : Array[@control.GoalVerificationReceipt]
   verification_authorization : @control.GoalVerificationAuthorizationSet?
   audit_subject : @control.GoalAuditSubject?
+  audit_context : @control.ArtifactReference?
   audit_result : @control.GoalAuditResult?
   audit_receipt : @control.GoalAuditReceipt?
   pending_effect : GoalAssuranceEffectIntent?
@@ -366,6 +369,21 @@ fn goal_assurance_contract_is_valid(record : GoalAssuranceRecord) -> Bool {
   if record.goal_ref != goal_execution_ref(record.goal_id) {
     return false
   }
+  if record.audit_context_parts.length() != record.integration_receipts.length() {
+    return false
+  }
+  for index, part in record.audit_context_parts {
+    if !part.task_contract_digest.is_valid() ||
+      !record.integration_receipts.any(fn(receipt) {
+        receipt.part_id == part.part_id
+      }) ||
+      (
+        index > 0 &&
+        record.audit_context_parts[index - 1].part_id.compare(part.part_id) >= 0
+      ) {
+      return false
+    }
+  }
   let mut head = record.base_commit_oid
   for index = 0; index < record.integration_receipts.length(); index = index + 1 {
     let receipt = record.integration_receipts[index]
@@ -514,12 +532,27 @@ pub fn initialize_goal_assurance(
     ].to_json(),
   )
   let key = @storage.digest_text(intent_key)
+  let audit_context_parts : Array[@audit.GoalAuditContextPart] = snapshots.map(fn(
+    snapshot,
+  ) {
+    {
+      part_id: snapshot.part.id,
+      task_contract_revision_id: snapshot.task_contract.id,
+      task_contract_digest: snapshot.task_contract.digest,
+      mutation_declaration: snapshot.task_contract.mutation_declaration,
+    }
+  })
+  audit_context_parts.sort_by(fn(left, right) {
+    left.part_id.compare(right.part_id)
+  })
   Ok({
     goal_id: execution.goal.id,
     repository_id: execution.repository_id,
     goal_ref: execution.goal_ref,
     goal_contract_digest: execution.goal.contract_digest,
     base_commit_oid: execution.base_commit_oid,
+    base_tree_oid: execution.base_tree_oid,
+    audit_context_parts,
     integration_receipts: receipts,
     integration_receipt_set_digest: receipt_set_digest,
     assurance_policy_revision,
@@ -552,6 +585,7 @@ pub fn initialize_goal_assurance(
     verification_receipts: [],
     verification_authorization: None,
     audit_subject: None,
+    audit_context: None,
     audit_result: None,
     audit_receipt: None,
     pending_effect: None,

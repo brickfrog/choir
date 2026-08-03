@@ -326,6 +326,52 @@ fn conformance_trace(
 }
 
 ///|
+fn conformance_audit_trace(
+  session : @control.HarnessSession,
+  prefix : String,
+  audit_context_digest : @control.Digest,
+) -> (@control.HarnessSession, Array[@control.HarnessEventEnvelope]) {
+  let (closed, base_events) = conformance_trace(session, prefix)
+  let tool_id = prefix + "-read-audit-context"
+  let started = {
+    ..base_events[0],
+    id: @control.HarnessEventId(prefix + "-read-started"),
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 2,
+    ),
+    choir_sequence: @control.EventSequence(2L),
+    kind: @control.HarnessEventKind::HarnessToolStarted(tool_id),
+  }
+  let finished = {
+    ..base_events[0],
+    id: @control.HarnessEventId(prefix + "-read-finished"),
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 3,
+    ),
+    choir_sequence: @control.EventSequence(3L),
+    kind: @control.HarnessEventKind::HarnessAuditContextReadFinished(tool_id, {
+      digest: audit_context_digest,
+      cursor: 0,
+      total: 1,
+      next_cursor: None,
+      eof: true,
+      succeeded: true,
+    }),
+  }
+  let terminal = {
+    ..base_events[1],
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 4,
+    ),
+    choir_sequence: @control.EventSequence(4L),
+  }
+  (
+    { ..closed, last_choir_sequence: @control.EventSequence(4L) },
+    [base_events[0], started, finished, terminal],
+  )
+}
+
+///|
 fn conformance_effect_observation(
   snapshot : @workflow.PartWorkflowSnapshot,
   intent : @workflow.PartEffectIntent,
@@ -459,6 +505,10 @@ fn conformance_effect_observation(
             artifact_id: "verification-evidence-" + key,
             digest: change_digest,
           },
+          audit_context: Some({
+            artifact_id: "audit-context-" + key,
+            digest: change_digest,
+          }),
           started_at: 100L,
           finished_at: 102L,
           outcome: @control.VerificationOutcome::VerificationPassed,
@@ -489,7 +539,11 @@ fn conformance_effect_observation(
       let started = conformance_started_session(
         snapshot.identities.audit_session,
       )
-      let (closed, events) = conformance_trace(started, "audit-" + key)
+      let (closed, events) = conformance_audit_trace(
+        started,
+        "audit-" + key,
+        subject.audit_context_digest,
+      )
       Ok(
         @workflow.PartEffectObservation::AuditCompleted(
           {
@@ -1942,6 +1996,10 @@ fn scale_terminal_projection(
           artifact_id: "goal-verification-manifest-scale",
           digest: conformance_digest_a,
         },
+        audit_context: Some({
+          artifact_id: "goal-audit-context-scale",
+          digest: conformance_digest_a,
+        }),
       }),
       205L,
     ) {
@@ -1979,8 +2037,10 @@ fn scale_terminal_projection(
       @types.ChoirError::validation_error("scale Goal audit subject is absent"),
     )
   }
-  let (audit_closed, audit_events) = conformance_trace(
-    audit_session, "goal-audit-scale",
+  let (audit_closed, audit_events) = conformance_audit_trace(
+    audit_session,
+    "goal-audit-scale",
+    audit_subject.audit_context_digest,
   )
   assurance = match
     apply_scale_assurance_observation(

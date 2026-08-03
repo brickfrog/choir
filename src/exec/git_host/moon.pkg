@@ -1,4 +1,5 @@
 import {
+  "choir/src/audit",
   "choir/src/control",
   "choir/src/sys",
   "choir/src/exec/git_integration",
@@ -23,6 +24,8 @@ options(
     "integration_native.mbt": [ "native" ],
     "workspace_native.mbt": [ "native" ],
     "tree_preflight_native.mbt": [ "native" ],
+    "audit_context_native.mbt": [ "native" ],
+    "audit_context_native_test.mbt": [ "native" ],
     "workspace_native_test.mbt": [ "native" ],
   },
 )
