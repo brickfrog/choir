@@ -517,97 +517,56 @@ test "native Codex Conductor environment isolates writable provider state" {
 }
 
 ///|
-async fn verify_native_codex_file(
-  path : String,
-  expected_sha256 : String,
-  label : String,
-) -> Result[Unit, @types.ChoirError] {
-  let collected = @process.collect_output_merged(
-    "/usr/bin/sha256sum",
-    [path],
-    extra_env={ "PATH": "/usr/bin:/bin", "LC_ALL": "C" },
-    inherit_env=false,
-    cwd="/tmp",
-  ) catch {
-    _ => return Err(native_codex_driver_error(label + " hash probe failed"))
-  }
-  let (exit_code, data) = collected
-  let output = data.text() catch {
-    _ => return Err(native_codex_driver_error(label + " hash was not UTF-8"))
-  }
-  if exit_code != 0 || !output.has_prefix(expected_sha256 + " ") {
-    Err(
-      @types.ChoirError::policy_blocked(
-        "Codex " + label + " does not match the admitted pin",
-      ),
-    )
-  } else {
-    Ok(())
-  }
-}
-
-///|
-fn native_codex_verification_paths(launcher : String) -> (String?, String) {
+fn native_codex_execution_path(launcher : String) -> String {
   let suffix = "/@openai/codex/bin/codex.js"
   if launcher.has_suffix(suffix) {
     let modules_root = launcher[:launcher.length() - suffix.length()].to_owned()
-    (
-      Some(launcher),
-      modules_root +
-      "/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
-    )
+    modules_root +
+    "/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
   } else {
-    // Provider-managed standalone releases resolve directly to the same native
-    // executable npm packages carry. The content pin below remains the
-    // authority; no directory name or mutable `current` link is trusted.
-    (None, launcher)
+    // Provider-managed standalone releases resolve directly to the native
+    // executable. The caller canonicalizes it before binding it into the
+    // sterile provider boundary, so a mutable `current` link is not retained.
+    launcher
   }
 }
 
 ///|
-test "native Codex verification paths cover npm and standalone releases" {
+test "native Codex execution path covers npm and standalone releases" {
   let npm = "/opt/lib/node_modules/@openai/codex/bin/codex.js"
   assert_eq(
-    native_codex_verification_paths(npm),
-    (
-      Some(npm),
-      "/opt/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
-    ),
+    native_codex_execution_path(npm),
+    "/opt/lib/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
   )
   assert_eq(
-    native_codex_verification_paths(
-      "/home/user/.codex/packages/standalone/releases/0.146.0/bin/codex",
+    native_codex_execution_path(
+      "/home/user/.codex/packages/standalone/releases/9.9.9/bin/codex",
     ),
-    (None, "/home/user/.codex/packages/standalone/releases/0.146.0/bin/codex"),
+    "/home/user/.codex/packages/standalone/releases/9.9.9/bin/codex",
   )
 }
 
 ///|
-async fn verify_native_codex_binary(
+fn admit_native_codex_binary(
   codex : String,
 ) -> Result[String, @types.ChoirError] {
   let launcher = match @sys.realpath_native(codex) {
     Some(value) => value
     None => return Err(native_codex_driver_error("launcher path is invalid"))
   }
-  let (javascript, native) = native_codex_verification_paths(launcher)
-  match javascript {
-    Some(path) =>
-      match
-        verify_native_codex_file(
-          path, @harness.expected_codex_executable_sha256, "JavaScript launcher",
-        ) {
-        Ok(_) => ()
-        Err(error) => return Err(error)
-      }
-    None => ()
+  if !@sys.path_executable(launcher) {
+    return Err(native_codex_driver_error("launcher is not executable"))
   }
-  match
-    verify_native_codex_file(
-      native, @harness.expected_codex_native_executable_sha256, "native executable",
-    ) {
-    Ok(_) => Ok(native)
-    Err(error) => Err(error)
+  let native_candidate = native_codex_execution_path(launcher)
+  let native = match @sys.realpath_native(native_candidate) {
+    Some(value) => value
+    None =>
+      return Err(native_codex_driver_error("native executable path is invalid"))
+  }
+  if !@sys.path_executable(native) {
+    Err(native_codex_driver_error("native executable is not executable"))
+  } else {
+    Ok(native)
   }
 }
 
@@ -882,11 +841,7 @@ fn attest_native_codex_initialization(
   }
   let platform_family = @types.json_field_string(fields, "platformFamily")
   let platform_os = @types.json_field_string(fields, "platformOs")
-  if !user_agent.contains(
-      "choir/" +
-      @harness.expected_surface_version(@harness.ProviderSurface::CodexCli),
-    ) ||
-    !user_agent.contains("(choir; 0.1.0)") ||
+  if !user_agent.contains("(choir; 0.1.0)") ||
     codex_home != config.sterile_root + "/codex-home" ||
     platform_family != Some("unix") ||
     platform_os != Some("linux") {
@@ -2058,7 +2013,7 @@ pub async fn run_native_codex_take(
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
-  let codex_native = match verify_native_codex_binary(codex) {
+  let codex_native = match admit_native_codex_binary(codex) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -2521,7 +2476,7 @@ pub async fn run_native_codex_conductor_turn(
     Some(value) => value
     None => return Err(native_codex_driver_error("executable is unavailable"))
   }
-  let codex_native = match verify_native_codex_binary(codex) {
+  let codex_native = match admit_native_codex_binary(codex) {
     Ok(value) => value
     Err(error) => return Err(error)
   }
@@ -2764,9 +2719,7 @@ test "native Codex initialization attests the sterile client identity" {
     connect_trace_path: None,
   }
   let response : Map[String, Json] = {
-    "userAgent": ("choir/" +
-    @harness.expected_surface_version(@harness.ProviderSurface::CodexCli) +
-    " (Linux; x86_64) terminal (choir; 0.1.0)").to_json(),
+    "userAgent": "choir/9.9.9 (Linux; x86_64) terminal (choir; 0.1.0)".to_json(),
     "codexHome": "/tmp/choir-codex-driver-test/codex-home".to_json(),
     "platformFamily": "unix".to_json(),
     "platformOs": "linux".to_json(),
@@ -2774,6 +2727,11 @@ test "native Codex initialization attests the sterile client identity" {
   assert_true(
     attest_native_codex_initialization(config, response.to_json()) is Ok(_),
   )
+  response["userAgent"] = "choir/9.9.9 (Linux; x86_64) terminal".to_json()
+  assert_true(
+    attest_native_codex_initialization(config, response.to_json()) is Err(_),
+  )
+  response["userAgent"] = "choir/10.0.0 terminal (choir; 0.1.0)".to_json()
   response["codexHome"] = "/home/user/.codex".to_json()
   assert_true(
     attest_native_codex_initialization(config, response.to_json()) is Err(_),

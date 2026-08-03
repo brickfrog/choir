@@ -3851,7 +3851,7 @@ async fn run_conductor_security_live() -> Int {
   )
   let manifest_passed = match manifest {
     Some(value) =>
-      value.client_version == "2.1.220" &&
+      value.client_version != "" &&
       value.permission_mode == "dontAsk" &&
       observed_tools == expected_tools &&
       value.mcp_servers.length() == 1 &&

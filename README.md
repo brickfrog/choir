@@ -24,15 +24,18 @@ Required:
   [pinned corrected CLI and runtime](docs/boxlite-runtime.md)
 - Bubblewrap (`bwrap`) for the read-only host boundary around provider clients
 - Node.js
-- Claude Code 2.1.220 logged into the user's paid subscription
-- Codex CLI 0.146.0 logged into the user's paid subscription
+- Claude Code logged into the user's paid subscription
+- Codex CLI logged into the user's paid subscription
 
 GitHub CLI is required only when Choir should publish the final pull request.
 No separately metered model credential is required or supported by the default
 execution profiles.
 
 After installing, `choir doctor` checks every dependency above in one
-read-only pass and exits nonzero if a required one is missing or drifted.
+read-only pass and exits nonzero if a required dependency is missing or a
+pinned infrastructure contract has drifted. Provider releases are reported as
+information; Choir admits them through protocol, capability, subscription, and
+effective-surface qualification before dispatch.
 
 ```bash
 scripts/install-choir.sh --prefix "$HOME/.local" \

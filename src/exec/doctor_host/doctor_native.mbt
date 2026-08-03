@@ -28,10 +28,10 @@ test "a release tag is compared as the version the CLI actually reports" {
 }
 
 ///|
-/// The dependency matrix Choir actually needs, with the version pins the rest
-/// of the codebase already enforces: Beads from the Conductor admission check,
-/// the provider CLIs from the harness surface probe, and BoxLite from the
-/// sandbox probe's release tag.
+/// The dependency matrix Choir actually needs. Infrastructure with a content
+/// contract retains its version admission; provider releases are reported as
+/// information here and admitted later by protocol and effective-capability
+/// qualification.
 pub fn native_doctor_probe_plans() -> Array[NativeDoctorProbePlan] {
   [
     {
@@ -75,18 +75,14 @@ pub fn native_doctor_probe_plans() -> Array[NativeDoctorProbePlan] {
       requirement: @command.DoctorRequirement::DoctorClaudeCli,
       program: "claude",
       args: ["--version"],
-      expected_version: Some(
-        @harness.expected_surface_version(@harness.ProviderSurface::ClaudeCli),
-      ),
+      expected_version: None,
       present_paths: [],
     },
     {
       requirement: @command.DoctorRequirement::DoctorCodexCli,
       program: "codex",
       args: ["--version"],
-      expected_version: Some(
-        @harness.expected_surface_version(@harness.ProviderSurface::CodexCli),
-      ),
+      expected_version: None,
       present_paths: [],
     },
     {
@@ -212,15 +208,8 @@ async test "the doctor probes every requirement and reports each host answer" {
           )
         "bwrap" => (0, "bubblewrap 0.11.0\n")
         "node" => (0, "v22.11.0\n")
-        "claude" =>
-          (
-            0,
-            @harness.expected_surface_version(
-              @harness.ProviderSurface::ClaudeCli,
-            ) +
-            " (Claude Code)\n",
-          )
-        "codex" => (0, "codex-cli 0.144.0\n")
+        "claude" => (0, "2.1.999 (Claude Code)\n")
+        "codex" => (0, "codex-cli 0.999.0\n")
         _ => (-1, "")
       }
     },
@@ -231,12 +220,12 @@ async test "the doctor probes every requirement and reports each host answer" {
   assert_eq(probed, [
     "git", "bd", "boxlite", "bwrap", "node", "claude", "codex", "gh",
   ])
-  // A drifted Codex pin and an absent libsqlite3 are required failures; an
-  // absent gh is only a warning.
-  assert_eq(report.failures, 2)
+  // Provider releases are informational. An absent libsqlite3 is a required
+  // failure; an absent gh is only a warning.
+  assert_eq(report.failures, 1)
   assert_eq(report.warnings, 1)
   let rendered = @command.render_doctor_report(report)
-  assert_true(rendered.contains("FAIL  codex: codex must be 0.146.0"))
+  assert_true(rendered.contains("ok    codex: codex-cli 0.999.0"))
   assert_true(rendered.contains("FAIL  libsqlite3: libsqlite3 was not found"))
   assert_true(rendered.contains("warn  gh: gh was not found"))
   assert_true(rendered.contains("ok    /dev/kvm: /dev/kvm is available"))

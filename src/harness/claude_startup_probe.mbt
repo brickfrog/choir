@@ -30,7 +30,6 @@ pub(all) enum ClaudeStartupBlockReason {
   ClaudeStartupTimedOut
   ClaudeStartupMissingInitialization
   ClaudeStartupEventBeforeInitialization
-  ClaudeStartupVersionMismatch
   ClaudeStartupPermissionModeMismatch
   ClaudeStartupUnexpectedCredentialSource
   ClaudeStartupNativeToolsVisible
@@ -319,9 +318,6 @@ pub fn evaluate_claude_synthetic_startup(
   match manifest {
     None => reasons.push(ClaudeStartupMissingInitialization)
     Some(manifest) => {
-      if manifest.client_version != expected_surface_version(ClaudeCli) {
-        reasons.push(ClaudeStartupVersionMismatch)
-      }
       if manifest.permission_mode != "dontAsk" {
         reasons.push(ClaudeStartupPermissionModeMismatch)
       }
