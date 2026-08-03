@@ -45,8 +45,8 @@ temporary evidence root and detached worktrees were also removed after their
 bounded result was recorded. Raw provider transcripts and patch blobs are not
 tracked in this repository.
 
-`choir-z0r` therefore closed as abandoned without a valid comparison decision.
-`choir-bwh`, the portable per-project verification-toolchain work, closed
-without authorization. A future expansion proposal requires a new frozen
-comparison; it cannot treat this incomplete attempt as a passing or failing
-matrix.
+`choir-z0r` remains open with the exhausted delegated-cell permission blocker
+recorded. `choir-bwh`, the portable per-project verification-toolchain work,
+also remains open but dependency-blocked and unauthorized. A future expansion
+proposal requires a new frozen comparison; it cannot treat this incomplete
+attempt as a passing or failing matrix.
