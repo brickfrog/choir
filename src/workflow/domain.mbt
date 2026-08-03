@@ -156,6 +156,7 @@ pub(all) struct VerificationExecutionResult {
   subject_pre_tree_oid : @control.GitOid
   subject_post_tree_oid : @control.GitOid
   evidence : @control.ArtifactReference
+  audit_context : @control.ArtifactReference?
   started_at : Int64
   finished_at : Int64
   outcome : @control.VerificationOutcome
@@ -305,6 +306,7 @@ pub(all) struct PartWorkflowSnapshot {
   verification_receipts : Array[@control.VerificationReceipt]
   verification_authorization : @control.VerificationAuthorizationSet?
   audit_subject : @control.PartAuditSubject?
+  audit_context : @control.ArtifactReference?
   audit_result : @control.AuditResult?
   audit_receipt : @control.AuditReceipt?
   integration_lease : @control.GoalIntegrationLease?

@@ -83,6 +83,7 @@ fn goal_gate_audit_subject() -> @control.GoalAuditSubject {
     integration_receipt_set_digest: goal_gate_digest_a,
     goal_verification_receipt_set_digest: goal_gate_digest_b,
     goal_verification_evidence_manifest_digest: goal_gate_digest_a,
+    audit_context_digest: goal_gate_digest_b,
     subject_digest: goal_gate_digest_b,
   }
 }
@@ -311,6 +312,25 @@ test "combined audit gate is passive and structurally independent" {
     ),
     @control.AuditGateObservation::AuditGateValid(
       @control.ReceiptId("goal-audit-receipt-1"),
+    ),
+  )
+  assert_eq(
+    @control.evaluate_goal_audit_gate(
+      goal_gate_audit_subject(),
+      Some(goal_gate_audit_receipt()),
+      Some(goal_gate_audit_result()),
+      [@control.TakeId("goal-verification-1")],
+      [@control.SandboxGenerationId("goal-verification-generation-1")],
+      [@control.HarnessSessionId("goal-verification-session-1")],
+      Some(goal_gate_audit_session()),
+      goal_gate_digest_a,
+      goal_gate_digest_b,
+      goal_gate_digest_a,
+      goal_gate_digest_b,
+      fn(digest) { digest != goal_gate_audit_subject().audit_context_digest },
+    ),
+    @control.AuditGateObservation::AuditGateCorrupt(
+      @control.AuditGateCorruptionReason::AuditArtifactMissing,
     ),
   )
   assert_eq(

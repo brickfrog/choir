@@ -55,6 +55,7 @@ pub fn canonical_command_subject_bytes(
         value.task_contract_digest.0,
         value.verification_receipt_set_digest.0,
         value.verification_evidence_manifest_digest.0,
+        value.audit_context_digest.0,
         value.subject_digest.0,
       ]
   }

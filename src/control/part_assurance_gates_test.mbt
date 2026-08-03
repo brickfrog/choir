@@ -63,6 +63,7 @@ fn gate_audit_subject() -> @control.PartAuditSubject {
     task_contract_digest: gate_digest_a,
     verification_receipt_set_digest: gate_digest_a,
     verification_evidence_manifest_digest: gate_digest_b,
+    audit_context_digest: gate_digest_a,
     subject_digest: gate_digest_a,
   }
 }
@@ -219,6 +220,25 @@ test "audit gate requires fresh sandbox session and exact result" {
     valid,
     @control.AuditGateObservation::AuditGateValid(
       @control.ReceiptId("audit-receipt-1"),
+    ),
+  )
+  assert_eq(
+    @control.evaluate_part_audit_gate(
+      gate_audit_subject(),
+      Some(gate_audit_receipt()),
+      Some(gate_audit_result()),
+      @control.TakeId("implementation-1"),
+      @control.SandboxGenerationId("implementation-generation-1"),
+      [@control.HarnessSessionId("implementation-session-1")],
+      Some(gate_audit_session()),
+      gate_digest_a,
+      gate_digest_b,
+      gate_digest_a,
+      gate_digest_b,
+      fn(digest) { digest != gate_audit_subject().audit_context_digest },
+    ),
+    @control.AuditGateObservation::AuditGateCorrupt(
+      @control.AuditGateCorruptionReason::AuditArtifactMissing,
     ),
   )
   let non_independent = {

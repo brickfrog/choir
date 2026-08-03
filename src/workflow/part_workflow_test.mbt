@@ -676,6 +676,52 @@ fn successful_trace(
 }
 
 ///|
+fn successful_audit_trace(
+  session : @control.HarnessSession,
+  prefix : String,
+  first_observed_at : Int64,
+  digest : @control.Digest,
+) -> (@control.HarnessSession, Array[@control.HarnessEventEnvelope]) {
+  let (closed, base) = successful_trace(session, prefix, first_observed_at)
+  let tool_started = {
+    ..base[0],
+    id: @control.HarnessEventId(prefix + "-read-started"),
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 2,
+    ),
+    choir_sequence: @control.EventSequence(2L),
+    kind: @control.HarnessEventKind::HarnessToolStarted("read-1"),
+  }
+  let tool_finished = {
+    ..base[0],
+    id: @control.HarnessEventId(prefix + "-read-finished"),
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 3,
+    ),
+    choir_sequence: @control.EventSequence(3L),
+    kind: @control.HarnessEventKind::HarnessAuditContextReadFinished("read-1", {
+      digest,
+      cursor: 0,
+      total: 0,
+      next_cursor: None,
+      eof: true,
+      succeeded: true,
+    }),
+  }
+  let terminal = {
+    ..base[1],
+    source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+      prefix, 4,
+    ),
+    choir_sequence: @control.EventSequence(4L),
+  }
+  (
+    { ..closed, last_choir_sequence: @control.EventSequence(4L) },
+    [base[0], tool_started, tool_finished, terminal],
+  )
+}
+
+///|
 fn authorize_next(
   snapshot : @workflow.PartWorkflowSnapshot,
 ) -> @workflow.PartWorkflowSnapshot raise {
@@ -1357,6 +1403,10 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
         artifact_id: "verification-evidence-1",
         digest: workflow_digest_e,
       },
+      audit_context: Some({
+        artifact_id: "audit-context-1",
+        digest: workflow_digest_e,
+      }),
       started_at: 18L,
       finished_at: 19L,
       outcome: @control.VerificationOutcome::VerificationPassed,
@@ -1364,6 +1414,33 @@ fn drive_to_verified() -> @workflow.PartWorkflowSnapshot raise {
     20L,
   )
   round_trip(snapshot)
+}
+
+///|
+test "passed verification cannot plan or authorize audit without its exact context" {
+  let verified = drive_to_verified()
+  let context = verified.audit_context.unwrap()
+  let subject = verified.audit_subject.unwrap()
+  assert_eq(subject.audit_context_digest, context.digest)
+  assert_true(
+    @workflow.plan_next_part_effect({ ..verified, audit_context: None })
+    is Err(_),
+  )
+  assert_true(
+    @workflow.plan_next_part_effect({
+      ..verified,
+      audit_context: Some({
+        artifact_id: "sha256:" + workflow_digest_a.0,
+        digest: workflow_digest_a,
+      }),
+    })
+    is Err(_),
+  )
+  let intent = @workflow.plan_next_part_effect(verified).unwrap().unwrap()
+  let planned = @workflow.persist_planned_part_effect(verified, intent).unwrap()
+  assert_true(
+    @workflow.authorize_pending_part_effect(planned, fn(_) { false }) is Err(_),
+  )
 }
 
 ///|
@@ -1382,8 +1459,11 @@ fn drive_to_audited() -> @workflow.PartWorkflowSnapshot raise {
     @workflow.PartEffectObservation::AuditHarnessStarted(audit_session),
     22L,
   )
-  let (audit_final, audit_events) = successful_trace(
-    audit_session, "audit", 23L,
+  let (audit_final, audit_events) = successful_audit_trace(
+    audit_session,
+    "audit",
+    23L,
+    snapshot.audit_context.unwrap().digest,
   )
   let subject = match snapshot.audit_subject {
     Some(value) => value
@@ -1896,6 +1976,7 @@ test "failed verification plans a bounded evidence-carrying repair revision" {
     verification_receipts: [failed],
     verification_authorization: None,
     audit_subject: None,
+    audit_context: None,
   }
   let repair : @control.VerificationRepairReference = {
     scope: @control.VerificationRepairScope::PartVerificationRepair,
@@ -2385,12 +2466,30 @@ test "integrated Parts authorize one immutable Goal branch seal" {
         artifact_id: "goal-verification-manifest-1",
         digest: workflow_digest_c,
       },
+      audit_context: Some({
+        artifact_id: "goal-audit-context-1",
+        digest: workflow_digest_c,
+      }),
     }),
     33L,
   )
   assert_eq(assured.stage, @workflow.GoalAssuranceStage::GoalVerified)
   assert_eq(assured.verification_receipts.length(), 1)
   assert_true(assured.verification_authorization is Some(_))
+  assert_true(
+    @workflow.plan_next_goal_assurance_effect({ ..assured, audit_context: None })
+    is Err(_),
+  )
+  assert_true(
+    @workflow.plan_next_goal_assurance_effect({
+      ..assured,
+      audit_context: Some({
+        artifact_id: "goal-audit-context-stale",
+        digest: workflow_digest_a,
+      }),
+    })
+    is Err(_),
+  )
   assured = apply_goal_assurance_observation(
     assured,
     @workflow.GoalAssuranceEffectObservation::GoalAuditSandboxPrepared(
@@ -2410,11 +2509,17 @@ test "integrated Parts authorize one immutable Goal branch seal" {
     Some(value) => value
     None => fail("combined audit subject is absent")
   }
-  let (audit_final, audit_events) = successful_trace(
-    audit_session, "goal-audit", 36L,
+  let (audit_final, audit_events) = successful_audit_trace(
+    audit_session,
+    "goal-audit",
+    36L,
+    audit_subject.audit_context_digest,
   )
-  let (findings_final, findings_events) = successful_trace(
-    audit_session, "goal-audit-findings", 36L,
+  let (findings_final, findings_events) = successful_audit_trace(
+    audit_session,
+    "goal-audit-findings",
+    36L,
+    audit_subject.audit_context_digest,
   )
   let with_findings = apply_goal_assurance_observation(
     assured,

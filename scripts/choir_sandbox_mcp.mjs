@@ -5,6 +5,8 @@ const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_WRITE_BYTES = 256 * 1024;
 const MAX_ARG_COUNT = 96;
 const MAX_ARG_BYTES = 64 * 1024;
+export const AUDIT_CONTEXT_CHUNK_BYTES = 128 * 1024;
+const AUDIT_CONTEXT_ROOT = "/run/choir/audit-context";
 
 export const SANDBOX_MCP_LIMITS = Object.freeze({
   frameBytes: 512 * 1024,
@@ -22,6 +24,52 @@ function fail(message) {
   throw new Error(`sandbox bridge: ${message}`);
 }
 
+export function validateAuditContextRequest(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+    Object.keys(value).length !== 2 ||
+    typeof value.digest !== "string" || !/^[a-f0-9]{64}$/.test(value.digest) ||
+    !Number.isSafeInteger(value.cursor) || value.cursor < 0) {
+    fail("invalid audit context request");
+  }
+  return Object.freeze({ digest: value.digest, cursor: value.cursor });
+}
+
+export function auditContextGuestPath(digest) {
+  validateAuditContextRequest({ digest, cursor: 0 });
+  return `${AUDIT_CONTEXT_ROOT}/${digest}`;
+}
+
+export function paginateAuditContextBytes(digest, cursor, content) {
+  validateAuditContextRequest({ digest, cursor });
+  if (!Buffer.isBuffer(content) || cursor > content.length) {
+    fail("invalid audit context content");
+  }
+  const total = content.length;
+  const upper = Math.min(total, cursor + AUDIT_CONTEXT_CHUNK_BYTES);
+  let end = upper;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let text;
+  while (end >= cursor) {
+    try {
+      text = decoder.decode(content.subarray(cursor, end));
+      break;
+    } catch {
+      end -= 1;
+    }
+  }
+  if (text === undefined || (end === cursor && cursor < total)) {
+    fail("audit context is not valid UTF-8 at cursor");
+  }
+  return Object.freeze({
+    digest,
+    cursor,
+    total,
+    content: text,
+    next_cursor: end < total ? end : null,
+    eof: end === total,
+  });
+}
+
 export function parseLaunchArgs(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -32,7 +80,7 @@ export function parseLaunchArgs(argv) {
     }
     values.set(key, value);
   }
-  const required = ["--owner-socket", "--box", "--access"];
+  const required = ["--owner-socket", "--box", "--access", "--tools"];
   if (values.size !== required.length) fail("unknown launch argument");
   for (const key of required) {
     if (!values.get(key)) fail(`missing ${key}`);
@@ -55,11 +103,19 @@ export function parseLaunchArgs(argv) {
   if (!["mutable", "read-only-subject"].includes(values.get("--access"))) {
     fail("invalid workspace access");
   }
+  if (!["mutable", "assurance", "planner"].includes(values.get("--tools"))) {
+    fail("invalid tool surface");
+  }
+  if ((values.get("--access") === "mutable") !==
+    (values.get("--tools") === "mutable")) {
+    fail("tool surface does not match workspace access");
+  }
   return Object.freeze({
     ownerSocket: values.get("--owner-socket"),
     ownerToken,
     box: values.get("--box"),
     access: values.get("--access"),
+    toolSurface: values.get("--tools"),
   });
 }
 
@@ -373,6 +429,48 @@ class SandboxClient {
     return result.stdout;
   }
 
+  async readAuditContext(args) {
+    const { digest, cursor } = validateAuditContextRequest(args);
+    const path = auditContextGuestPath(digest);
+    // Return base64 so arbitrary UTF-8 bytes are not decoded by the owner
+    // protocol before this boundary can validate them. One sentinel byte lets
+    // pagination distinguish a full chunk from EOF without retaining excess.
+    const script = "set -eu; total=$(/usr/bin/stat -c %s -- \"$1\"); " +
+      "test \"$2\" -le \"$total\"; printf '%s\\n' \"$total\"; " +
+      "/bin/dd if=\"$1\" bs=1 skip=\"$2\" count=131073 status=none | /usr/bin/base64 -w0";
+    const result = await this.run(
+      ["/bin/sh", "-c", script, "choir-read-audit-context", path, String(cursor)],
+      "",
+      30000,
+    );
+    if (result.exitCode !== 0) fail("audit context read failed");
+    const newline = result.stdout.indexOf("\n");
+    if (newline < 1) fail("audit context response is malformed");
+    const totalText = result.stdout.slice(0, newline);
+    if (!/^(0|[1-9][0-9]*)$/.test(totalText)) {
+      fail("audit context response is malformed");
+    }
+    const total = Number(totalText);
+    if (!Number.isSafeInteger(total) || cursor > total) {
+      fail("audit context response is malformed");
+    }
+    const bytes = Buffer.from(result.stdout.slice(newline + 1), "base64");
+    if (bytes.length > AUDIT_CONTEXT_CHUNK_BYTES + 1 ||
+      cursor + bytes.length > total) {
+      fail("audit context response is malformed");
+    }
+    const page = paginateAuditContextBytes(digest, 0, bytes);
+    const consumed = page.next_cursor ?? bytes.length;
+    return Object.freeze({
+      digest,
+      cursor,
+      total,
+      content: page.content,
+      next_cursor: cursor + consumed < total ? cursor + consumed : null,
+      eof: cursor + consumed === total,
+    });
+  }
+
   async writeGuestFile(path, content) {
     if (typeof content !== "string" || Buffer.byteLength(content) > MAX_WRITE_BYTES) {
       fail("write content exceeds its bound");
@@ -459,7 +557,7 @@ export const mutableTools = [
   },
 ];
 
-export const assuranceTools = [
+export const plannerTools = [
   {
     name: "read_file",
     description: "Read one UTF-8 file from the read-only candidate",
@@ -504,12 +602,30 @@ export const assuranceTools = [
   },
 ];
 
+export const assuranceTools = [
+  ...plannerTools,
+  {
+    name: "read_audit_context",
+    description: "Read the next UTF-8 chunk of the exact sealed audit context",
+    inputSchema: {
+      type: "object",
+      properties: {
+        digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        cursor: { type: "integer", minimum: 0 },
+      },
+      required: ["digest", "cursor"],
+      additionalProperties: false,
+    },
+  },
+];
+
 export const tools = mutableTools;
 
-export function toolsForAccess(access) {
-  if (access === "mutable") return mutableTools;
-  if (access === "read-only-subject") return assuranceTools;
-  fail("invalid workspace access");
+export function toolsForSurface(surface) {
+  if (surface === "mutable") return mutableTools;
+  if (surface === "assurance") return assuranceTools;
+  if (surface === "planner") return plannerTools;
+  fail("invalid tool surface");
 }
 
 function toolText(value, isError = false) {
@@ -517,10 +633,12 @@ function toolText(value, isError = false) {
 }
 
 async function callTool(client, name, args) {
-  if (!toolsForAccess(client.config.access).some((tool) => tool.name === name)) {
+  if (!toolsForSurface(client.config.toolSurface).some((tool) => tool.name === name)) {
     fail("undeclared tool");
   }
   switch (name) {
+    case "read_audit_context":
+      return toolText(JSON.stringify(await client.readAuditContext(args)));
     case "read_file":
       return toolText(await client.readFile(args.path));
     case "list_files": {
@@ -740,7 +858,7 @@ export function startSandboxMcp(argv = process.argv.slice(2)) {
   const client = new SandboxClient(parseLaunchArgs(argv));
   return runSandboxMcpBridge({
     client,
-    visibleTools: toolsForAccess(client.config.access),
+    visibleTools: toolsForSurface(client.config.toolSurface),
     input: process.stdin,
     write: (message) => process.stdout.write(message),
     exit: (code) => process.exit(code),

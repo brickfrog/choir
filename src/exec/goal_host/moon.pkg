@@ -1,4 +1,5 @@
 import {
+  "choir/src/audit",
   "choir/src/command",
   "choir/src/control",
   "choir/src/sys",

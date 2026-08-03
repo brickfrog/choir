@@ -74,6 +74,7 @@ pub(all) struct GoalVerificationExecutionResult {
   subject : @control.GoalVerificationSubject
   executions : Array[GoalVerificationSpecExecution]
   evidence_manifest : @control.ArtifactReference
+  audit_context : @control.ArtifactReference?
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|

@@ -16,6 +16,13 @@ pub(all) enum BoxLiteWorkspaceAccess {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) enum BoxLiteMcpToolSurface {
+  BoxLiteMutableTools
+  BoxLiteAssuranceTools
+  BoxLitePlannerTools
+} derive(Debug, Eq)
+
+///|
 pub fn boxlite_take_mcp_tools() -> Array[String] {
   [
     "mcp__choir_sandbox__read_file", "mcp__choir_sandbox__list_files", "mcp__choir_sandbox__write_file",
@@ -32,12 +39,27 @@ pub fn boxlite_take_codex_mcp_tools() -> Array[String] {
 pub fn boxlite_assurance_mcp_tools() -> Array[String] {
   [
     "mcp__choir_sandbox__read_file", "mcp__choir_sandbox__list_files", "mcp__choir_sandbox__write_scratch",
-    "mcp__choir_sandbox__write_output",
+    "mcp__choir_sandbox__write_output", "mcp__choir_sandbox__read_audit_context",
   ]
 }
 
 ///|
 pub fn boxlite_assurance_codex_mcp_tools() -> Array[String] {
+  [
+    "read_file", "list_files", "write_scratch", "write_output", "read_audit_context",
+  ]
+}
+
+///|
+pub fn boxlite_planner_mcp_tools() -> Array[String] {
+  [
+    "mcp__choir_sandbox__read_file", "mcp__choir_sandbox__list_files", "mcp__choir_sandbox__write_scratch",
+    "mcp__choir_sandbox__write_output",
+  ]
+}
+
+///|
+pub fn boxlite_planner_codex_mcp_tools() -> Array[String] {
   ["read_file", "list_files", "write_scratch", "write_output"]
 }
 
@@ -45,8 +67,12 @@ pub fn boxlite_assurance_codex_mcp_tools() -> Array[String] {
 pub fn boxlite_take_tool_manifest_digest() -> @control.Digest {
   @storage.artifact_digest(
     @utf8.encode(
-      "choir.boxlite-take-tools.v2\u{00}nfc=utf8proc\u{00}" +
-      boxlite_take_mcp_tools().join("\n"),
+      "choir.boxlite-take-tools.v3\u{00}nfc=utf8proc\u{00}mutable\u{00}" +
+      boxlite_take_mcp_tools().join("\n") +
+      "\u{00}assurance\u{00}" +
+      boxlite_assurance_mcp_tools().join("\n") +
+      "\u{00}planner\u{00}" +
+      boxlite_planner_mcp_tools().join("\n"),
     ),
   )
 }
@@ -67,7 +93,7 @@ pub fn boxlite_take_runtime_policy_digest() -> @control.Digest {
 test "Take runtime digests bind the declared tools and policy" {
   assert_eq(
     boxlite_take_tool_manifest_digest().0,
-    "3589ec9e79d6b9b39c02a838aeb56cac7848bd8d867998feaf798aff77978b77",
+    "37a00e74afc22aaf1a47b3f3f51e0e1cae96c97c05202f9445a5355cafc09185",
   )
   assert_eq(
     boxlite_take_runtime_policy_digest().0,

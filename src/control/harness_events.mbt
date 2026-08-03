@@ -162,7 +162,11 @@ pub fn ingest_harness_event(
               disposition: HarnessEventAppended,
             }
           }
-        (HarnessSessionRunning, HarnessToolFinished(execution_id, _)) =>
+        (HarnessSessionRunning, HarnessToolFinished(execution_id, _))
+        | (
+          HarnessSessionRunning,
+          HarnessAuditContextReadFinished(execution_id, _),
+        ) =>
           if !session.open_tool_execution_ids.contains(execution_id) {
             protocol_violated_ingestion(session, incoming)
           } else {

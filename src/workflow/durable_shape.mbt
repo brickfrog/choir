@@ -588,6 +588,7 @@ let durable_shape_part_audit_subject : @control.PartAuditSubject = {
   task_contract_digest: durable_shape_digest,
   verification_receipt_set_digest: durable_shape_digest,
   verification_evidence_manifest_digest: durable_shape_digest,
+  audit_context_digest: durable_shape_digest,
   subject_digest: durable_shape_digest,
 }
 
@@ -1098,6 +1099,7 @@ let durable_shape_goal_audit_subject : @control.GoalAuditSubject = {
   integration_receipt_set_digest: durable_shape_digest,
   goal_verification_receipt_set_digest: durable_shape_digest,
   goal_verification_evidence_manifest_digest: durable_shape_digest,
+  audit_context_digest: durable_shape_digest,
   subject_digest: durable_shape_digest,
 }
 
@@ -1372,6 +1374,7 @@ let durable_shape_goal_verification_execution_result : GoalVerificationExecution
   subject: durable_shape_goal_verification_subject,
   executions: [durable_shape_goal_verification_spec_execution],
   evidence_manifest: durable_shape_artifact_reference,
+  audit_context: Some(durable_shape_artifact_reference),
 }
 
 ///|
@@ -1406,6 +1409,14 @@ let durable_shapes_harness_event_kind : Array[@control.HarnessEventKind] = [
     "",
     durable_shapes_harness_tool_disposition[0],
   ),
+  @control.HarnessEventKind::HarnessAuditContextReadFinished("", {
+    digest: durable_shape_digest,
+    cursor: 0,
+    total: 0,
+    next_cursor: None,
+    eof: true,
+    succeeded: true,
+  }),
   @control.HarnessEventKind::HarnessTerminal(
     durable_shapes_harness_terminal_observation[0],
   ),
@@ -1421,6 +1432,7 @@ fn durable_guard_harness_event_kind(
     HarnessStarted
     | HarnessToolStarted(_)
     | HarnessToolFinished(_, _)
+    | HarnessAuditContextReadFinished(_, _)
     | HarnessTerminal(_) => value
   }
 }
@@ -1896,6 +1908,8 @@ let durable_shape_goal_assurance_record : GoalAssuranceRecord = {
   goal_ref: durable_shape_git_ref_name,
   goal_contract_digest: durable_shape_digest,
   base_commit_oid: durable_shape_git_oid,
+  base_tree_oid: durable_shape_git_oid,
+  audit_context_parts: [],
   integration_receipts: [durable_shape_integration_receipt],
   integration_receipt_set_digest: durable_shape_digest,
   assurance_policy_revision: durable_shape_revision_id,
@@ -1917,6 +1931,7 @@ let durable_shape_goal_assurance_record : GoalAssuranceRecord = {
     durable_shape_goal_verification_authorization_set,
   ),
   audit_subject: Some(durable_shape_goal_audit_subject),
+  audit_context: Some(durable_shape_artifact_reference),
   audit_result: Some(durable_shape_goal_audit_result),
   audit_receipt: Some(durable_shape_goal_audit_receipt),
   pending_effect: Some(durable_shape_goal_assurance_effect_intent),
@@ -3688,6 +3703,7 @@ let durable_shape_verification_execution_result : VerificationExecutionResult = 
   subject_pre_tree_oid: durable_shape_git_oid,
   subject_post_tree_oid: durable_shape_git_oid,
   evidence: durable_shape_artifact_reference,
+  audit_context: Some(durable_shape_artifact_reference),
   started_at: 0L,
   finished_at: 0L,
   outcome: durable_shapes_verification_outcome[0],
@@ -3918,6 +3934,7 @@ let durable_shape_part_workflow_snapshot : PartWorkflowSnapshot = {
   verification_receipts: [durable_shape_verification_receipt],
   verification_authorization: Some(durable_shape_verification_authorization_set),
   audit_subject: Some(durable_shape_part_audit_subject),
+  audit_context: Some(durable_shape_artifact_reference),
   audit_result: Some(durable_shape_audit_result),
   audit_receipt: Some(durable_shape_audit_receipt),
   integration_lease: Some(durable_shape_goal_integration_lease),

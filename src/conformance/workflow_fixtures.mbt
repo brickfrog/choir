@@ -1900,6 +1900,7 @@ fn audit_fixture_subject() -> @control.PartAuditSubject {
     task_contract_digest: audit_fixture_digest_a,
     verification_receipt_set_digest: audit_fixture_digest_a,
     verification_evidence_manifest_digest: audit_fixture_digest_b,
+    audit_context_digest: audit_fixture_digest_a,
     subject_digest: audit_fixture_digest_a,
   }
 }
@@ -2113,6 +2114,7 @@ fn audit_workflow_result_fixture() -> @workflow.PartWorkflowSnapshot {
     task_contract_digest: base.task_contract.digest,
     verification_receipt_set_digest: audit_fixture_digest_a,
     verification_evidence_manifest_digest: audit_fixture_digest_b,
+    audit_context_digest: audit_fixture_digest_a,
     subject_digest: audit_fixture_digest_a,
   }
   let audit_session = {
@@ -2663,6 +2665,7 @@ fn cancellation_audited_goal_fixture_with_part_count(
     integration_receipt_set_digest: seal.integration_receipt_set_digest,
     goal_verification_receipt_set_digest: verification.receipt_set_digest,
     goal_verification_evidence_manifest_digest: verification.evidence_manifest_digest,
+    audit_context_digest: audit_fixture_digest_a,
     subject_digest: audit_fixture_digest_a,
   }
   let result : @control.GoalAuditResult = {
@@ -4099,6 +4102,7 @@ fn goal_audit_fixture_subject() -> @control.GoalAuditSubject {
     integration_receipt_set_digest: audit_fixture_digest_a,
     goal_verification_receipt_set_digest: audit_fixture_digest_a,
     goal_verification_evidence_manifest_digest: audit_fixture_digest_b,
+    audit_context_digest: audit_fixture_digest_a,
     subject_digest: audit_fixture_digest_a,
   }
 }

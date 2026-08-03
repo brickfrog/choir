@@ -46,6 +46,7 @@ fn assurance_lease_audit_subject(
     integration_receipt_set_digest: workflow_store_digest_a,
     goal_verification_receipt_set_digest: workflow_store_digest_b,
     goal_verification_evidence_manifest_digest: workflow_store_digest_a,
+    audit_context_digest: workflow_store_digest_a,
     subject_digest: workflow_store_digest_b,
   }
 }

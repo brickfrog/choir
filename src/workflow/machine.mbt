@@ -95,6 +95,7 @@ fn verification_subject(
 fn audit_subject(
   subject : @control.PartVerificationSubject,
   authorization : @control.VerificationAuthorizationSet,
+  audit_context_digest : @control.Digest,
 ) -> @control.PartAuditSubject {
   let identity = [
     subject.part_id.to_json(),
@@ -105,6 +106,7 @@ fn audit_subject(
     subject.task_contract_digest.to_json(),
     authorization.receipt_set_digest.to_json(),
     authorization.evidence_manifest_digest.to_json(),
+    audit_context_digest.to_json(),
   ].to_json()
   {
     part_id: subject.part_id,
@@ -115,6 +117,7 @@ fn audit_subject(
     task_contract_digest: subject.task_contract_digest,
     verification_receipt_set_digest: authorization.receipt_set_digest,
     verification_evidence_manifest_digest: authorization.evidence_manifest_digest,
+    audit_context_digest,
     subject_digest: domain_digest("choir.part-audit-subject.v1", identity),
   }
 }
@@ -295,6 +298,7 @@ pub fn initialize_part_workflow(
     verification_receipts: [],
     verification_authorization: None,
     audit_subject: None,
+    audit_context: None,
     audit_result: None,
     audit_receipt: None,
     integration_lease: None,
@@ -1214,8 +1218,19 @@ fn prepared_command_is_current(
         snapshot.implementation_take,
       )
     PartAuditCommand =>
-      match snapshot.audit_subject {
-        Some(subject) =>
+      match
+        (
+          snapshot.audit_subject,
+          snapshot.verification_subject,
+          snapshot.verification_authorization,
+          snapshot.audit_context,
+        ) {
+        (Some(subject), Some(verification), Some(authorization), Some(context)) if audit_subject(
+            verification,
+            authorization,
+            context.digest,
+          ) ==
+          subject =>
           (
             Some(
               part_command_preparation_plan(
@@ -1230,7 +1245,7 @@ fn prepared_command_is_current(
             ),
             snapshot.audit_take,
           )
-        None => (None, snapshot.audit_take)
+        _ => (None, snapshot.audit_take)
       }
   }
   let immutable_take_matches = prepared.plan.take.id == current_take.id &&
@@ -1416,7 +1431,12 @@ fn next_effect_kind(
         None => Err(workflow_error("verification subject is missing"))
       }
     PartVerified =>
-      Ok(Some(PrepareAuditSandbox(snapshot.identities.audit_sandbox)))
+      match (snapshot.audit_subject, snapshot.audit_context) {
+        (Some(subject), Some(context)) if subject.audit_context_digest ==
+          context.digest =>
+          Ok(Some(PrepareAuditSandbox(snapshot.identities.audit_sandbox)))
+        _ => Err(workflow_error("audit context is missing or stale"))
+      }
     PartAuditSandboxPrepared =>
       match snapshot.audit_subject {
         Some(subject) =>
@@ -1571,6 +1591,13 @@ pub fn authorize_pending_part_effect(
   match snapshot.pending_effect {
     Some({ lifecycle: PartEffectPlanned, .. } as intent) => {
       let preparation_check = match intent.kind {
+        PrepareAuditSandbox(_) =>
+          match (snapshot.audit_subject, snapshot.audit_context) {
+            (Some(subject), Some(context)) if subject.audit_context_digest ==
+              context.digest &&
+              artifact_digest_exists(context.digest) => Ok(())
+            _ => Err(workflow_error("audit context is missing or stale"))
+          }
         StartImplementationHarness(session, start) =>
           start_intent_has_preparation(
             snapshot,
@@ -1596,8 +1623,8 @@ pub fn authorize_pending_part_effect(
             @command.CommandRole::ImplementationCommand,
             artifact_digest_exists,
           )
-        DispatchAudit(take_id, command, _) =>
-          command_intent_has_preparation(
+        DispatchAudit(take_id, command, subject) => {
+          let prepared = command_intent_has_preparation(
             snapshot,
             take_id,
             command,
@@ -1605,6 +1632,24 @@ pub fn authorize_pending_part_effect(
             @command.CommandRole::PartAuditCommand,
             artifact_digest_exists,
           )
+          match prepared {
+            Err(error) => Err(error)
+            Ok(_) =>
+              match
+                (
+                  snapshot.verification_subject,
+                  snapshot.verification_authorization,
+                  snapshot.audit_context,
+                ) {
+                (Some(verification), Some(authorization), Some(context)) if artifact_digest_exists(
+                    context.digest,
+                  ) &&
+                  audit_subject(verification, authorization, context.digest) ==
+                  subject => Ok(())
+                _ => Err(workflow_error("audit context is missing or stale"))
+              }
+          }
+        }
         _ => Ok(())
       }
       match preparation_check {

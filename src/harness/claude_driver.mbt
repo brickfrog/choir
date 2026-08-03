@@ -651,6 +651,9 @@ pub fn evaluate_claude_driver_capture(
   let (tool_trace, succeeded, response, model_identity, reported_usage) = claude_driver_trace(
     request.capture.output,
   )
+  let audit_context_reads = retained_audit_context_reads_by_execution(
+    request.capture.output,
+  )
   if !succeeded || response == "" || model_identity == "" {
     return Err(claude_driver_error("provider terminal result is invalid"))
   }
@@ -691,14 +694,19 @@ pub fn evaluate_claude_driver_capture(
       ClaudeToolStarted(id, _) =>
         @control.HarnessEventKind::HarnessToolStarted(id)
       ClaudeToolFinished(id, is_error) =>
-        @control.HarnessEventKind::HarnessToolFinished(
-          id,
-          if is_error {
-            @control.HarnessToolDisposition::HarnessToolFailed
-          } else {
-            @control.HarnessToolDisposition::HarnessToolSucceeded
-          },
-        )
+        match audit_context_reads.get(id) {
+          Some(read) =>
+            @control.HarnessEventKind::HarnessAuditContextReadFinished(id, read)
+          _ =>
+            @control.HarnessEventKind::HarnessToolFinished(
+              id,
+              if is_error {
+                @control.HarnessToolDisposition::HarnessToolFailed
+              } else {
+                @control.HarnessToolDisposition::HarnessToolSucceeded
+              },
+            )
+        }
     }
     session = match
       append_claude_event(

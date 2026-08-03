@@ -508,6 +508,57 @@ fn workflow_driver_trace(
     redaction_state: @control.EventRedactionState::EventNotSensitive,
     late: false,
   }
+  if prefix == "audit" {
+    let tool_started = {
+      ..started,
+      id: @control.HarnessEventId(prefix + "-read-started"),
+      source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+        prefix, 2,
+      ),
+      choir_sequence: @control.EventSequence(2L),
+      kind: @control.HarnessEventKind::HarnessToolStarted("read-1"),
+    }
+    let tool_finished = {
+      ..started,
+      id: @control.HarnessEventId(prefix + "-read-finished"),
+      source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+        prefix, 3,
+      ),
+      choir_sequence: @control.EventSequence(3L),
+      kind: @control.HarnessEventKind::HarnessAuditContextReadFinished(
+        "read-1",
+        {
+          digest: workflow_store_digest_b,
+          cursor: 0,
+          total: 0,
+          next_cursor: None,
+          eof: true,
+          succeeded: true,
+        },
+      ),
+    }
+    return (
+      {
+        ..session,
+        last_choir_sequence: @control.EventSequence(4L),
+        lifecycle: @control.HarnessSessionLifecycle::HarnessSessionIngestionClosedCleanly(
+          @control.HarnessTerminalObservation::HarnessCompleted,
+        ),
+      },
+      [
+        started,
+        tool_started,
+        tool_finished,
+        {
+          ..terminal,
+          source_position: @control.EventSourcePosition::EventNonResumableOrdinal(
+            prefix, 4,
+          ),
+          choir_sequence: @control.EventSequence(4L),
+        },
+      ],
+    )
+  }
   (
     {
       ..session,
@@ -649,6 +700,10 @@ fn workflow_driver_observation(
             artifact_id: "verification-evidence-store",
             digest: workflow_store_digest_b,
           },
+          audit_context: Some({
+            artifact_id: "audit-context-store",
+            digest: workflow_store_digest_b,
+          }),
           started_at: 100L,
           finished_at: 102L,
           outcome: @control.VerificationOutcome::VerificationPassed,

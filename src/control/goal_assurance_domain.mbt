@@ -144,6 +144,7 @@ pub(all) struct GoalAuditSubject {
   integration_receipt_set_digest : Digest
   goal_verification_receipt_set_digest : Digest
   goal_verification_evidence_manifest_digest : Digest
+  audit_context_digest : Digest
   subject_digest : Digest
 } derive(Debug, Eq, ToJson, FromJson)
 

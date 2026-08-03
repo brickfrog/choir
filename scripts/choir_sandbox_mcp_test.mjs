@@ -3,16 +3,21 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
+  AUDIT_CONTEXT_CHUNK_BYTES,
   assuranceTools,
+  auditContextGuestPath,
   BoundedLineFramer,
+  paginateAuditContextBytes,
   parseLaunchArgs,
   relativePath,
   runSandboxMcpBridge,
   SANDBOX_MCP_LIMITS,
   SANDBOX_MCP_RESOURCE_ERROR,
   SandboxCallQueue,
+  plannerTools,
   tools,
-  toolsForAccess,
+  toolsForSurface,
+  validateAuditContextRequest,
   validateArgv,
 } from "./choir_sandbox_mcp.mjs";
 import {
@@ -26,6 +31,7 @@ const launchArgs = [
   "--owner-socket", "/tmp/take/owner.sock",
   "--box", "box-1",
   "--access", "mutable",
+  "--tools", "mutable",
 ];
 
 function deferred() {
@@ -49,7 +55,7 @@ function toolCall(id, padding = "") {
 
 function fakeClient(onClose = () => {}) {
   return {
-    config: { access: "mutable" },
+    config: { access: "mutable", toolSurface: "mutable" },
     close: onClose,
     drain: async () => {},
   };
@@ -64,8 +70,14 @@ test("launch arguments admit only the fixed local shape", () => {
   assert.throws(() => parseLaunchArgs(relative));
   assert.throws(() => parseLaunchArgs([...launchArgs, "--extra", "value"]));
   const invalidAccess = launchArgs.slice();
-  invalidAccess[invalidAccess.length - 1] = "broad";
+  invalidAccess[invalidAccess.indexOf("--access") + 1] = "broad";
   assert.throws(() => parseLaunchArgs(invalidAccess));
+  const invalidTools = launchArgs.slice();
+  invalidTools[invalidTools.indexOf("--tools") + 1] = "broad";
+  assert.throws(() => parseLaunchArgs(invalidTools));
+  const mismatchedTools = launchArgs.slice();
+  mismatchedTools[mismatchedTools.indexOf("--tools") + 1] = "assurance";
+  assert.throws(() => parseLaunchArgs(mismatchedTools));
 });
 
 test("the execution token is read from the environment, never from argv", () => {
@@ -358,12 +370,47 @@ test("tool declaration is fixed and unique", () => {
     "list_files",
     "write_scratch",
     "write_output",
+    "read_audit_context",
   ]);
   assert.equal(
     new Set(assuranceTools.map((tool) => tool.name)).size,
     assuranceTools.length,
   );
-  assert.equal(toolsForAccess("mutable"), tools);
-  assert.equal(toolsForAccess("read-only-subject"), assuranceTools);
-  assert.throws(() => toolsForAccess("unknown"));
+  assert.deepEqual(plannerTools.map((tool) => tool.name), [
+    "read_file",
+    "list_files",
+    "write_scratch",
+    "write_output",
+  ]);
+  assert.equal(toolsForSurface("mutable"), tools);
+  assert.equal(toolsForSurface("assurance"), assuranceTools);
+  assert.equal(toolsForSurface("planner"), plannerTools);
+  assert.throws(() => toolsForSurface("unknown"));
+});
+
+test("audit context requests validate before owner execution", () => {
+  const digest = "a".repeat(64);
+  assert.deepEqual(validateAuditContextRequest({ digest, cursor: 0 }), { digest, cursor: 0 });
+  assert.throws(() => validateAuditContextRequest({ digest: "A".repeat(64), cursor: 0 }));
+  assert.throws(() => validateAuditContextRequest({ digest, cursor: -1 }));
+  assert.throws(() => validateAuditContextRequest({ digest, cursor: 0, path: "/etc/passwd" }));
+  assert.equal(auditContextGuestPath(digest), `/run/choir/audit-context/${digest}`);
+  assert.throws(() => auditContextGuestPath(`../${digest}`));
+});
+
+test("audit context pagination is UTF-8 valid and bounded", () => {
+  const digest = "b".repeat(64);
+  const content = Buffer.concat([
+    Buffer.alloc(AUDIT_CONTEXT_CHUNK_BYTES - 1, 0x78),
+    Buffer.from("éz"),
+  ]);
+  const first = paginateAuditContextBytes(digest, 0, content);
+  assert.equal(Buffer.byteLength(first.content), AUDIT_CONTEXT_CHUNK_BYTES - 1);
+  assert.equal(first.next_cursor, AUDIT_CONTEXT_CHUNK_BYTES - 1);
+  assert.equal(first.eof, false);
+  const second = paginateAuditContextBytes(digest, first.next_cursor, content);
+  assert.equal(second.content, "éz");
+  assert.equal(second.next_cursor, null);
+  assert.equal(second.eof, true);
+  assert.throws(() => paginateAuditContextBytes(digest, 1, Buffer.from("é")));
 });
