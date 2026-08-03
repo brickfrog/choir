@@ -1020,6 +1020,47 @@ fn workflow_execution_for_attach(
 }
 
 ///|
+test "Goal list projection is additive, typed, and preserves daemon order" {
+  let snapshot = workflow_fixture()
+  let second = workflow_execution_for_attach(snapshot)
+  let first = {
+    ..second,
+    goal: {
+      ..second.goal,
+      id: @control.GoalId("goal-0"),
+      lifecycle: @control.GoalLifecycle::GoalCanceled(
+        @control.CancellationSummaryId("cancel-0"),
+      ),
+    },
+    goal_ref: @workflow.GitRefName("refs/heads/choir/goals/goal-0"),
+    state: @workflow.GoalExecutionState::GoalExecutionCanceled,
+    work_order_id: Some(@workflow.WorkOrderId("work-0")),
+    cancellation_request: Some({
+      goal_id: @control.GoalId("goal-0"),
+      cutoff_sequence: @control.EventSequence(3L),
+      cause: @workflow.GoalCancellationCause::GoalCancellationUserRequested,
+      requested_at: 4L,
+    }),
+  }
+  let report = @workflow.goal_list_report([second, first])
+  assert_eq(report.goals.map(fn(goal) { goal.goal_id.0 }), [
+    snapshot.goal.id.0,
+    "goal-0",
+  ])
+  assert_eq(report.goals[1].goal_ref.0, "refs/heads/choir/goals/goal-0")
+  assert_eq(
+    report.goals[1].work_order_id,
+    Some(@workflow.WorkOrderId("work-0")),
+  )
+  assert_eq(
+    report.goals[1].cancellation_cause,
+    Some(@workflow.GoalCancellationCause::GoalCancellationUserRequested),
+  )
+  let decoded : @workflow.GoalListReport = @json.from_json(report.to_json())
+  assert_eq(decoded, report)
+}
+
+///|
 test "Goal attach projects one Take's durable events without changing state" {
   let initial = workflow_fixture()
   let (closed, trace) = successful_trace(

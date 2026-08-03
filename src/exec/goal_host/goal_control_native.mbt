@@ -184,21 +184,8 @@ fn dispatch_native_goal_list(project_dir : String) -> @types.Response {
     Ok(value) => value
     Err(error) => return @types.Response::err(error)
   }
-  let goals = records.map(fn(stored) {
-    let record = stored.record
-    (
-      {
-        "goal_id": record.goal.id.to_json(),
-        "state": record.state.to_json(),
-        "lifecycle": record.goal.lifecycle.to_json(),
-        "durable_version": record.durable_version.to_json(),
-        "part_ids": record.source_claims
-        .map(fn(claim) { claim.part_id.0 })
-        .to_json(),
-      } : Map[String, Json]).to_json()
-  })
   native_conductor_goal_action_ok_json(
-    ({ "goals": goals.to_json() } : Map[String, Json]).to_json(),
+    @workflow.goal_list_report(records.map(fn(stored) { stored.record })).to_json(),
   )
 }
 

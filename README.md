@@ -133,7 +133,11 @@ The CLI mirrors remain available for automation and recovery:
 ```bash
 choir start --conductor claude
 choir start --conductor codex
+choir goal list
+choir goal list --json
 choir goal status <goal-id>
+choir goal status --part <bead-id>
+choir goal status <goal-id> --json
 choir goal steer <goal-id> pause
 choir goal steer <goal-id> resume
 choir goal steer <goal-id> concurrency 4

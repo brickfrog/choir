@@ -20,10 +20,12 @@ fn choir_usage() -> String {
     #|  serve                 run the orchestration server
     #|
     #|Goals
-    #|  goal status <goal-id>
-    #|  goal steer <goal-id> <pause|resume|concurrency N>
-    #|  goal cancel <goal-id>
-    #|  goal archive <goal-id> [--dry-run]
+    #|  goal list [--json]
+    #|  goal status <goal-id|--part bead-id> [--json]
+    #|                        --json may precede or follow the selector
+    #|  goal steer <goal-id|--part bead-id> <pause|resume|concurrency N>
+    #|  goal cancel <goal-id|--part bead-id>
+    #|  goal archive <goal-id|--part bead-id> [--dry-run]
     #|                        release a finished Goal's working storage
     #|  goal attach <take-id>
     #|  goal answer <request-id> <answer>
@@ -45,8 +47,11 @@ fn choir_usage() -> String {
 test "CLI help exposes only the current Conductor and Goal controls" {
   let usage = choir_usage()
   assert_true(usage.contains("--conductor <claude|codex>"))
-  assert_true(usage.contains("goal status <goal-id>"))
-  assert_true(usage.contains("goal archive <goal-id> [--dry-run]"))
+  assert_true(usage.contains("goal list [--json]"))
+  assert_true(usage.contains("goal status <goal-id|--part bead-id> [--json]"))
+  assert_true(
+    usage.contains("goal archive <goal-id|--part bead-id> [--dry-run]"),
+  )
   assert_true(usage.contains("goal attach <take-id>"))
   assert_true(usage.contains("goal answer <request-id> <answer>"))
   assert_false(usage.contains("<bead-id|text>"))

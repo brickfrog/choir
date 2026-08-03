@@ -134,6 +134,42 @@ pub(all) struct ProviderSurfaceUsageStatus {
 } derive(Debug, Eq, ToJson, FromJson)
 
 ///|
+pub(all) struct GoalListStatus {
+  goal_id : @control.GoalId
+  state : GoalExecutionState
+  lifecycle : @control.GoalLifecycle
+  durable_version : Int
+  part_ids : Array[@control.PartId]
+  goal_ref : GitRefName
+  work_order_id : WorkOrderId?
+  cancellation_cause : GoalCancellationCause?
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub(all) struct GoalListReport {
+  goals : Array[GoalListStatus]
+} derive(Debug, Eq, ToJson, FromJson)
+
+///|
+pub fn goal_list_report(records : Array[GoalExecutionRecord]) -> GoalListReport {
+  let goals = records.map(fn(record) {
+    {
+      goal_id: record.goal.id,
+      state: record.state,
+      lifecycle: record.goal.lifecycle,
+      durable_version: record.durable_version,
+      part_ids: record.source_claims.map(fn(claim) { claim.part_id }),
+      goal_ref: record.goal_ref,
+      work_order_id: record.work_order_id,
+      cancellation_cause: record.cancellation_request.map(fn(request) {
+        request.cause
+      }),
+    }
+  })
+  { goals, }
+}
+
+///|
 pub(all) struct GoalStatusReport {
   goal_id : @control.GoalId
   state : GoalExecutionState
