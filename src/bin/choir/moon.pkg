@@ -12,6 +12,7 @@ import {
   "choir/src/exec/process_host",
   "choir/src/exec/provider_host",
   "choir/src/exec/doctor_host",
+  "choir/src/exec/direct_take_host",
   "choir/src/exec/work_order_host",
   "choir/src/exec/conductor_host",
   "choir/src/exec/control_root_host",
@@ -43,5 +44,6 @@ options(
     "uds_reader.mbt": [ "native" ],
     "server_native.mbt": [ "native" ],
     "statusline.mbt": [ "native" ],
+    "take.mbt": [ "native" ],
   },
 )

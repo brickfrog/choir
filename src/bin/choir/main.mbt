@@ -13,6 +13,8 @@ fn choir_usage() -> String {
     #|                        scaffold .choir, start choird, and open a Conductor
     #|
     #|Run
+    #|  take --provider <claude|codex> [--scope <path>]... [--apply] <instruction>
+    #|                        run one isolated, verified agent change
     #|  start [--lean] [--conductor <claude|codex>]
     #|                        start choird and open a Conductor
     #|  serve                 run the orchestration server
@@ -48,7 +50,7 @@ test "CLI help exposes only the current Conductor and Goal controls" {
   assert_true(usage.contains("goal attach <take-id>"))
   assert_true(usage.contains("goal answer <request-id> <answer>"))
   assert_false(usage.contains("<bead-id|text>"))
-  assert_false(usage.contains("--verify"))
+  assert_true(usage.contains("take --provider <claude|codex>"))
   assert_true(usage.contains("doctor"))
 }
 
@@ -153,11 +155,23 @@ fn stop_run() -> Unit {
       }
     }
     @async.run_async_main(async fn() {
+      let direct = match
+        @direct_take_host.purge_native_direct_take_resources(project_dir) {
+        Ok(value) => value
+        Err(error) => {
+          @sys.init_cleanup_runtime_artifacts_native()
+          @sys.write_stderr(
+            "choir stop: direct Take purge failed: " + error.message() + "\n",
+          )
+          @sys.exit(1)
+          return
+        }
+      }
       match @goal_host.purge_native_goal_resources(project_dir) {
         Ok(report) => {
           @sys.init_cleanup_purge_artifacts_native()
           @sys.write_stdout(
-            "Purged \{report.runtime_roots_removed} Goal runtime root(s), \{report.git_refs_removed} owned Git ref(s), released \{report.source_claims_released} Bead claim(s), and reclaimed \{report.boxlite_bytes_reclaimed} BoxLite byte(s).\n",
+            "Purged \{direct.runtime_roots_removed} direct Take runtime root(s), \{report.runtime_roots_removed} Goal runtime root(s), \{report.git_refs_removed} owned Git ref(s), released \{report.source_claims_released} Bead claim(s), and reclaimed \{report.boxlite_bytes_reclaimed} BoxLite byte(s).\n",
           )
           @sys.write_stdout(terminal_message)
         }
@@ -182,6 +196,7 @@ fn main {
   let subcmd = if args.length() >= 2 { args[1] } else { "" }
   match subcmd {
     "serve" => serve_run()
+    "take" => take_run()
     "start" => start_run()
     "mcp-stdio" => mcp_run()
     "conductor-stop" => conductor_stop_run()
