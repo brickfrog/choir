@@ -443,10 +443,12 @@ test "native Codex Take environment is an exact allowlist" {
 
 ///|
 fn native_codex_conductor_environment(
-  provider_home : String,
   config : NativeCodexConductorConfig,
 ) -> Map[String, String] {
-  let environment = native_codex_environment(provider_home, config.sterile_root)
+  let environment = native_codex_environment(
+    config.sterile_root + "/home",
+    config.sterile_root,
+  )
   environment["CODEX_HOME"] = config.sterile_root + "/codex-home"
   environment["CHOIR_CONDUCTOR_TOKEN"] = config.environment.conductor_token
   environment["CHOIR_STATUSLINE_CACHE_KEY"] = config.environment.statusline_cache_key
@@ -459,11 +461,12 @@ fn native_codex_conductor_environment(
 fn prepare_native_codex_conductor_home(
   config : NativeCodexConductorConfig,
   provider_home : String,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[String, @types.ChoirError] {
   for
     path in [
       config.sterile_root,
       config.sterile_root + "/tmp",
+      config.sterile_root + "/home",
       config.sterile_root + "/codex-home",
     ] {
     if !@sys.create_dir_all(path) || !@sys.chmod_mode(path, 0o700) {
@@ -476,17 +479,14 @@ fn prepare_native_codex_conductor_home(
     Some(value) if value.has_prefix("/") => value
     _ => provider_home + "/.codex"
   }
-  let auth_source = provider_codex_home + "/auth.json"
-  if !@sys.path_exists(auth_source) ||
-    !@sys.symlink_force(
-      auth_source,
-      config.sterile_root + "/codex-home/auth.json",
-    ) {
-    return Err(
-      native_codex_driver_error("provider-managed login is unavailable"),
-    )
+  let auth_target = config.sterile_root + "/codex-home/auth.json"
+  if @sys.path_entry_exists(auth_target) && !@sys.delete_file_sync(auth_target) {
+    return Err(native_codex_driver_error("stale provider login bind remains"))
   }
-  Ok(())
+  validate_native_provider_credential_source(
+    provider_codex_home + "/auth.json",
+    "Codex",
+  )
 }
 
 ///|
@@ -506,8 +506,8 @@ test "native Codex Conductor environment isolates writable provider state" {
       listen_uds: "/run/choir/server.sock",
     },
   }
-  let environment = native_codex_conductor_environment("/home/user", config)
-  assert_eq(environment["HOME"], "/home/user")
+  let environment = native_codex_conductor_environment(config)
+  assert_eq(environment["HOME"], "/run/choir/conductor/home")
   assert_eq(environment["CODEX_HOME"], "/run/choir/conductor/codex-home")
   assert_eq(environment["CHOIR_WORKSPACE"], "/repo")
   assert_eq(
@@ -614,13 +614,30 @@ async fn verify_native_codex_binary(
 ///|
 async fn verify_native_codex_subscription(
   codex : String,
-  provider_home : String,
+  auth_source : String,
   sterile_root : String,
 ) -> Result[Unit, @types.ChoirError] {
-  let collected = @process.collect_output_merged(
-    codex,
+  let environment = native_codex_environment(
+    sterile_root + "/home",
+    sterile_root,
+  )
+  environment["CODEX_HOME"] = sterile_root + "/codex-home"
+  let bounded_args = native_provider_host_boundary_args(
+    sterile_root,
+    sterile_root,
+    None,
+    native_provider_bound_executable_path(),
     ["login", "status"],
-    extra_env=native_codex_environment(provider_home, sterile_root),
+    provider_executable=Some(codex),
+    provider_credential=Some({
+      source: auth_source,
+      target: NativeCodexCredential,
+    }),
+  )
+  let collected = @process.collect_output_merged(
+    "/usr/bin/bwrap",
+    bounded_args,
+    extra_env=environment,
     inherit_env=false,
     cwd=sterile_root,
   ) catch {
@@ -1251,7 +1268,7 @@ fn prepare_native_codex_app_server_home(
   config : NativeCodexDriverConfig,
   provider_home : String,
   allow_provider_state : Bool,
-) -> Result[Unit, @types.ChoirError] {
+) -> Result[String, @types.ChoirError] {
   for
     path in [
       config.sterile_root,
@@ -1286,23 +1303,21 @@ fn prepare_native_codex_app_server_home(
     Some(value) if value.has_prefix("/") => value
     _ => provider_home + "/.codex"
   }
-  let auth_source = provider_codex_home + "/auth.json"
-  if !@sys.path_exists(auth_source) ||
-    !@sys.symlink_force(
-      auth_source,
-      config.sterile_root + "/codex-home/auth.json",
-    ) {
-    return Err(
-      native_codex_driver_error("provider-managed login is unavailable"),
-    )
+  let auth_target = config.sterile_root + "/codex-home/auth.json"
+  if @sys.path_entry_exists(auth_target) && !@sys.delete_file_sync(auth_target) {
+    return Err(native_codex_driver_error("stale provider login bind remains"))
   }
-  Ok(())
+  validate_native_provider_credential_source(
+    provider_codex_home + "/auth.json",
+    "Codex",
+  )
 }
 
 ///|
 async fn spawn_native_codex_app_server(
   config : NativeCodexDriverConfig,
   codex : String,
+  auth_source : String,
   manifest : NativeCodexTakeManifest,
   after_server_started : () -> Unit,
 ) -> Result[NativeCodexTakeManifest, @types.ChoirError] {
@@ -1367,14 +1382,16 @@ async fn spawn_native_codex_app_server(
     "/usr/bin/bwrap",
   ]
   let app_server_args = native_codex_app_server_args(config)
+  let provider_program = native_provider_bound_executable_path()
   let traced_program = match config.connect_trace_path {
     Some(_) => "/usr/bin/strace"
-    None => codex
+    None => provider_program
   }
   let traced_args : Array[String] = match config.connect_trace_path {
     Some(path) =>
       [
-        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, codex, ..app_server_args,
+        "-f", "-qq", "-s", "256", "-e", "trace=connect", "-o", path, provider_program,
+        ..app_server_args,
       ]
     None => app_server_args
   }
@@ -1385,6 +1402,11 @@ async fn spawn_native_codex_app_server(
       config.boxlite_owner_socket_root,
       traced_program,
       traced_args,
+      provider_executable=Some(codex),
+      provider_credential=Some({
+        source: auth_source,
+        target: NativeCodexCredential,
+      }),
     ) {
     arguments.push(argument)
   }
@@ -1449,6 +1471,7 @@ async fn spawn_native_codex_app_server(
 async fn ensure_native_codex_app_server(
   config : NativeCodexDriverConfig,
   codex : String,
+  auth_source : String,
   manifest : NativeCodexTakeManifest,
   after_server_started : () -> Unit,
   after_initialized_notification_sent : () -> Unit,
@@ -1476,7 +1499,7 @@ async fn ensure_native_codex_app_server(
   if !native_codex_owned_server_alive(config, manifest.server_pid) {
     manifest = match
       spawn_native_codex_app_server(
-        config, codex, manifest, after_server_started,
+        config, codex, auth_source, manifest, after_server_started,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -1487,7 +1510,7 @@ async fn ensure_native_codex_app_server(
     stop_native_codex_owned_server(config, manifest.server_pid)
     manifest = match
       spawn_native_codex_app_server(
-        config, codex, manifest, after_server_started,
+        config, codex, auth_source, manifest, after_server_started,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -2047,15 +2070,19 @@ pub async fn run_native_codex_take(
     Some(_) => true
     None => false
   }
-  match
+  let auth_source = match
     prepare_native_codex_app_server_home(
       config, provider_home, allow_provider_state,
     ) {
-    Ok(_) => ()
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   match
-    verify_native_codex_subscription(codex, provider_home, config.sterile_root) {
+    verify_native_codex_subscription(
+      codex_native,
+      auth_source,
+      config.sterile_root,
+    ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -2120,7 +2147,7 @@ pub async fn run_native_codex_take(
   if terminal_trace == "" {
     manifest = match
       ensure_native_codex_app_server(
-        config, codex_native, manifest, after_server_started, after_initialized_notification_sent,
+        config, codex_native, auth_source, manifest, after_server_started, after_initialized_notification_sent,
       ) {
       Ok(value) => value
       Err(error) => return Err(error)
@@ -2251,7 +2278,7 @@ pub async fn run_native_codex_take(
       }
       manifest = match
         ensure_native_codex_app_server(
-          config, codex_native, manifest, after_server_started, after_initialized_notification_sent,
+          config, codex_native, auth_source, manifest, after_server_started, after_initialized_notification_sent,
         ) {
         Ok(value) => value
         Err(error) => return Err(error)
@@ -2498,12 +2525,17 @@ pub async fn run_native_codex_conductor_turn(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  match prepare_native_codex_conductor_home(config, provider_home) {
-    Ok(_) => ()
+  let auth_source = match
+    prepare_native_codex_conductor_home(config, provider_home) {
+    Ok(value) => value
     Err(error) => return Err(error)
   }
   match
-    verify_native_codex_subscription(codex, provider_home, config.sterile_root) {
+    verify_native_codex_subscription(
+      codex_native,
+      auth_source,
+      config.sterile_root,
+    ) {
     Ok(_) => ()
     Err(error) => return Err(error)
   }
@@ -2524,8 +2556,13 @@ pub async fn run_native_codex_conductor_turn(
     config.sterile_root,
     config.sterile_root,
     None,
-    codex_native,
+    native_provider_bound_executable_path(),
     args,
+    provider_executable=Some(codex_native),
+    provider_credential=Some({
+      source: auth_source,
+      target: NativeCodexCredential,
+    }),
     provider_tool=Some(config.mcp_executable),
     provider_socket=Some(config.environment.listen_uds),
   )
@@ -2540,7 +2577,7 @@ pub async fn run_native_codex_conductor_turn(
     @process_host.capture_bounded_process(
       "/usr/bin/bwrap",
       bounded_args,
-      native_codex_conductor_environment(provider_home, config),
+      native_codex_conductor_environment(config),
       stdin_read,
       config.sterile_root,
       config.timeout_ms,
@@ -2706,8 +2743,6 @@ test "native Codex owner socket binding is exact and paired with MCP argv" {
     Some(source),
     "/usr/bin/true",
     [],
-    provider_home=None,
-    mask_entry_exists=fn(_) { false },
   )
   let source_index = args.search(source).unwrap()
   assert_eq(args[source_index - 1], "--ro-bind")
@@ -2754,8 +2789,6 @@ test "provider host boundary masks host temporary files" {
     None,
     "/usr/bin/true",
     [],
-    provider_home=None,
-    mask_entry_exists=fn(_) { false },
   )
   assert_eq(args[0], "--die-with-parent")
   assert_false(args.contains("--dev-bind"))
