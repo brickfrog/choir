@@ -210,8 +210,6 @@ overlapping files and must not edit them.
 ### 2. Enumerate declared pins
 
 ```sh
-rg -n 'expected_surface_version|expected_.*executable_sha256' \
-  src/harness/surface_probe.mbt
 rg -n 'boxlite_(release|seccomp|runtime|probe|policy)' \
   src/sandbox/boxlite_probe.mbt
 rg -n 'Beads 1\.1\.0|bd version' src/exec/conductor_native.mbt
@@ -251,11 +249,12 @@ find .nix-moon -mindepth 2 -maxdepth 3 -type f -path '*/bin/moon' \
 ldconfig -p 2>/dev/null | rg 'libutf8proc|libsqlite3|libuv|libssl'
 ```
 
-Hash the exact provider artifacts using the same resolution rules as the
-drivers. Claude has one admitted executable identity. Codex has both a
-JavaScript launcher and a native executable identity; hashing only the wrapper
-is incomplete. Do not print credentials, provider homes, configuration files,
-or unredacted environment variables.
+Record the canonical provider executable paths using the same resolution rules
+as the drivers. Provider releases are not content-hash pins: qualify their
+declared protocol flags and live effective surfaces instead. An npm-installed
+Codex resolves through its JavaScript launcher to the canonical native
+executable bound into the sterile boundary. Do not print credentials, provider
+homes, configuration files, or unredacted environment variables.
 
 For BoxLite, audit both the CLI and the selected runtime directory. The runtime
 identity comprises exactly the file set returned by

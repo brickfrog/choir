@@ -323,10 +323,8 @@ pub fn codex_effective_surface_manifest_digest(
   disabled.sort()
   @storage.artifact_digest(
     @utf8.encode(
-      "choir.codex-effective-surface.v1\u{00}" +
-      "client=" +
-      expected_surface_version(CodexCli) +
-      "\u{00}auth=chatgpt\u{00}approval=never\u{00}" +
+      "choir.codex-effective-surface.v2\u{00}" +
+      "auth=chatgpt\u{00}approval=never\u{00}" +
       "filesystem=:minimal:read\u{00}network=false\u{00}" +
       "server=" +
       mcp_server_name +

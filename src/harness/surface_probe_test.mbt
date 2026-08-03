@@ -72,7 +72,7 @@ test "Codex declaration records native tool isolation as a typed blocker" {
 }
 
 ///|
-test "surface declaration rejects version drift" {
+test "surface declaration records version drift without blocking capabilities" {
   let report = @harness.evaluate_surface_declaration({
     surface: @harness.ProviderSurface::ClaudeCli,
     version: capture("2.1.999 (Claude Code)"),
@@ -82,9 +82,25 @@ test "surface declaration rejects version drift" {
     ),
     exec_help: None,
   })
+  assert_eq(report.support, @harness.ChoirSurfaceSupport::SurfaceCandidate)
+  assert_eq(report.exact_version, "2.1.999 (Claude Code)")
+  assert_eq(report.blocking_reasons.length(), 0)
+}
+
+///|
+test "surface declaration still requires an observable executable release" {
+  let report = @harness.evaluate_surface_declaration({
+    surface: @harness.ProviderSurface::ClaudeCli,
+    version: capture("  \n"),
+    main_help: capture(
+      "--print --output-format stream-json --tools --setting-sources " +
+      "--allowedTools --strict-mcp-config",
+    ),
+    exec_help: None,
+  })
   assert_true(
     report.blocking_reasons.contains(
-      @harness.SurfaceBlockReason::SurfaceVersionMismatch,
+      @harness.SurfaceBlockReason::SurfaceExecutableFailed,
     ),
   )
 }
@@ -170,31 +186,18 @@ test "host surface matrix completes only with all fifteen evidence rows" {
 }
 
 ///|
-/// Production wrote four spellings for the same provider into durable receipts
-/// — codex-cli, codex-subscription-cli, codex-cli-0.146.0 — and hard-coded an
-/// exact version that went stale the moment the CLI updated.
-test "a receipt identity is one spelling per provider, carrying the pin" {
+/// Production wrote versioned and unversioned spellings for the same provider
+/// into durable receipts. A receipt now identifies the typed subscription
+/// surface; release observations remain separate evidence.
+test "a receipt identity is one stable spelling per provider surface" {
   let claude = @harness.provider_receipt_identity(
     @control.ProviderSurfaceId::ClaudeSubscriptionCli,
   )
   let codex = @harness.provider_receipt_identity(
     @control.ProviderSurfaceId::CodexSubscriptionCli,
   )
-  assert_true(claude != codex)
-  // The version is the one the surface probe qualifies against, so bumping the
-  // pin moves the receipts with it and a hard-coded stale version cannot recur.
-  assert_true(
-    claude.has_suffix(
-      @harness.expected_surface_version(@harness.ProviderSurface::ClaudeCli),
-    ),
-  )
-  assert_true(
-    codex.has_suffix(
-      @harness.expected_surface_version(@harness.ProviderSurface::CodexCli),
-    ),
-  )
-  // Stable across calls: a receipt written twice for the same surface records
-  // the same identity.
+  assert_eq(claude, "claude-code")
+  assert_eq(codex, "codex-cli")
   assert_eq(
     claude,
     @harness.provider_receipt_identity(

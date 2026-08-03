@@ -113,7 +113,6 @@ pub(all) struct CapabilityProbeResult {
 ///|
 pub(all) enum SurfaceBlockReason {
   SurfaceExecutableFailed
-  SurfaceVersionMismatch
   SurfaceHelpFailed
   SurfaceRequiredCapabilityMissing(SurfaceCapability)
   SurfaceNativeToolRemovalUnproven
@@ -124,7 +123,6 @@ pub(all) enum SurfaceBlockReason {
 pub(all) struct SurfaceProbeReport {
   surface : ProviderSurface
   exact_version : String
-  expected_version : String
   maturity : ProviderMaturity
   authentication_profile : HarnessAuthenticationProfile
   observed_authentication : RedactedAuthenticationClass
@@ -275,25 +273,6 @@ pub fn evaluate_host_surface_matrix(
 }
 
 ///|
-pub fn expected_surface_version(surface : ProviderSurface) -> String {
-  match surface {
-    ClaudeCli => "2.1.220"
-    CodexCli => "0.146.0"
-  }
-}
-
-///|
-pub let expected_codex_executable_sha256 : String = "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477"
-
-///|
-pub let expected_codex_native_executable_sha256 : String = "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
-
-///|
-fn version_matches(surface : ProviderSurface, output : String) -> Bool {
-  output.contains(expected_surface_version(surface))
-}
-
-///|
 fn capability(
   name : SurfaceCapability,
   advertised : Bool,
@@ -434,10 +413,8 @@ pub fn evaluate_surface_declaration(
   evidence : SurfaceProbeEvidence,
 ) -> SurfaceProbeReport {
   let reasons : Array[SurfaceBlockReason] = []
-  if evidence.version.exit_code != 0 {
+  if evidence.version.exit_code != 0 || evidence.version.output.trim() == "" {
     reasons.push(SurfaceExecutableFailed)
-  } else if !version_matches(evidence.surface, evidence.version.output) {
-    reasons.push(SurfaceVersionMismatch)
   }
   if evidence.main_help.exit_code != 0 {
     reasons.push(SurfaceHelpFailed)
@@ -464,7 +441,6 @@ pub fn evaluate_surface_declaration(
   {
     surface: evidence.surface,
     exact_version: evidence.version.output.trim().to_owned(),
-    expected_version: expected_surface_version(evidence.surface),
     maturity: ProviderUnspecified,
     authentication_profile: ProviderManagedSubscription,
     observed_authentication: AuthenticationUnknown,
@@ -485,26 +461,17 @@ pub fn evaluate_surface_declaration(
 }
 
 ///|
-/// The provider identity recorded on an audit receipt.
+/// The stable provider-surface identity recorded on an audit receipt.
 ///
-/// Production wrote at least four spellings for the same provider —
-/// `codex-cli`, `codex-subscription-cli`, `codex-cli-0.146.0` — and two sites
-/// hard-coded an exact version, so a receipt claimed a stale one the moment the
-/// CLI updated. This derives both from the typed surface and the qualified
-/// version, so there is one spelling per provider and the version cannot go
-/// stale independently of the pin.
-///
-/// Naming the qualified version rather than an observed one is accurate by
-/// construction: the surface probe refuses to run a Take against a CLI whose
-/// version does not match, so a receipt only exists if the provider was that
-/// version.
+/// Observed release strings belong in qualification reports and initialization
+/// attestations. They are deliberately absent here: a receipt identifies the
+/// subscription surface whose capabilities were admitted, not one release of
+/// that surface.
 pub fn provider_receipt_identity(
   surface : @control.ProviderSurfaceId,
 ) -> String {
   match surface {
-    @control.ProviderSurfaceId::ClaudeSubscriptionCli =>
-      "claude-code-" + expected_surface_version(ProviderSurface::ClaudeCli)
-    @control.ProviderSurfaceId::CodexSubscriptionCli =>
-      "codex-cli-" + expected_surface_version(ProviderSurface::CodexCli)
+    @control.ProviderSurfaceId::ClaudeSubscriptionCli => "claude-code"
+    @control.ProviderSurfaceId::CodexSubscriptionCli => "codex-cli"
   }
 }

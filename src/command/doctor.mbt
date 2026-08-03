@@ -104,10 +104,9 @@ fn doctor_shortfall(
 }
 
 ///|
-/// Decide one requirement from its probe. A pinned version is checked by
-/// containment against the reported line, which is how the existing provider
-/// surface probe reads these CLIs, and a mismatch is reported with what was
-/// actually observed rather than a bare "wrong version".
+/// Decide one requirement from its probe. Infrastructure dependencies may
+/// carry a version contract; unpinned provider probes report the observed
+/// release without turning release drift into a doctor failure.
 pub fn evaluate_doctor_probe(
   requirement : DoctorRequirement,
   probe : DoctorProbe,
@@ -229,21 +228,21 @@ test "the doctor separates required failures from optional warnings" {
 }
 
 ///|
-test "a pinned version is checked against what the host actually reported" {
+test "an infrastructure version contract is checked against host output" {
   let matched = evaluate_doctor_probe(
-    DoctorCodexCli,
-    DoctorProbeOutput("codex-cli 0.146.0\n"),
-    expected_version=Some("0.146.0"),
+    DoctorBoxLite,
+    DoctorProbeOutput("boxlite 0.9.7\n"),
+    expected_version=Some("0.9.7"),
   )
-  assert_eq(matched.outcome, DoctorPass("codex-cli 0.146.0"))
+  assert_eq(matched.outcome, DoctorPass("boxlite 0.9.7"))
   let drifted = evaluate_doctor_probe(
-    DoctorCodexCli,
-    DoctorProbeOutput("codex-cli 0.144.0\n"),
-    expected_version=Some("0.146.0"),
+    DoctorBoxLite,
+    DoctorProbeOutput("boxlite 0.9.6\n"),
+    expected_version=Some("0.9.7"),
   )
   assert_eq(
     drifted.outcome,
-    DoctorFail("codex must be 0.146.0; observed codex-cli 0.144.0"),
+    DoctorFail("boxlite must be 0.9.7; observed boxlite 0.9.6"),
   )
   // An unpinned dependency passes on any version it can report.
   assert_eq(

@@ -26,6 +26,20 @@ test "Claude synthetic startup accepts exact restricted initialization" {
 }
 
 ///|
+test "Claude synthetic startup records release drift without blocking it" {
+  let report = @harness.evaluate_claude_synthetic_startup({
+    exit_code: 1,
+    output: connected_init.replace(old="2.1.220", new="2.1.999"),
+  })
+  assert_eq(report.support, @harness.ChoirSurfaceSupport::SurfaceCandidate)
+  assert_eq(report.blocking_reasons.length(), 0)
+  match report.manifest {
+    Some(manifest) => assert_eq(manifest.client_version, "2.1.999")
+    None => fail("initialization manifest missing")
+  }
+}
+
+///|
 test "Claude synthetic startup accepts exact fail-closed no-login initialization" {
   let report = @harness.evaluate_claude_synthetic_startup({
     exit_code: 1,
