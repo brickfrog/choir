@@ -376,6 +376,32 @@ pub fn list_dir_all(path : String) -> Array[String] {
 }
 
 ///|
+/// Complete entry names of `path`, skipping `.` and `..`. Unlike
+/// `list_dir_all`, this distinguishes an empty directory from an open failure
+/// and refuses a listing that exceeds the fixed native buffer.
+pub fn list_dir_all_complete(path : String) -> Array[String]? {
+  let path_bytes = string_to_null_terminated_bytes(path)
+  let max_size = 1024 * 1024
+  let buf = Bytes::new(max_size)
+  let n = c_list_dir_all(path_bytes, buf, max_size)
+  if n < 0 {
+    return None
+  }
+  if n == 0 {
+    return Some([])
+  }
+  let content = @utf8.decode_lossy(buf[:n])
+  let entries : Array[String] = []
+  for raw in content.split("\n") {
+    let name = raw.trim().to_owned()
+    if name != "" {
+      entries.push(name)
+    }
+  }
+  Some(entries)
+}
+
+///|
 pub fn read_file(path : String) -> String {
   let path_bytes = string_to_null_terminated_bytes(path)
   let size = c_get_file_size(path_bytes)

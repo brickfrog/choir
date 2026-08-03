@@ -29,6 +29,11 @@ pub fn list_dir_all(_path : String) -> Array[String] {
 }
 
 ///|
+pub fn list_dir_all_complete(_path : String) -> Array[String]? {
+  None
+}
+
+///|
 pub fn rm_rf(_path : String) -> Bool {
   false
 }

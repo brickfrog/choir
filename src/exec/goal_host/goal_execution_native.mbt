@@ -10,6 +10,7 @@ pub(all) struct NativeGoalPurgeReport {
   source_claims_released : Int
   runtime_roots_removed : Int
   git_refs_removed : Int
+  boxlite_bytes_reclaimed : Int64
 } derive(Debug, Eq)
 
 ///|
@@ -1623,6 +1624,68 @@ fn read_native_goal_runtime_receipt(
 }
 
 ///|
+fn native_repository_runtime_receipt_goals_at(
+  repository_id : @workflow.RepositoryId,
+  temporary_root : String,
+  entries : Array[String],
+  canonicalize? : (String) -> String? = @sys.realpath_native,
+  read_receipt? : (String) -> NativeGoalRuntimeOwnershipReceipt? = read_native_goal_runtime_receipt,
+) -> Result[Array[@control.GoalId], @types.ChoirError] {
+  if !temporary_root.has_prefix("/") ||
+    temporary_root == "/" ||
+    temporary_root.has_suffix("/") ||
+    temporary_root.contains("/../") {
+    return Err(native_goal_execution_error("runtime receipt root is invalid"))
+  }
+  let prefix = native_goal_runtime_entry_prefix(repository_id)
+  let observed_entries : Array[String] = []
+  let goals : Array[@control.GoalId] = []
+  for entry in entries {
+    if !entry.has_prefix(prefix) {
+      continue
+    }
+    if entry == prefix ||
+      entry.contains("/") ||
+      observed_entries.contains(entry) {
+      return Err(native_goal_execution_error("runtime ownership is ambiguous"))
+    }
+    observed_entries.push(entry)
+    let root = temporary_root + "/" + entry
+    if canonicalize(root) != Some(root) {
+      return Err(native_goal_execution_error("runtime ownership is unproven"))
+    }
+    let receipt = match read_receipt(root) {
+      Some(value) if value.repository_id == repository_id &&
+        native_goal_runtime_entry_prefix(value.repository_id) +
+        native_goal_runtime_key(value.repository_id, value.goal_id) ==
+        entry => value
+      _ =>
+        return Err(native_goal_execution_error("runtime ownership is unproven"))
+    }
+    if goals.contains(receipt.goal_id) {
+      return Err(native_goal_execution_error("runtime ownership is ambiguous"))
+    }
+    goals.push(receipt.goal_id)
+  }
+  goals.sort_by(fn(left, right) { left.0.compare(right.0) })
+  Ok(goals)
+}
+
+///|
+fn native_repository_runtime_receipt_goals(
+  repository_id : @workflow.RepositoryId,
+) -> Result[Array[@control.GoalId], @types.ChoirError] {
+  let entries = match @sys.list_dir_all_complete("/tmp") {
+    Some(value) => value
+    None =>
+      return Err(
+        native_goal_execution_error("runtime ownership enumeration failed"),
+      )
+  }
+  native_repository_runtime_receipt_goals_at(repository_id, "/tmp", entries)
+}
+
+///|
 test "runtime ownership receipt binds one canonical repository and Goal" {
   let repository = @workflow.RepositoryId("receipt-test-repository")
   let goal = @control.GoalId("receipt-test-goal")
@@ -1642,6 +1705,65 @@ test "runtime ownership receipt binds one canonical repository and Goal" {
   )
   assert_eq(read_native_goal_runtime_receipt(root), None)
   ignore(@sys.rm_rf(root))
+}
+
+///|
+test "purge receipt admission rejects missing and ambiguous runtime owners" {
+  let repository = @workflow.RepositoryId("purge-receipt-repository")
+  let first = @control.GoalId("goal-a")
+  let second = @control.GoalId("goal-b")
+  let prefix = native_goal_runtime_entry_prefix(repository)
+  let first_entry = prefix + native_goal_runtime_key(repository, first)
+  let second_entry = prefix + native_goal_runtime_key(repository, second)
+  let receipt_for = fn(root : String) {
+    if root.has_suffix("/" + first_entry) {
+      Some(native_goal_runtime_receipt(repository, first, None))
+    } else if root.has_suffix("/" + second_entry) {
+      Some(native_goal_runtime_receipt(repository, second, None))
+    } else {
+      None
+    }
+  }
+  assert_eq(
+    native_repository_runtime_receipt_goals_at(
+      repository,
+      "/tmp",
+      [second_entry, first_entry, "foreign"],
+      canonicalize=fn(path) { Some(path) },
+      read_receipt=receipt_for,
+    ).unwrap(),
+    [first, second],
+  )
+  assert_true(
+    native_repository_runtime_receipt_goals_at(
+      repository,
+      "/tmp",
+      [first_entry, first_entry],
+      canonicalize=fn(path) { Some(path) },
+      read_receipt=receipt_for,
+    )
+    is Err(_),
+  )
+  assert_true(
+    native_repository_runtime_receipt_goals_at(
+      repository,
+      "/tmp",
+      [prefix + "missing"],
+      canonicalize=fn(path) { Some(path) },
+      read_receipt=fn(_) { None },
+    )
+    is Err(_),
+  )
+  assert_true(
+    native_repository_runtime_receipt_goals_at(
+      repository,
+      "/tmp",
+      [first_entry],
+      canonicalize=fn(_) { Some("/tmp/escaped") },
+      read_receipt=receipt_for,
+    )
+    is Err(_),
+  )
 }
 
 ///|
@@ -1819,6 +1941,90 @@ pub fn native_goal_boxlite_home(
 ) -> Result[String, @types.ChoirError] {
   match native_boxlite_data_home() {
     Ok(data_home) => Ok(native_goal_boxlite_home_at(data_home, repository_id))
+    Err(error) => Err(error)
+  }
+}
+
+///|
+fn parse_native_boxlite_home_measurement(
+  home : String,
+  output : String,
+) -> Result[Int64, @types.ChoirError] {
+  let fields = output.trim().to_owned().split("\t").to_array()
+  if fields.length() != 2 || fields[1] != home {
+    return Err(
+      native_goal_execution_error("BoxLite home measurement is invalid"),
+    )
+  }
+  let bytes = @string.parse_int64(fields[0]) catch {
+    _ =>
+      return Err(
+        native_goal_execution_error("BoxLite home measurement is invalid"),
+      )
+  }
+  if bytes < 0L {
+    return Err(
+      native_goal_execution_error("BoxLite home measurement is invalid"),
+    )
+  }
+  Ok(bytes)
+}
+
+///|
+test "BoxLite home measurement requires one exact nonnegative byte count" {
+  let home = "/var/lib/choir/boxlite/repository-measured"
+  assert_eq(
+    parse_native_boxlite_home_measurement(home, "0\t" + home + "\n").unwrap(),
+    0L,
+  )
+  assert_eq(
+    parse_native_boxlite_home_measurement(home, "1048576\t" + home + "\n").unwrap(),
+    1048576L,
+  )
+  assert_true(
+    parse_native_boxlite_home_measurement(home, "-1\t" + home + "\n") is Err(_),
+  )
+  assert_true(
+    parse_native_boxlite_home_measurement(home, "1\t/other/home\n") is Err(_),
+  )
+  assert_true(
+    parse_native_boxlite_home_measurement(home, "1 " + home + "\n") is Err(_),
+  )
+  assert_true(
+    parse_native_boxlite_home_measurement(
+      home,
+      "1\t" + home + "\n2\t" + home + "\n",
+    )
+    is Err(_),
+  )
+}
+
+///|
+async fn observe_native_repository_boxlite_home(
+  repository_id : @workflow.RepositoryId,
+) -> Result[(String, Int64)?, @types.ChoirError] {
+  let home = match native_goal_boxlite_home(repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  if !@sys.path_entry_exists(home) {
+    return Ok(None)
+  }
+  if @sys.realpath_native(home) != Some(home) {
+    return Err(
+      native_goal_execution_error("BoxLite home ownership is unproven"),
+    )
+  }
+  let (code, output) = @process_host.capture_command_merged({
+    program: "/usr/bin/du",
+    args: ["-s", "-B1", "--", home],
+    workdir: Some("/"),
+  })
+  if code != 0 {
+    return Err(native_goal_execution_error("BoxLite home measurement failed"))
+  }
+  match parse_native_boxlite_home_measurement(home, output) {
+    Ok(bytes) => Ok(Some((home, bytes)))
     Err(error) => Err(error)
   }
 }
@@ -7434,7 +7640,12 @@ async fn cleanup_native_goal_owned_resources(
     Ok(value) => value
     Err(error) => return Err(error)
   }
-  Ok({ source_claims_released, runtime_roots_removed, git_refs_removed })
+  Ok({
+    source_claims_released,
+    runtime_roots_removed,
+    git_refs_removed,
+    boxlite_bytes_reclaimed: 0L,
+  })
 }
 
 ///|
@@ -7483,13 +7694,74 @@ pub async fn purge_native_goal_resources_with(
     @types.ChoirError,
   ],
   purge_refs~ : async (String) -> Result[Int, @types.ChoirError],
+  runtime_receipt_goals~ : (@workflow.RepositoryId) -> Result[
+    Array[@control.GoalId],
+    @types.ChoirError,
+  ],
+  observe_boxlite_home~ : async (@workflow.RepositoryId) -> Result[
+    (String, Int64)?,
+    @types.ChoirError,
+  ],
+  path_exists~ : (String) -> Bool,
+  remove_boxlite_home~ : (String) -> Bool,
 ) -> Result[NativeGoalPurgeReport, @types.ChoirError] {
   // Purge is the recovery path for incompatible durable state, so it must not
-  // decode that state before deleting it. Discover owned live resources from
-  // Bead claims and exact Git namespaces instead.
-  cleanup_native_goal_owned_resources(
-    project_dir, capture, cleanup_runtime, purge_refs,
-  )
+  // decode that state before deleting it. Runtime ownership comes from the
+  // independent per-Goal receipts; source claims and Git namespaces provide
+  // the remaining external identities.
+  let repository_id = match native_goal_repository_id(project_dir) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let receipt_goals = match runtime_receipt_goals(repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  // Measure before runtime reconciliation removes registered boxes from this
+  // repository home, so the report covers every byte reclaimed by the purge.
+  let boxlite_home = match observe_boxlite_home(repository_id) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  let mut receipt_roots_removed = 0
+  for goal_id in receipt_goals {
+    let runtime_root = native_goal_runtime_root(repository_id, goal_id)
+    if !path_exists(runtime_root) {
+      return Err(
+        native_goal_execution_error("runtime ownership changed during purge"),
+      )
+    }
+    match cleanup_runtime(repository_id, goal_id) {
+      Ok(_) => ()
+      Err(error) => return Err(error)
+    }
+    if path_exists(runtime_root) {
+      return Err(native_goal_execution_error("runtime cleanup was incomplete"))
+    }
+    receipt_roots_removed = receipt_roots_removed + 1
+  }
+  let boxlite_bytes_reclaimed = match boxlite_home {
+    Some((home, bytes)) => {
+      if !remove_boxlite_home(home) || path_exists(home) {
+        return Err(native_goal_execution_error("BoxLite home cleanup failed"))
+      }
+      bytes
+    }
+    None => 0L
+  }
+  let purged = match
+    cleanup_native_goal_owned_resources(
+      project_dir, capture, cleanup_runtime, purge_refs,
+    ) {
+    Ok(value) => value
+    Err(error) => return Err(error)
+  }
+  Ok({
+    source_claims_released: purged.source_claims_released,
+    runtime_roots_removed: purged.runtime_roots_removed + receipt_roots_removed,
+    git_refs_removed: purged.git_refs_removed,
+    boxlite_bytes_reclaimed,
+  })
 }
 
 ///|
@@ -7501,6 +7773,10 @@ pub async fn purge_native_goal_resources(
     capture=@process_host.capture_command_merged,
     cleanup_runtime=cleanup_native_goal_runtime_identity,
     purge_refs=purge_native_goal_owned_git_ref_namespace,
+    runtime_receipt_goals=native_repository_runtime_receipt_goals,
+    observe_boxlite_home=observe_native_repository_boxlite_home,
+    path_exists=@sys.path_entry_exists,
+    remove_boxlite_home=@sys.rm_rf,
   )
 }
 

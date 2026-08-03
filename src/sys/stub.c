@@ -859,7 +859,8 @@ int choir_list_dir_all(const char *path, char *buf, int max_size) {
         }
         int len = (int)strlen(ent->d_name);
         if (total + len + 1 > max_size) {
-            break;
+            closedir(d);
+            return -2;
         }
         memcpy(buf + total, ent->d_name, (size_t)len);
         buf[total + len] = '\n';

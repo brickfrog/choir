@@ -1237,8 +1237,20 @@ async test "Goal runtime purge is a no-op without durable state" {
       capture~,
       cleanup_runtime~,
       purge_refs~,
+      runtime_receipt_goals=fn(_) { Ok([]) },
+      observe_boxlite_home=async fn(_) {
+        @async.sleep(0)
+        Ok(None)
+      },
+      path_exists=fn(_) { false },
+      remove_boxlite_home=fn(_) { true },
     ).unwrap(),
-    { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
+    {
+      source_claims_released: 0,
+      runtime_roots_removed: 0,
+      git_refs_removed: 0,
+      boxlite_bytes_reclaimed: 0L,
+    },
   )
   ignore(@sys.rm_rf(root))
 }
@@ -1275,11 +1287,191 @@ async test "Goal runtime purge does not decode incompatible durable state" {
       capture~,
       cleanup_runtime~,
       purge_refs~,
+      runtime_receipt_goals=fn(_) { Ok([]) },
+      observe_boxlite_home=async fn(_) {
+        @async.sleep(0)
+        Ok(None)
+      },
+      path_exists=fn(_) { false },
+      remove_boxlite_home=fn(_) { true },
     ).unwrap(),
-    { source_claims_released: 0, runtime_roots_removed: 0, git_refs_removed: 0 },
+    {
+      source_claims_released: 0,
+      runtime_roots_removed: 0,
+      git_refs_removed: 0,
+      boxlite_bytes_reclaimed: 0L,
+    },
   )
   assert_true(
     @sys.path_entry_exists(root + "/.choir/state/control/workflow.db"),
   )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "Goal purge reconciles receipts before reclaiming the repository home" {
+  let root = "/tmp/choir-goal-purge-boxlite-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root))
+  let goal_id = @control.GoalId("goal-receipt-owned")
+  let home = "/tmp/choir-boxlite-home-receipt-owned"
+  let runtime_present = @ref.new(true)
+  let home_present = @ref.new(true)
+  let removed_home = @ref.new("")
+  let events : Array[String] = []
+  let capture = async fn(_command : @process_host.Command) {
+    @async.sleep(0)
+    events.push("claims")
+    (0, "[]")
+  }
+  let cleanup_runtime = async fn(
+    _repository_id : @workflow.RepositoryId,
+    observed_goal : @control.GoalId,
+  ) {
+    @async.sleep(0)
+    assert_eq(observed_goal, goal_id)
+    assert_true(runtime_present.val)
+    events.push("runtime")
+    runtime_present.val = false
+    Ok(())
+  }
+  let purge_refs = async fn(_project_dir : String) {
+    @async.sleep(0)
+    events.push("refs")
+    Ok(0)
+  }
+  let report = purge_native_goal_resources_with(
+    root,
+    capture~,
+    cleanup_runtime~,
+    purge_refs~,
+    runtime_receipt_goals=fn(_) {
+      events.push("receipts")
+      Ok([goal_id])
+    },
+    observe_boxlite_home=async fn(_) {
+      @async.sleep(0)
+      events.push("measure")
+      Ok(Some((home, 8192L)))
+    },
+    path_exists=fn(path) {
+      if path == home {
+        home_present.val
+      } else {
+        runtime_present.val
+      }
+    },
+    remove_boxlite_home=fn(path) {
+      removed_home.val = path
+      events.push("home")
+      home_present.val = false
+      true
+    },
+  ).unwrap()
+  assert_eq(report, {
+    source_claims_released: 0,
+    runtime_roots_removed: 1,
+    git_refs_removed: 0,
+    boxlite_bytes_reclaimed: 8192L,
+  })
+  assert_eq(removed_home.val, home)
+  assert_eq(events, ["receipts", "measure", "runtime", "home", "claims", "refs"])
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "Goal purge preserves durable state when receipt admission fails" {
+  let root = "/tmp/choir-goal-purge-unproven-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
+  assert_true(
+    @sys.write_file_atomic(
+      root + "/.choir/state/control/workflow.db",
+      "durable state remains",
+    ),
+  )
+  let calls = @ref.new(0)
+  let result = purge_native_goal_resources_with(
+    root,
+    capture=async fn(_) {
+      @async.sleep(0)
+      calls.val = calls.val + 1
+      (0, "[]")
+    },
+    cleanup_runtime=async fn(_, _) {
+      @async.sleep(0)
+      calls.val = calls.val + 1
+      Ok(())
+    },
+    purge_refs=async fn(_) {
+      @async.sleep(0)
+      calls.val = calls.val + 1
+      Ok(0)
+    },
+    runtime_receipt_goals=fn(_) {
+      Err(@types.ChoirError::validation_error("unproven runtime receipt"))
+    },
+    observe_boxlite_home=async fn(_) {
+      @async.sleep(0)
+      calls.val = calls.val + 1
+      Ok(None)
+    },
+    path_exists=fn(_) {
+      calls.val = calls.val + 1
+      false
+    },
+    remove_boxlite_home=fn(_) {
+      calls.val = calls.val + 1
+      true
+    },
+  )
+  assert_true(result is Err(_))
+  assert_eq(calls.val, 0)
+  assert_true(
+    @sys.path_entry_exists(root + "/.choir/state/control/workflow.db"),
+  )
+  ignore(@sys.rm_rf(root))
+}
+
+///|
+async test "Goal purge refuses an incomplete repository-home deletion" {
+  let root = "/tmp/choir-goal-purge-home-failure-" + @sys.get_pid().to_string()
+  ignore(@sys.rm_rf(root))
+  assert_true(@sys.create_dir_all(root + "/.choir/state/control"))
+  let home = "/tmp/choir-boxlite-home-delete-failure"
+  let later_calls = @ref.new(0)
+  let removed_home = @ref.new("")
+  let result = purge_native_goal_resources_with(
+    root,
+    capture=async fn(_) {
+      @async.sleep(0)
+      later_calls.val = later_calls.val + 1
+      (0, "[]")
+    },
+    cleanup_runtime=async fn(_, _) {
+      @async.sleep(0)
+      later_calls.val = later_calls.val + 1
+      Ok(())
+    },
+    purge_refs=async fn(_) {
+      @async.sleep(0)
+      later_calls.val = later_calls.val + 1
+      Ok(0)
+    },
+    runtime_receipt_goals=fn(_) { Ok([]) },
+    observe_boxlite_home=async fn(_) {
+      @async.sleep(0)
+      Ok(Some((home, 4096L)))
+    },
+    path_exists=fn(path) { path == home },
+    remove_boxlite_home=fn(path) {
+      removed_home.val = path
+      false
+    },
+  )
+  assert_true(result is Err(_))
+  assert_eq(removed_home.val, home)
+  assert_eq(later_calls.val, 0)
+  assert_true(@sys.path_entry_exists(root + "/.choir/state/control"))
   ignore(@sys.rm_rf(root))
 }
