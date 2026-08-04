@@ -116,7 +116,9 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **E-1** Empty argument list → usage error, no panic.
 - **E-2** `--test` given as the final token with no value → error.
 - **E-3** `-n 0`, `-n -1`, `-n abc` → error.
-- **E-4** `--providers ""` → error (empty word is not a provider).
+- **E-4** `--providers "claude,"` → error; a trailing comma yields an empty
+  *word*, which is not a provider. A wholly empty `--providers` is rejected
+  earlier, by E-20.
 - **E-5** `--providers claude,claude` → accepted; rotation is all-Claude.
 - **E-6** Instruction containing quotes, `$HOME`, backticks, semicolons, `*`,
   and embedded newlines → passes through byte-for-byte, nothing evaluated.
@@ -153,7 +155,10 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   tracked, and inert for files that *are* tracked, which is correct because a
   committed output directory causes no pollution to begin with. Writing a
   `.gitignore` into `--out` instead is prohibited: with `--out .` that silently
-  destroys the user's own `.gitignore`.
+  destroys the user's own `.gitignore`. When `--out` *is* the repository root
+  there is no directory to exclude, so the patch filenames `0.patch … n.patch`
+  are excluded instead — `--out .` is the invocation that motivated the fix, so
+  a strict-subdirectory test would have missed exactly the case it was for.
 - **E-18** A work jail that modified its own `.git` → neither escapes the
   sandbox nor loses its patch. The pristine git directory is restored from the
   base copy before any host `git` runs. Two distinct failures, one cause:
@@ -162,10 +167,26 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     extraction inside a model-owned tree was arbitrary code execution as the
     user, outside every jail. The dangerous keys are named by an
     attacker-chosen driver, so no set of `git -c` overrides can enumerate them.
+    Restoring `.git` removes only the *repository* scope; git also reads
+    `~/.gitconfig` and `/etc/gitconfig`, so extraction additionally runs with
+    `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` pointed at `/dev/null` and
+    `GIT_ATTR_NOSYSTEM` set. Without that, a model writing nothing but a
+    `.gitattributes` selects any driver the user defined globally — git-lfs,
+    nbstripout and docx textconv are all common — and runs it as the user.
   - `git diff --cached HEAD` asks a model-controlled repository what its own
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-20** Any flag given an empty value → usage error. `--out ""` would
+  resolve to the filesystem root and `--test ""` would run nothing and exit 0,
+  marking every patch `PASS`. No flag here has a meaningful empty form.
+- **E-19** A patch touching a binary file → still applies. `git diff` without
+  `--binary` writes a binary hunk with no full index line, and `git apply` then
+  rejects the *entire* patch with *cannot apply binary patch without full index
+  line*. One touched binary file otherwise cost a whole attempt, reported as
+  `APPLY FAILED` — which reads as a bad patch rather than a diff Choir could not
+  express. Renames, deletions, mode changes, symlinks and paths containing
+  spaces round-trip too.
 
 ---
 

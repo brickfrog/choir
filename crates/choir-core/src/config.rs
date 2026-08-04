@@ -244,7 +244,7 @@ pub enum ParseError {
     MissingTest,
     /// A flag expecting a value was the final token (C-7, E-2).
     MissingValue(&'static str),
-    /// A flag was given an empty value (E-14).
+    /// A flag was given an empty value (E-20).
     EmptyValue(&'static str),
     /// A numeric flag was given something that is not a positive integer (C-5).
     NotPositiveInt {
@@ -326,7 +326,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
     Ok(Invocation::Run(Box::new(cfg)))
 }
 
-/// Take the value following a flag (C-7, E-14).
+/// Take the value following a flag (C-7, E-20).
 ///
 /// An empty value is rejected rather than accepted. Every flag here names a
 /// path or a command, and none has a meaningful empty form: an empty `--out`

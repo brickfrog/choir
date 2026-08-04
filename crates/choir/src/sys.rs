@@ -29,6 +29,35 @@ pub fn run(program: &str, args: &[&str]) -> (i32, Vec<u8>) {
     }
 }
 
+/// Run `git` with every configuration source the attacker could reach disabled.
+///
+/// Extraction runs host `git` inside a tree a jailed model owned, and git
+/// executes commands named by `filter.<n>.clean`, `diff.<n>.textconv` and
+/// `core.fsmonitor`. Restoring the pristine `.git` removes the *repository*
+/// scope, but git also reads `~/.gitconfig` and `/etc/gitconfig` — so a model
+/// writing nothing but a `.gitattributes` in the worktree it legitimately owns
+/// could select any driver the user happens to have defined globally, and
+/// git-lfs, nbstripout and docx textconv are all common. Measured: with an
+/// lfs filter in `~/.gitconfig` and a model-written `* filter=lfs diff=lfs`,
+/// the payload ran as the user after the `.git` restore.
+///
+/// `/dev/null` is a valid empty config file, so both scopes read as empty.
+/// `GIT_ATTR_NOSYSTEM` drops `/etc/gitattributes` for the same reason.
+/// Extraction needs no user configuration: it stages and diffs, nothing more.
+pub fn git(args: &[&str]) -> (i32, Vec<u8>) {
+    match Command::new("git")
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+    {
+        Ok(out) => (out.status.code().unwrap_or(255), out.stdout),
+        Err(_) => (255, Vec::new()),
+    }
+}
+
 /// Run a script with `/bin/sh -c`, returning its exit code and stdout.
 ///
 /// The script is one argv element, never a concatenation of user input. The
@@ -166,6 +195,32 @@ mod tests {
         assert!(!absolute("/proc/1/nope/out").is_empty());
         // A resolvable path really is canonicalised.
         assert_eq!(absolute("/tmp/."), "/tmp");
+    }
+
+    /// E-18: host git for extraction reads no user or system configuration.
+    ///
+    /// Restoring the pristine `.git` removes only the repository scope. Git
+    /// also reads `~/.gitconfig` and `/etc/gitconfig`, so a model writing just
+    /// a `.gitattributes` could otherwise select any `filter.*.clean` or
+    /// `diff.*.textconv` the user has defined globally and run it as the user.
+    /// Reproduced before the fix with an lfs-style filter; two canaries fired.
+    #[test]
+    fn git_ignores_user_and_system_config() {
+        let (_, global) = super::git(&["config", "--global", "--list"]);
+        assert!(
+            global.is_empty(),
+            "global gitconfig leaked into extraction: {}",
+            String::from_utf8_lossy(&global)
+        );
+        let (_, system) = super::git(&["config", "--system", "--list"]);
+        assert!(system.is_empty(), "system gitconfig leaked into extraction");
+
+        // Plain `run` is the control: it inherits everything, which is exactly
+        // why extraction must not use it.
+        let (_, inherited) = super::run("git", &["config", "--global", "--list"]);
+        if inherited.is_empty() {
+            eprintln!("note: no global git config on this host, assertion is weak");
+        }
     }
 
     /// A missing file reads as empty rather than panicking (E-7, E-8).

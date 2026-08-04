@@ -114,13 +114,13 @@ fn c5_positive_integers_only() {
     assert_eq!(config(&["x", "--test", "t", "-n", "1"]).n, 1);
 }
 
-/// E-14: no flag accepts an empty value.
+/// E-20: no flag accepts an empty value.
 ///
 /// An empty `--out` resolves to the filesystem root, and an empty `--test` runs
 /// nothing and exits 0 — marking every patch `PASS`. Both are worse than a
 /// usage error.
 #[test]
-fn e14_no_empty_values() {
+fn e20_no_empty_values() {
     for flag in [
         "--test",
         "--repo",
@@ -149,7 +149,7 @@ fn c6_provider_words() {
         ParseError::UnknownProvider("Claude".to_owned())
     );
     // E-4: a trailing comma still yields an empty *word*, which is not a
-    // provider. A wholly empty `--providers` is caught earlier, by E-14.
+    // provider. A wholly empty `--providers` is caught earlier, by E-20.
     assert_eq!(
         error(&["x", "--test", "t", "--providers", "claude,"]),
         ParseError::UnknownProvider(String::new())

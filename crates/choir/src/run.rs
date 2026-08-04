@@ -108,7 +108,7 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     );
 
     let out = sys::absolute(&cfg.out);
-    exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out);
+    exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out, cfg.n);
 
     Some(Paths { dir, out })
 }
@@ -130,13 +130,53 @@ fn prepare(cfg: &Config) -> Option<Paths> {
 /// silently overwrote the user's own `.gitignore` when `--out` was the
 /// repository root, breaking the one promise Choir makes: it never modifies
 /// anything in your checkout.
-fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str) {
-    let Some(relative) = out_abs.strip_prefix(&format!("{repo_abs}/")) else {
-        return;
-    };
+fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str, n: usize) {
     let exclude = format!("{dir}/repo/.git/info/exclude");
+    let mut rules = String::new();
+
+    if out_abs == repo_abs {
+        // `--out .` puts the patches directly in the repository root, so there
+        // is no directory to exclude — name the files Choir will write instead.
+        // The audit jail takes index `n`, so `0..=n` covers every patch name.
+        for index in 0..=n {
+            rules.push('/');
+            rules.push_str(&index.to_string());
+            rules.push_str(".patch\n");
+        }
+    } else if let Some(relative) = out_abs.strip_prefix(&format!("{repo_abs}/")) {
+        // A newline cannot be expressed as one gitignore rule at all, and
+        // writing a half-rule would exclude something nobody named.
+        if relative.contains('\n') {
+            return;
+        }
+        rules.push('/');
+        rules.push_str(&gitignore_escape(relative));
+        rules.push_str("/\n");
+    } else {
+        return;
+    }
+
     let existing = sys::read_text(Path::new(&exclude));
-    sys::write_text(Path::new(&exclude), &format!("{existing}\n/{relative}/\n"));
+    sys::write_text(Path::new(&exclude), &format!("{existing}\n{rules}"));
+}
+
+/// Quote a literal path for use as a gitignore pattern.
+///
+/// `.git/info/exclude` is glob syntax, so an `--out` path containing `*`, `?`
+/// or a bracket expression would match more than the directory it names — and
+/// what it over-matches is the model's own work, silently missing from the
+/// patch. Measured before this escape: `--out` at `a*b` also hid `aXb/`.
+///
+/// A leading `!` would negate and a leading `#` would comment the rule out.
+fn gitignore_escape(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']' | '!' | '#' | ' ') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Lay out the part of a slot every jail needs: `tmp`, and `cmd` holding the
@@ -237,8 +277,18 @@ fn extract(paths: &Paths, index: usize) -> usize {
         &format!("{repo}/.git"),
     );
 
-    let _ = sys::run("git", &["-C", &repo, "add", "-A"]);
-    let (_, patch) = sys::run("git", &["-C", &repo, "diff", "--cached", "HEAD"]);
+    // `sys::git`, not `sys::run`: the pristine `.git` restore above removes the
+    // repository config scope, but git also reads `~/.gitconfig` and
+    // `/etc/gitconfig`. A model that writes only a `.gitattributes` in the
+    // worktree it legitimately owns can otherwise select any filter or textconv
+    // driver the user has defined globally and run it as the user (E-18).
+    let _ = sys::git(&["-C", &repo, "add", "-A"]);
+    // `--binary` (E-19): without it `git diff` writes a binary hunk with no full
+    // index line, and `git apply` then refuses the *entire* patch with "cannot
+    // apply binary patch without full index line". One touched binary file
+    // otherwise loses the whole attempt to an APPLY FAILED row that reads like a
+    // bad patch rather than a diff Choir could not express.
+    let (_, patch) = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
 
     sys::write_bytes(Path::new(&format!("{}/{index}.patch", paths.out)), &patch);
     sys::write_bytes(Path::new(&paths.patch(index)), &patch);
@@ -267,7 +317,9 @@ fn stage(cfg: &Config, paths: &Paths) -> Vec<Attempt> {
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
 
             let repo = format!("{slot}/repo");
-            let (code, _) = sys::run("git", &["-C", &repo, "apply", &paths.patch(index)]);
+            // Hermetic too: an `apply.*` setting in the user's global config
+            // must not change whether an untrusted patch is judged appliable.
+            let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
             let staged = if code == 0 {
                 Staged::Ready(slot)
             } else {
@@ -360,7 +412,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{exclude_out_from_base, extract, Paths};
+    use super::{exclude_out_from_base, extract, gitignore_escape, Paths};
     use crate::sys;
     use std::fs;
     use std::path::PathBuf;
@@ -394,6 +446,10 @@ mod tests {
         git(&base, &["config", "user.email", "t@t"]);
         git(&base, &["config", "user.name", "t"]);
         fs::write(format!("{base}/a.txt"), "old\n").expect("a.txt");
+        fs::write(format!("{base}/keep.txt"), "original\n").expect("keep.txt");
+        fs::write(format!("{base}/old.txt"), "torename\n").expect("old.txt");
+        fs::write(format!("{base}/drop.txt"), "todelete\n").expect("drop.txt");
+        fs::write(format!("{base}/bin.dat"), [0u8, 1, 2, b'A']).expect("bin.dat");
         git(&base, &["add", "-A"]);
         git(&base, &["commit", "-qm", "base"]);
 
@@ -474,6 +530,57 @@ mod tests {
         sys::remove_tree(&paths.dir);
     }
 
+    /// E-19: a patch touching a binary file still applies.
+    ///
+    /// `git diff` without `--binary` emits a binary hunk with no full index
+    /// line, and `git apply` then rejects the WHOLE patch — so one touched
+    /// binary file lost an entire attempt to a row reading APPLY FAILED, which
+    /// looks like a bad patch rather than a diff Choir could not express.
+    /// Every other change kind rides along here: rename, delete, mode, symlink,
+    /// and a path containing spaces.
+    #[test]
+    fn extract_produces_appliable_patches_for_every_change_kind() {
+        let (paths, bytes) = staged_run("fidelity", |slot_repo| {
+            fs::write(format!("{slot_repo}/keep.txt"), "edited\n").expect("edit");
+            fs::write(format!("{slot_repo}/bin.dat"), [0u8, 1, 2, b'Z']).expect("binary");
+            fs::create_dir_all(format!("{slot_repo}/weird name")).expect("dir");
+            fs::write(format!("{slot_repo}/weird name/f g.txt"), "w\n").expect("spaced");
+            fs::remove_file(format!("{slot_repo}/drop.txt")).expect("delete");
+            fs::rename(
+                format!("{slot_repo}/old.txt"),
+                format!("{slot_repo}/new.txt"),
+            )
+            .expect("rename");
+        });
+        assert!(bytes > 0, "changes must produce a patch");
+
+        // The real test: it applies to a pristine copy of the base tree.
+        let target = format!("{}/applied", paths.dir);
+        sys::copy_tree(&format!("{}/repo", paths.dir), &target);
+        let patch = format!("{}/0.patch", paths.out);
+        let (code, _) = sys::run("git", &["-C", &target, "apply", &patch]);
+        assert_eq!(code, 0, "patch must apply; binary hunks need --binary");
+
+        assert_eq!(
+            fs::read(format!("{target}/bin.dat")).expect("bin"),
+            vec![0u8, 1, 2, b'Z'],
+            "binary content must survive"
+        );
+        assert!(
+            fs::exists(format!("{target}/new.txt")).unwrap_or(false),
+            "rename lost"
+        );
+        assert!(
+            !fs::exists(format!("{target}/drop.txt")).unwrap_or(true),
+            "delete lost"
+        );
+        assert!(
+            fs::exists(format!("{target}/weird name/f g.txt")).unwrap_or(false),
+            "spaced path lost"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
     /// E-17: an output directory inside the repo never enters a jail, and the
     /// user's own tree is never written to.
     ///
@@ -504,7 +611,7 @@ mod tests {
         // What prepare() does: copy the tree, then exclude --out in the copy.
         let base = format!("{root_s}/repo");
         sys::copy_tree(&user_repo, &base);
-        exclude_out_from_base(&root_s, &user_repo, &out);
+        exclude_out_from_base(&root_s, &user_repo, &out, 1);
 
         // A jail edits the tree; extraction stages it.
         fs::write(format!("{base}/f.txt"), "changed\n").expect("edit");
@@ -532,6 +639,90 @@ mod tests {
         sys::remove_tree(&root_s);
     }
 
+    /// E-17: a glob metacharacter in `--out` must not hide the model's work.
+    ///
+    /// `.git/info/exclude` is glob syntax. Measured before the escape: an
+    /// `--out` of `a*b` also excluded `aXb/`, so a jail's real work vanished
+    /// from its patch with no signal at all.
+    #[test]
+    fn out_dir_with_a_glob_metacharacter_is_literal() {
+        assert_eq!(gitignore_escape("a*b"), "a\\*b");
+        assert_eq!(gitignore_escape("q?x"), "q\\?x");
+        assert_eq!(gitignore_escape("[a]"), "\\[a\\]");
+        assert_eq!(gitignore_escape("!neg"), "\\!neg");
+        assert_eq!(gitignore_escape("#c"), "\\#c");
+        assert_eq!(gitignore_escape("with space"), "with\\ space");
+        assert_eq!(gitignore_escape("choir-out"), "choir-out");
+
+        let root = scratch("glob");
+        let root_s = root.to_str().expect("utf-8").to_owned();
+        let repo = format!("{root_s}/proj");
+        fs::create_dir_all(&repo).expect("repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "t@t"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(format!("{repo}/seed.txt"), "s\n").expect("seed");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-qm", "init"]);
+
+        let base = format!("{root_s}/repo");
+        sys::copy_tree(&repo, &base);
+        exclude_out_from_base(&root_s, &repo, &format!("{repo}/a*b"), 1);
+
+        // The model's real work lands in a directory the unescaped glob matched.
+        fs::create_dir_all(format!("{base}/aXb")).expect("aXb");
+        fs::write(format!("{base}/aXb/work.txt"), "REAL\n").expect("work");
+        git(&base, &["add", "-A"]);
+        let (_, staged) = sys::run("git", &["-C", &base, "diff", "--cached", "--name-only"]);
+        let staged = String::from_utf8_lossy(&staged);
+        assert!(
+            staged.contains("aXb/work.txt"),
+            "glob in --out hid the model's work: {staged:?}"
+        );
+        sys::remove_tree(&root_s);
+    }
+
+    /// E-17: `--out .` puts patches in the repository root, where there is no
+    /// directory to exclude — the patch *files* must be named instead.
+    ///
+    /// The strict-subdirectory check missed this, so `--out .` silently lost
+    /// the protection and run 2 failed every `git apply` exactly as before.
+    #[test]
+    fn out_dir_equal_to_the_repo_root_excludes_the_patch_files() {
+        let root = scratch("outroot");
+        let root_s = root.to_str().expect("utf-8").to_owned();
+        let repo = format!("{root_s}/proj");
+        fs::create_dir_all(&repo).expect("repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "t@t"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(format!("{repo}/seed.txt"), "s\n").expect("seed");
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-qm", "init"]);
+        // A previous run wrote its patches straight into the repository root.
+        fs::write(format!("{repo}/0.patch"), "PREVIOUS\n").expect("patch");
+        fs::write(format!("{repo}/1.patch"), "PREVIOUS\n").expect("patch");
+
+        let base = format!("{root_s}/repo");
+        sys::copy_tree(&repo, &base);
+        exclude_out_from_base(&root_s, &repo, &repo, 1);
+
+        fs::write(format!("{base}/seed.txt"), "changed\n").expect("edit");
+        git(&base, &["add", "-A"]);
+        let (_, staged) = sys::run("git", &["-C", &base, "diff", "--cached", "--name-only"]);
+        let staged = String::from_utf8_lossy(&staged);
+
+        assert!(
+            staged.contains("seed.txt"),
+            "real edit must stage: {staged:?}"
+        );
+        assert!(
+            !staged.contains(".patch"),
+            "previous run's patches leaked into the jail: {staged:?}"
+        );
+        sys::remove_tree(&root_s);
+    }
+
     /// E-17: an output directory outside the repo needs no exclusion, and the
     /// helper must leave the scratch copy alone rather than guessing.
     #[test]
@@ -542,7 +733,7 @@ mod tests {
         fs::create_dir_all(format!("{base}/.git/info")).expect("git dir");
         fs::write(format!("{base}/.git/info/exclude"), "# original\n").expect("exclude");
 
-        exclude_out_from_base(&root_s, "/some/repo", "/elsewhere/out");
+        exclude_out_from_base(&root_s, "/some/repo", "/elsewhere/out", 1);
 
         let after = fs::read_to_string(format!("{base}/.git/info/exclude")).expect("read");
         assert_eq!(after, "# original\n", "unrelated --out must change nothing");

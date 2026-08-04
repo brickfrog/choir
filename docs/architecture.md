@@ -4,7 +4,7 @@
 flowchart TD
   CLI["choir INSTRUCTION, with test, repo, n, providers, timeout, out"]
   CLI --> W["wave 1: n work jails, nsjail with --use_pasta<br/>one blocking sh -c that backgrounds n jails and waits<br/>each jail edits its own repo copy through a rw bind mount"]
-  W --> P["host git: add -A then diff --cached HEAD<br/>out/N.patch written before any verdict exists"]
+  W --> P["host git: restore pristine .git, add -A, diff --cached --binary HEAD<br/>out/N.patch written before any verdict exists"]
   P --> V["wave 2: one verify jail per patch, no network flag, no namespace<br/>host cp -a and git apply first, then your test command<br/>its exit code is the only verdict in the program"]
   V --> T["table: one row per jail in index order,<br/>plus a git apply line per passing patch"]
   T --> A["wave 3: audit jail, --use_pasta, repo and patches read-only<br/>prose printed after the table is already on screen"]
@@ -115,15 +115,22 @@ Each arm also yields its `-R <resolved binary>:/prov/<name>` mount and its
 `.rc` files. Nothing is written to disk: the script is one argv element to `/bin/sh -c`.
 The script itself is assembled without a temporary allocation per jail.
 
-**Slot prep.** `mkdir <slot>/{tmp,cred}`, write `<slot>/cmd`, copy the one credential file.
-No parameters and no branches, so it cannot grow a `needs_cred` boolean; the
-`cp -a <run>/repo <slot>/repo` is one line at the two call sites that need it.
+**Slot prep.** Two functions, not one with a flag. `prep_slot` makes `<slot>/tmp` and writes
+`<slot>/cmd` — what every jail needs. `prep_provider_slot` adds `<slot>/cred` with the one
+credential file and resolves the provider binary; only the work and audit waves call it,
+because a verify jail mounts no `/cred` and copying the token there only widened its
+footprint on disk. Each wave unlinks its jails' credentials as soon as it returns.
 
-**Patch extraction.** Host-side `git -C <run>/w<N>/repo add -A` then
-`git diff --cached HEAD`, written to `<out>/N.patch` and `<run>/patches/N.patch`
-immediately. The jail's working tree *is* that host directory, so there is no copy-out and
-no git inside the guest. Writing the files before computing any verdict is what makes it
-structurally impossible for Choir to discard work a provider produced.
+**Patch extraction.** The jail's `.git` is thrown away and the pristine one restored from
+the base copy first — git executes commands named in a repository's own config, so running
+host git inside a tree the model owned was arbitrary execution on the host, and diffing
+against a `HEAD` the model could move silently discarded work when it committed. Then
+host-side `git -C <run>/w<N>/repo add -A` and `git diff --cached --binary HEAD`, written to
+`<out>/N.patch` and `<run>/patches/N.patch` immediately. `--binary` is not optional: without
+it a binary hunk carries no full index line and `git apply` rejects the whole patch. The
+jail's working tree *is* that host directory, so there is no copy-out and no git inside the
+guest. Writing the files before computing any verdict is what makes it structurally
+impossible for Choir to discard work a provider produced.
 
 **Verify prep.** `cp -a <run>/repo <run>/v<N>/repo` then `git apply <out>/N.patch`, host side,
 before the verify jail starts. Without it, "the patch does not apply" and "the tests failed"
