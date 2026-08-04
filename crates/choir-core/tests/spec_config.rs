@@ -99,7 +99,7 @@ fn c4_required_inputs() {
 /// C-5, E-3: numeric flags take only strictly positive integers.
 #[test]
 fn c5_positive_integers_only() {
-    for bad in ["0", "-1", "abc", "", "3.5", "9999999999999999999999"] {
+    for bad in ["0", "-1", "abc", "3.5", "9999999999999999999999"] {
         let err = error(&["x", "--test", "t", "-n", bad]);
         assert!(
             matches!(err, ParseError::NotPositiveInt { flag: "-n", .. }),
@@ -114,6 +114,29 @@ fn c5_positive_integers_only() {
     assert_eq!(config(&["x", "--test", "t", "-n", "1"]).n, 1);
 }
 
+/// E-14: no flag accepts an empty value.
+///
+/// An empty `--out` resolves to the filesystem root, and an empty `--test` runs
+/// nothing and exits 0 — marking every patch `PASS`. Both are worse than a
+/// usage error.
+#[test]
+fn e14_no_empty_values() {
+    for flag in [
+        "--test",
+        "--repo",
+        "--out",
+        "-n",
+        "--timeout",
+        "--providers",
+    ] {
+        let err = error(&["x", "--test", "t", flag, ""]);
+        assert!(
+            matches!(err, ParseError::EmptyValue(f) if f == flag),
+            "{flag} '' should be rejected as empty, got {err:?}"
+        );
+    }
+}
+
 /// C-6, E-4: `--providers` accepts only the two exact lowercase words.
 #[test]
 fn c6_provider_words() {
@@ -125,10 +148,8 @@ fn c6_provider_words() {
         error(&["x", "--test", "t", "--providers", "Claude"]),
         ParseError::UnknownProvider("Claude".to_owned())
     );
-    assert_eq!(
-        error(&["x", "--test", "t", "--providers", ""]),
-        ParseError::UnknownProvider(String::new())
-    );
+    // E-4: a trailing comma still yields an empty *word*, which is not a
+    // provider. A wholly empty `--providers` is caught earlier, by E-14.
     assert_eq!(
         error(&["x", "--test", "t", "--providers", "claude,"]),
         ParseError::UnknownProvider(String::new())

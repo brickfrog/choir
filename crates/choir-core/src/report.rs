@@ -105,17 +105,45 @@ pub fn apply_lines(rows: &[Row], out_dir: &str) -> Vec<String> {
         .collect()
 }
 
-/// The last non-blank line of a log, trimmed (E-8, E-9).
+/// Drop terminal control characters from untrusted model output (E-15).
+///
+/// Everything a jail writes is model output, and both the log line in each row
+/// and the audit prose are printed straight to the user's terminal. An ANSI
+/// cursor-movement sequence in that text can scroll back and repaint a row that
+/// Choir already printed — turning a `FAIL` into a `PASS` in the only table the
+/// user is given. The table is the entire selection mechanism, so it has to be
+/// what Choir printed.
+///
+/// Newline and tab survive because the audit body is prose. Everything else in
+/// the C0/C1 range, `ESC` and lone `\r` included, is removed.
+#[must_use]
+pub fn sanitize(text: &str) -> String {
+    text.chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect()
+}
+
+/// The last non-blank line of a log, trimmed and sanitised (E-8, E-9, E-15).
 ///
 /// Pure: the shell reads the file, this decides what the row shows. A missing,
 /// empty, or all-blank log yields the empty string.
 #[must_use]
 pub fn last_line(log: &str) -> String {
-    log.lines()
-        .map(str::trim)
-        .rfind(|l| !l.is_empty())
-        .unwrap_or_default()
-        .to_owned()
+    sanitize(
+        log.lines()
+            .map(str::trim)
+            .rfind(|l| !l.is_empty())
+            .unwrap_or_default(),
+    )
+}
+
+/// The audit jail's prose, sanitised and trimmed (E-15).
+///
+/// The audit model reads `/patches`, which is text authored by the work-jail
+/// models, so its output is untrusted twice over.
+#[must_use]
+pub fn audit_body(log: &str) -> String {
+    sanitize(log.trim())
 }
 
 /// The heading printed above the audit prose.

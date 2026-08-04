@@ -109,6 +109,40 @@ fn verify_jail_cannot_see_the_host() {
     );
 }
 
+/// C-13: the verify jail gets its own empty network namespace, and neither the
+/// credential nor the provider binary nor the patches are reachable from it.
+///
+/// The README calls this the strongest claim in the program. Before this test
+/// the only thing defending it was a string assertion that the template does
+/// not contain "pasta" — which would not notice nsjail changing its default,
+/// nor a refactor routing verify jails through the provider template. The probe
+/// needs no network and no external host, so it is as deterministic as the
+/// filesystem one above.
+#[test]
+fn verify_jail_is_network_sealed() {
+    if !nsjail_available() {
+        eprintln!("skipping: nsjail not installed");
+        return;
+    }
+    // `/proc/net/*` is the netns itself, so this needs no network and no
+    // external host: exactly one interface, it is `lo`, and the routing table
+    // holds nothing but its header.
+    let probe = "\
+        test \"$(wc -l < /proc/net/route)\" = 1 && \
+        test \"$(grep -c ':' /proc/net/dev)\" = 1 && \
+        grep -q ' *lo:' /proc/net/dev && \
+        test ! -e /cred && \
+        test ! -e /prov && \
+        test ! -e /patches && \
+        test ! -e /etc/resolv.conf && \
+        test ! -e /sys\n";
+    assert_eq!(
+        run_verify(probe),
+        Verdict::Pass,
+        "verify jail must have an empty netns, no credential, no provider, no patches"
+    );
+}
+
 /// C-13: the jail runs with no capabilities and no ability to gain any.
 #[test]
 fn verify_jail_drops_privileges() {

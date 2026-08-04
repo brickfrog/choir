@@ -244,6 +244,8 @@ pub enum ParseError {
     MissingTest,
     /// A flag expecting a value was the final token (C-7, E-2).
     MissingValue(&'static str),
+    /// A flag was given an empty value (E-14).
+    EmptyValue(&'static str),
     /// A numeric flag was given something that is not a positive integer (C-5).
     NotPositiveInt {
         /// The flag that was given a bad value.
@@ -263,6 +265,7 @@ impl fmt::Display for ParseError {
             Self::MissingInstruction => f.write_str("an instruction is required"),
             Self::MissingTest => f.write_str("--test is required"),
             Self::MissingValue(flag) => write!(f, "{flag} expects a value"),
+            Self::EmptyValue(flag) => write!(f, "{flag} expects a non-empty value"),
             Self::NotPositiveInt { flag, got } => {
                 write!(f, "{flag} expects a positive integer, got: {got}")
             }
@@ -323,12 +326,21 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
     Ok(Invocation::Run(Box::new(cfg)))
 }
 
-/// Take the value following a flag, or report the flag as valueless (C-7).
+/// Take the value following a flag (C-7, E-14).
+///
+/// An empty value is rejected rather than accepted. Every flag here names a
+/// path or a command, and none has a meaningful empty form: an empty `--out`
+/// would resolve to the filesystem root, and an empty `--test` would run
+/// nothing and exit 0, marking every patch `PASS`.
 fn value<'a>(
     rest: &mut impl Iterator<Item = &'a String>,
     flag: &'static str,
 ) -> Result<String, ParseError> {
-    rest.next().cloned().ok_or(ParseError::MissingValue(flag))
+    let raw = rest.next().cloned().ok_or(ParseError::MissingValue(flag))?;
+    if raw.is_empty() {
+        return Err(ParseError::EmptyValue(flag));
+    }
+    Ok(raw)
 }
 
 /// Parse a strictly-positive integer (C-5, E-3).

@@ -146,6 +146,38 @@ fn e8_last_line() {
     assert_eq!(report::last_line("  padded  \n"), "padded");
 }
 
+/// E-15: terminal control characters never reach the terminal.
+///
+/// The table is the entire selection mechanism, so untrusted model output must
+/// not be able to scroll back and repaint a row Choir already printed.
+#[test]
+fn e15_control_characters_are_stripped() {
+    // The concrete attack: repaint the two rows above as a PASS.
+    let attack = "done\n\u{1b}[2A\u{1b}[2K0    claude    4.1 KB   PASS";
+    let line = report::last_line(attack);
+    assert!(!line.contains('\u{1b}'), "ESC survived: {line:?}");
+    assert!(
+        line.contains("PASS"),
+        "text itself is kept, only control chars go"
+    );
+
+    assert_eq!(report::sanitize("a\u{1b}[31mb"), "a[31mb");
+    assert_eq!(report::sanitize("a\rb"), "ab");
+    assert_eq!(report::sanitize("a\u{7}b"), "ab");
+    // Prose formatting survives.
+    assert_eq!(report::sanitize("a\nb\tc"), "a\nb\tc");
+    // Non-ASCII is untouched.
+    assert_eq!(report::sanitize("héllo — ✓"), "héllo — ✓");
+}
+
+/// E-15: the audit body is sanitised too, and keeps its line structure.
+#[test]
+fn e15_audit_body_is_sanitised() {
+    let body = report::audit_body("  \u{1b}[2Jline one\nline two\t.  ");
+    assert!(!body.contains('\u{1b}'));
+    assert_eq!(body, "[2Jline one\nline two\t.");
+}
+
 /// The header matches the column widths the rows are rendered with.
 #[test]
 fn header_matches_columns() {

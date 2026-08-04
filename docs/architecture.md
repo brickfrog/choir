@@ -46,10 +46,19 @@ defending.
 The instruction and the `--test` command travel as file contents, never as tokens. Choir
 writes each verbatim to `<slot>/cmd`; the jail reads it with the fixed literal
 `"$(cat /cmd)"` — with the double quotes — or runs it as `sh /cmd`, so the wave script
-contains zero user-controlled bytes. Verified with an instruction containing double quotes,
-single quotes, `$HOME`, backticks, a semicolon, a bare `*` and an embedded newline: one argv
-word, byte for byte, nothing executed on the host; read unquoted the same file split into 20
-words. `/cmd` is mounted outside `/repo`, so it cannot appear in a patch.
+contains zero bytes from argv or stdin. Verified with an instruction containing double
+quotes, single quotes, `$HOME`, backticks, a semicolon, a bare `*` and an embedded newline:
+one argv word, byte for byte, nothing executed on the host; read unquoted the same file
+split into 20 words. `/cmd` is mounted outside `/repo`, so it cannot appear in a patch.
+
+"Zero bytes from argv or stdin" is the precise claim, and it is narrower than "zero
+user-controlled bytes". Three values in the script come from the environment rather than
+from a flag: the slot and run directory, which derive from `mktemp -d` and therefore
+`$TMPDIR`, and the provider binary path, which derives from `command -v` and therefore
+`$PATH`. None is reachable from a flag, from stdin, or from inside a jail — a jailed model
+writes only under the scratch tree, which is on no `PATH`. The practical consequence is
+not injection but breakage: a provider binary at a path containing a space produces an
+opaque nsjail 255 that the failure model reads as a missing binary.
 
 ## Dependencies
 
@@ -272,12 +281,20 @@ reports "not logged in" as its last log line. An unresolved provider is the same
 jail's last log line, and that is the row. Anything that can refuse to start the run is the
 smallest version of the gate that killed v2.
 
-**Choir killed mid-run does not clean up, and does not need to.** The jails are started
-through `/bin/sh`, in their own session, so a terminal's SIGINT reaches Choir and not the
-jails — verified that they survive both Ctrl-C and `kill -9` on Choir. They then die on their
-own at `--time_limit`, taking their whole process tree with them, and leave 0 bytes on disk.
+**Choir killed mid-run does not clean up the jails, and does not need to.** Every jail is
+started as `( nsjail … ) &` inside one `sh -c`, and POSIX requires a non-interactive shell
+to set SIGINT and SIGQUIT to *ignored* for commands it starts asynchronously. nsjail
+inherits that, so a terminal's SIGINT reaches Choir and not the jails — measured: a command
+backgrounded inside `sh -c` carries `SigIgn: 0000000001000006`, bits 0x2 and 0x4. There is
+no session separation and none is needed: `std::process::Command` does not `setsid`, and
+the child shares Choir's process group and session. The jails then die on their own at
+`--time_limit`, taking their whole process tree with them, and leave 0 bytes on disk.
 Rejected: a startup sweep, an exit trap, a `--cleanup` subcommand, a PID file. Every one is a
-reconciler for state Choir does not have; the honest sentence in the README costs nothing.
+reconciler for state Choir does not have.
+
+What Choir *does* leave behind on that path is its own scratch directory, because
+`remove_tree` is the last line of `execute`. Each wave now unlinks its jails' credential
+copies as soon as it returns, so the exposure is bounded to the jails that were in flight.
 
 ## Limits of the isolation boundary
 

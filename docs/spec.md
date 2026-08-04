@@ -129,6 +129,39 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   stays parseable; columns are minimum widths, not truncating.
 - **E-12** `n` greater than the provider count → rotation wraps.
 - **E-13** An unreadable or absent `.rc` file → `Fail(255)`, never a panic.
+- **E-14** `--out` naming a path whose parent cannot be created → patches are
+  reported at the path the user asked for, never at the filesystem root.
+  `readlink -f` prints nothing and exits 1 in that case, and an empty output
+  directory would target `/N.patch` and print a `git apply` line for a file that
+  was never written.
+- **E-15** Terminal control characters in provider output → removed before
+  printing. Newline and tab survive. Untrusted model output would otherwise be
+  able to scroll back and repaint a row Choir already printed, turning a `FAIL`
+  into a `PASS` in the only table the user is given.
+- **E-16** `mktemp -d` failing → `choir: cannot create a scratch directory` on
+  stderr and exit 1, before anything is written. An empty run directory would
+  retarget every path in the program at the filesystem root, copy the OAuth
+  credential to `/w0/cred/`, and clean up with `rm -rf ''`, which exits 0 having
+  removed nothing.
+- **E-17** A second run with `--out` inside `--repo` → the previous run's
+  patches do not enter any jail. `--out` defaults to `./choir-out`, which the
+  base `cp -a` would otherwise sweep up, `git add -A` would stage inside every
+  jail, and `git apply` would then reject with *already exists in working
+  directory* — losing an entire billed wave to a directory Choir created itself.
+  Choir writes a `.gitignore` of `*` into `--out`, which ignores the directory
+  including the ignore file.
+- **E-18** A work jail that modified its own `.git` → neither escapes the
+  sandbox nor loses its patch. The pristine git directory is restored from the
+  base copy before any host `git` runs. Two distinct failures, one cause:
+  - Git executes commands named in a repository's own config
+    (`filter.<n>.clean`, `diff.<n>.textconv`, `core.fsmonitor`), so host-side
+    extraction inside a model-owned tree was arbitrary code execution as the
+    user, outside every jail. The dangerous keys are named by an
+    attacker-chosen driver, so no set of `git -c` overrides can enumerate them.
+  - `git diff --cached HEAD` asks a model-controlled repository what its own
+    `HEAD` is. A model that committed its work — routine under
+    `--dangerously-skip-permissions` — moved `HEAD` past the change and the
+    diff came back empty, reporting `0 B` for a jail that had succeeded.
 
 ---
 
@@ -218,12 +251,24 @@ normally without it installed. Run them with `cargo kani -p choir-core`.
 ### 6.4 What is verified empirically, not proved
 
 The isolation properties are nsjail's, not Choir's, so no proof here asserts
-anything about them. They are instead *exercised* by
-`crates/choir/tests/sealed_jail.rs`, which runs a real verify jail and checks
-that `/home`, `/root`, `/mnt`, `/var` and `/etc/shadow` are absent, that
-`NoNewPrivs` is 1 and `CapEff` is empty, and that a wave of three two-second
-jails finishes in under four seconds rather than six (N-4). Those tests skip
-with a notice when nsjail is not installed.
+anything about them. They are instead *exercised* against a real jail by
+`crates/choir/tests/sealed_jail.rs`, which checks that:
+
+- `/home`, `/root`, `/mnt`, `/var` and `/etc/shadow` are absent;
+- the network namespace is empty — one interface, it is `lo`, and the routing
+  table holds nothing but its header — and `/cred`, `/prov`, `/patches`,
+  `/etc/resolv.conf` and `/sys` do not exist (C-13);
+- `NoNewPrivs` is 1 and `CapEff` is empty;
+- a wave of three two-second jails finishes in under four seconds, not six (N-4).
+
+The netns probe reads `/proc/net/*`, which *is* the namespace, so it needs no
+network and no external host and is as deterministic as the filesystem probes.
+These tests skip with a notice when nsjail is not installed.
+
+The sandbox escape and patch-loss failures in E-18 are covered by `#[cfg(test)]`
+tests beside `extract` in `crates/choir/src/run.rs`, because `extract` is
+private. Both were confirmed to fail against the unfixed code before the fix
+landed — a regression test that passes either way defends nothing.
 
 ### 6.5 What is deliberately not verified
 

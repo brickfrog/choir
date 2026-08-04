@@ -116,12 +116,24 @@ pub fn make_run_dir() -> String {
     sh_line("mktemp -d")
 }
 
-/// Resolve a path to its canonical absolute form via `readlink -f`.
+/// Resolve a path to its canonical absolute form via `readlink -f` (E-14).
 ///
 /// argv, not a shell string: `--out` is user input and must never reach `sh`.
+///
+/// Total. `readlink -f` prints nothing and exits 1 when a parent component does
+/// not exist, and an empty `--out` would send every patch to `/N.patch` and
+/// print a `git apply /N.patch` line naming a file that was never written. The
+/// requested path is always a better answer than the empty string, so an
+/// unresolvable path is returned unchanged rather than collapsing to the
+/// filesystem root.
 pub fn absolute(path: &str) -> String {
     let (_, out) = run("readlink", &["-f", path]);
-    String::from_utf8_lossy(&out).trim().to_owned()
+    let resolved = String::from_utf8_lossy(&out).trim().to_owned();
+    if resolved.is_empty() {
+        path.to_owned()
+    } else {
+        resolved
+    }
 }
 
 /// Resolve a provider CLI to the real binary behind it.
@@ -132,4 +144,40 @@ pub fn absolute(path: &str) -> String {
 /// `Provider::name`, never user input.
 pub fn resolve_binary(name: &str) -> String {
     sh_line(&format!("readlink -f \"$(command -v {name})\""))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{absolute, read_text, sh_line};
+    use std::path::Path;
+
+    /// E-14: an unresolvable `--out` comes back unchanged, never empty.
+    ///
+    /// `readlink -f` prints nothing and exits 1 when a parent component is
+    /// missing. Returning that empty string would send every patch to
+    /// `/N.patch` and print a `git apply` line for a file that was never
+    /// written — the failure this test exists to prevent.
+    #[test]
+    fn absolute_is_total() {
+        assert_eq!(absolute("/proc/1/nope/out"), "/proc/1/nope/out");
+        assert_eq!(absolute(""), "");
+        assert!(!absolute("/proc/1/nope/out").is_empty());
+        // A resolvable path really is canonicalised.
+        assert_eq!(absolute("/tmp/."), "/tmp");
+    }
+
+    /// A missing file reads as empty rather than panicking (E-7, E-8).
+    #[test]
+    fn read_text_tolerates_absence() {
+        assert_eq!(read_text(Path::new("/nonexistent/log/file")), "");
+    }
+
+    /// Non-UTF-8 bytes are replaced, not fatal (E-7).
+    #[test]
+    fn output_is_lossy_not_fatal() {
+        let out = sh_line("printf 'ok\\xff'");
+        assert!(out.starts_with("ok"));
+    }
 }

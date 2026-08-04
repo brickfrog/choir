@@ -176,11 +176,17 @@ and `CapEff` is `0000000000000000`, so the setuid `sudo` visible in the read-onl
 exits.
 
 **The verify jail is genuinely sealed.** It gets no network flag at all, which means
-nsjail's default:
-its own empty network namespace. Verified: only `lo`, no route, no DNS, no TCP, no UDP,
-and a service bound to the host's own `127.0.0.1` is unreachable. It sees no host
-abstract unix sockets and cannot open your X display. That is the jail your untrusted
-patch runs in.
+nsjail's default: its own empty network namespace. Verified, and now asserted by a test
+that runs on every `cargo test`: exactly one interface and it is `lo`, an empty routing
+table, no `/cred`, no `/prov`, no `/patches`, no `/etc/resolv.conf`, no `/sys`. A service
+bound to the host's own `127.0.0.1` is unreachable, it sees no host abstract unix sockets,
+and it cannot open your X display. That is the jail your untrusted patch runs in.
+
+**What the verify jail does not bound is resources.** It shares the common prefix, so it
+inherits `--disable_rlimits`, and no cgroup cap replaces it. Inside its `--timeout` window
+an untrusted patch can fork-bomb, exhaust memory, or fill the filesystem — and its log is
+redirected by the *host* shell, so log growth is not jailed at all. The deadline is the
+only bound. Lower `--timeout` if you are testing patches you have not read.
 
 **The work and audit jails reach the whole internet, with no allowlist.** A
 subscription CLI has to reach its vendor, so those jails get networking through
@@ -232,16 +238,27 @@ access token expires roughly every five hours, so a long run — or N jails refr
 once — could plausibly log you out on the host. Testing that means letting a jail
 refresh against the vendor with a real credential, and nobody has done it.
 
-**If you Ctrl-C Choir, the jails keep running.** They are started through an Erlang
-port, which puts them in a different session from Choir itself, so a terminal's SIGINT
-does not reach them — verified: after Ctrl-C, and again after `kill -9` on Choir, the
-jails were still alive with the credential inside. What saves you is `--timeout`: every
-jail carries `nsjail --time_limit`, the kernel enforces it, and an abandoned jail kills
-itself and its entire process tree when it expires. Verified against a process tree
-that traps and ignores TERM, INT and HUP: dead on schedule, zero survivors, and nsjail
-leaves 0 bytes on disk. So there is no cleanup command because there is nothing to
-clean, but there *is* something to wait for — up to `--timeout`, which defaults to 20
-minutes. Lower it if that window bothers you.
+**If you Ctrl-C Choir, the jails keep running.** Not for the reason you might guess:
+POSIX requires a non-interactive shell to set SIGINT and SIGQUIT to *ignored* for any
+command it starts asynchronously, and Choir starts every jail as `( nsjail … ) &` inside
+one `sh -c`. nsjail inherits that disposition, so a terminal's Ctrl-C reaches Choir and
+not the jails. Measured on this machine: a command backgrounded inside `sh -c` carries
+`SigIgn: 0000000001000006` — bits 0x2 and 0x4, SIGINT and SIGQUIT.
+
+What saves you is `--timeout`: every jail carries `nsjail --time_limit`, the kernel
+enforces it, and an abandoned jail kills itself and its entire process tree when it
+expires. Verified against a process tree that traps and ignores TERM, INT and HUP: dead
+on schedule, zero survivors, and nsjail leaves 0 bytes on disk. So there is nothing to
+clean up after the jails — but there *is* something to wait for, up to `--timeout`, which
+defaults to 20 minutes. Lower it if that window bothers you.
+
+**Choir's own cleanup does not survive Ctrl-C, though.** The scratch directory is removed
+on the last line of a normal run, so killing Choir mid-run leaves it behind — holding one
+copy of the OAuth credential per jail still in flight. Choir now unlinks each jail's
+credential the moment its wave returns, which shrinks that window to the time a jail is
+actually using the token, but a Ctrl-C during a wave still strands the copies belonging to
+that wave. They are mode 0600 inside a `mktemp -d` that is 0700, so this is persistence,
+not disclosure. `rm -rf` the run directory that Choir printed on its first line.
 
 **The provider runs with its own permission prompts disabled**
 (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`),
@@ -262,7 +279,11 @@ executing them does not require trusting them.
 
 The audit jail is one more language model, with the same network access as a work jail.
 Its commentary is prose printed after the results, it has no verdict, and it is not a
-security review.
+security review. Note also that it reads `/patches` — text written by the work-jail
+models — so a work jail can address the audit model directly through its own patch. The
+audit jail holds the same token and the same egress the work jails already have, so this
+grants nothing new; it is a channel between models that the isolation story otherwise
+would not mention.
 
 **Against the status quo:** today that same token runs on your host, beside every
 repository you own and your SSH keys. Choir shrinks the worst case to one token plus
