@@ -1,0 +1,18 @@
+[package]
+name = "choir"
+description = "Run one coding task N times in parallel in sandboxed jails, then test every patch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "choir"
+path = "src/main.rs"
+
+[dependencies]
+choir-core = { path = "../choir-core" }
+
+[lints]
+workspace = true

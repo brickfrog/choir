@@ -10,16 +10,18 @@ flowchart TD
   T --> A["wave 3: audit jail, --use_pasta, repo and patches read-only<br/>prose printed after the table is already on screen"]
 ```
 
-Six nodes is the whole program. The three waves are three literal blocks of code in `main`,
-not a stage type, not a list of stages, and not a pipeline.
+Six nodes is the whole program. The three waves are three functions in
+`crates/choir/src/run.rs`, called in order — not a stage type, not a list of stages, and
+not a pipeline.
 
 A wave is one blocking shell-out. Choir builds one string containing one
 `( nsjail … ; echo $? > <slot>.rc ) &` line per jail and a final `wait`, and runs it as
 `/bin/sh -c <string>`. Measured: three jails whose longest is 4 s complete in 4.01 s wall,
 not the 10 s serial sum, with exit codes 0, 5 and 137 in the right files and zero orphans.
-Choir itself is still one BEAM process making blocking external calls — no `spawn`, no
-`send`, no concurrency library. The one POSIX-sh detail that must not be "simplified":
-`A; B &` backgrounds only `B`, so the compound is parenthesised. Without the parentheses
+Choir itself is still one single-threaded process making blocking external calls — no
+threads, no async runtime, no concurrency library. The one POSIX-sh detail that must not
+be "simplified": `A; B &` backgrounds only `B`, so the compound is parenthesised. Without
+the parentheses
 every jail runs in the foreground and the identical wave took 10.04 s — the full serial
 sum — instead of 4.02 s.
 
@@ -51,10 +53,11 @@ words. `/cmd` is mounted outside `/repo`, so it cannot appear in a patch.
 
 ## Dependencies
 
-`gleam.toml` names five packages and no others: `gleam_stdlib` 1.0.3, `shellout` 1.8.0,
-`simplifile` 2.6.0, `argv` 1.1.0, and `gleeunit` 1.11.0 (dev). `filepath` arrives
-transitively behind `simplifile`. Every version was read off hex; they are the latest
-releases, not pins, and Choir asserts nothing about them at runtime.
+`Cargo.toml` declares one workspace with two crates and **no third-party runtime
+dependencies at all**: `choir-core` is pure `std`, and `choir` depends only on
+`choir-core`. `proptest` is a dev-dependency of the core, used by the property tests and
+absent from the shipped binary. The release profile is `opt-level = "z"`, LTO, one
+codegen unit, `panic = "abort"`, stripped — 377 KB linking `libc` and `libgcc_s`.
 
 ## Components
 
@@ -68,14 +71,16 @@ function, and the resolved path is the versioned ELF the function would have run
 Round-robin is the whole fault-tolerance story: a rate-limited Claude degrades a run
 instead of ending it.
 
-**The shell-out capture site.** One function running an argv through `shellout.command`,
-which returns `Ok(output)` on a zero exit and `Error(#(code, output))` otherwise — the
-success case carries no exit code, so anything needing a verdict reads a `.rc` file. The
-UTF-8 guard is applied exactly once: coerce through
-`@external(erlang, "erlang", "iolist_to_binary")` to a `BitArray` and run
-`bit_array.to_string`. Without it one invalid byte in provider output crashes Choir with
-`erlang:error(Badarg)` inside `gleam/string`; shellout's `Result(String, _)` is a lie at the
-FFI boundary. That attribute names a real Erlang BIF, so there is no FFI source file.
+**The shell-out capture site.** One function in `crates/choir/src/sys.rs` running an argv
+through `std::process::Command::output`, returning the exit code and **stdout only**.
+Merging stderr would corrupt patches, because `git diff` output becomes a patch byte for
+byte and git warns on stderr. A program that fails to spawn reports 255, matching
+nsjail's own code for a failed mount. Anything needing a verdict reads a `.rc` file,
+since a wave's exit code belongs to the wave, not to any one jail.
+
+The UTF-8 problem the Gleam version needed an Erlang BIF for does not exist here:
+provider output is read as bytes and rendered with `String::from_utf8_lossy`, so one
+invalid byte is replaced rather than crashing the run.
 
 **The jail argv builder.** Two literal argv templates — provider and verify — whose only
 holes are strings: the timeout, the slot path, the repo mount, the provider binary path
@@ -97,9 +102,9 @@ Each arm also yields its `-R <resolved binary>:/prov/<name>` mount and its
 `-E CLAUDE_CONFIG_DIR=/cred` or `-E CODEX_HOME=/cred`. A third provider is an edit to that
 `case` by someone who has run the new CLI. No provider record, no capability table.
 
-**The wave runner.** Builds the script string, makes one blocking shell-out, reads the N `.rc`
-files with `simplifile`. Nothing is written to disk: the script is one argv element to
-`/bin/sh -c`. It is the only component that grew in this design.
+**The wave runner.** Builds the script string, makes one blocking shell-out, reads the N
+`.rc` files. Nothing is written to disk: the script is one argv element to `/bin/sh -c`.
+The script itself is assembled without a temporary allocation per jail.
 
 **Slot prep.** `mkdir <slot>/{tmp,cred}`, write `<slot>/cmd`, copy the one credential file.
 No parameters and no branches, so it cannot grow a `needs_cred` boolean; the
@@ -211,11 +216,12 @@ discards the child's exit code. Rejected: backgrounding nsjail and polling — r
 code, it drags the poll-count deadline back, and a detached jail is reparented to the systemd
 user manager and outlives Choir with the credential inside it.
 
-**No concurrency inside Choir, and no library that offers any.** Rejected: BEAM fan-out with
-`spawn_unlinked` and monitors, measured at 58 lines, plus `gleam_erlang` as a sixth
-dependency. Rejected: `gleam_otp`; 1.2.0 is still the latest on hex and has no `task` module
-and no generic supervisor. The conclusion is unchanged from the previous design but the
-reason is new: the shell fans out and `wait` collects, so there is nothing to spawn.
+**No concurrency inside Choir, and no library that offers any.** Rejected: threads, and
+rejected: an async runtime — `tokio` would be a dependency tree larger than the whole
+program to await processes the shell already waits on. The shell fans out and `wait`
+collects, so there is nothing to spawn. `std::process` plus `/bin/sh` is the entire
+concurrency story, and it is measured above at 4.01 s for three jails whose serial sum
+is 10 s.
 
 **A failure is an exit code and the jail's log, and nothing interprets either.** 137 is
 `FAIL(137)`; a deadline kill and a test that exits 137 by itself are the same code and both
@@ -244,7 +250,7 @@ makes blocking structurally impossible rather than merely forbidden.
 ## Failure model
 
 **No supervision, because there is nothing to supervise.** No actor, no supervisor, no
-`gleam_otp`, no `spawn`. Supervisors restart long-lived services that hold state; Choir holds
+task pool. Supervisors restart long-lived services that hold state; Choir holds
 none, and restarting a jail that just spent twelve minutes of paid provider time is worse than
 reporting the failure — that is how v2 retried decomposition seven times against its own
 validator.
@@ -267,7 +273,7 @@ jail's last log line, and that is the row. Anything that can refuse to start the
 smallest version of the gate that killed v2.
 
 **Choir killed mid-run does not clean up, and does not need to.** The jails are started
-through an Erlang port, which `setsid`s, so a terminal's SIGINT reaches Choir and not the
+through `/bin/sh`, in their own session, so a terminal's SIGINT reaches Choir and not the
 jails — verified that they survive both Ctrl-C and `kill -9` on Choir. They then die on their
 own at `--time_limit`, taking their whole process tree with them, and leave 0 bytes on disk.
 Rejected: a startup sweep, an exit trap, a `--cleanup` subcommand, a PID file. Every one is a

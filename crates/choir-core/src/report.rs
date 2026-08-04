@@ -1,0 +1,125 @@
+//! Table rendering.
+//!
+//! Implements contract items C-22 … C-26 of `docs/spec.md`. This is the entire
+//! user interface and the entire selection mechanism: Choir prints rows in jail
+//! order and a `git apply` line per passing patch, and does not rank, sort, or
+//! recommend. Every available total order is wrong somewhere obvious —
+//! "smallest diff" rewards deleting the failing test.
+
+use crate::config::Provider;
+use crate::verdict::Verdict;
+
+/// Column header for the results table.
+pub const HEADER: &str = "JAIL PROVIDER  PATCH    TESTS         LAST LINE FROM PROVIDER";
+
+const COL_JAIL: usize = 5;
+const COL_PROVIDER: usize = 10;
+const COL_PATCH: usize = 9;
+const COL_TESTS: usize = 14;
+
+/// One finished attempt, ready to render.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    /// Jail index. Rows print in this order (C-25).
+    pub index: usize,
+    /// The provider that ran this jail.
+    pub provider: Provider,
+    /// Patch size in bytes. Exists to tell `0 B` from not-`0 B`.
+    pub bytes: usize,
+    /// The verdict.
+    pub verdict: Verdict,
+    /// Last non-blank line of the jail's log.
+    pub last_line: String,
+}
+
+/// Split a byte count into whole and tenths-of-KiB parts (C-22, E-10).
+///
+/// The obvious `bytes * 10 / 1024` overflows near `usize::MAX`; dividing first
+/// and scaling only the remainder cannot. Kept separate from [`size_label`] so
+/// that Kani can reach the arithmetic without modelling string formatting.
+/// Proved overflow-free, with `frac < 10`, by P-2.
+#[must_use]
+pub const fn kib_parts(bytes: usize) -> (usize, usize) {
+    (bytes / 1024, (bytes % 1024) * 10 / 1024)
+}
+
+/// Trailing spaces needed to set `text_len` in a column `column` wide (E-11).
+///
+/// Always at least one, so adjacent columns never run together when a value
+/// overflows its column. `saturating_sub` is load-bearing: `column - text_len`
+/// on `usize` wraps to about 18 quintillion when the value is longer than the
+/// column, and `" ".repeat` of that aborts the process. Kept separate from
+/// [`pad`] for the same reason as [`kib_parts`]. Proved by P-3.
+#[must_use]
+pub const fn fill_width(text_len: usize, column: usize) -> usize {
+    let slack = column.saturating_sub(text_len);
+    if slack < 1 {
+        1
+    } else {
+        slack
+    }
+}
+
+/// Render a byte count (C-22, E-10).
+#[must_use]
+pub fn size_label(bytes: usize) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let (whole, frac) = kib_parts(bytes);
+    format!("{whole}.{frac} KB")
+}
+
+/// Left-align `text` in a column at least `width` wide (E-11).
+#[must_use]
+pub fn pad(text: &str, width: usize) -> String {
+    let fill = fill_width(text.chars().count(), width);
+    let mut out = String::with_capacity(text.len() + fill);
+    out.push_str(text);
+    for _ in 0..fill {
+        out.push(' ');
+    }
+    out
+}
+
+/// Render one table row (C-23).
+#[must_use]
+pub fn row(entry: &Row) -> String {
+    let line = format!(
+        "{}{}{}{}{}",
+        pad(&entry.index.to_string(), COL_JAIL),
+        pad(entry.provider.name(), COL_PROVIDER),
+        pad(&size_label(entry.bytes), COL_PATCH),
+        pad(&entry.verdict.label(), COL_TESTS),
+        entry.last_line
+    );
+    line.trim_end().to_owned()
+}
+
+/// The `git apply` lines for the passing patches, in jail order (C-26).
+#[must_use]
+pub fn apply_lines(rows: &[Row], out_dir: &str) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.verdict.passed())
+        .map(|r| format!("  git apply {out_dir}/{}.patch", r.index))
+        .collect()
+}
+
+/// The last non-blank line of a log, trimmed (E-8, E-9).
+///
+/// Pure: the shell reads the file, this decides what the row shows. A missing,
+/// empty, or all-blank log yields the empty string.
+#[must_use]
+pub fn last_line(log: &str) -> String {
+    log.lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The heading printed above the audit prose.
+#[must_use]
+pub fn audit_heading(provider: Provider) -> String {
+    format!("audit ({provider} — model commentary, unverified, no effect on the table above)")
+}

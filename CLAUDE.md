@@ -1,5 +1,13 @@
 # Choir Repo Rules
 
+> **v4 note.** The owner directed the Rust rewrite and said to disregard the v3 limits.
+> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 2,164 (1,256
+> production, 908 test). The v3 document said that number "may never be edited upward by
+> an agent" — so this edit is recorded as the owner's decision, not an agent's judgement.
+> The postmortem below is unchanged, because none of it stopped being true.
+
+## Why this file exists
+
 v2 had a CLAUDE.md with a section titled "Stop Building Elaborate Machinery". It contained
 "default to the smallest change that solves an observed user problem", "complexity must pay
 rent immediately", and "optimize for deletion and simplification". That codebase reached
@@ -13,49 +21,51 @@ production caller, and therefore "paid rent". A 60-line header comment pre-rebut
 alternatives. That is what an agent produces when you give it a judgement call: a better
 argument, not less code.
 
-What is different here: one number, two CI checks, and a list of questions a reviewer answers
-yes or no in five seconds without reading the diff's justification. Nothing below asks anyone to
-decide whether something is warranted.
+So nothing below asks anyone to decide whether something is warranted. Every rule is a command
+that prints a number or a list, and a reviewer answers yes or no in five seconds without reading
+the diff's justification.
 
-## The number
+## The numbers
 
-**600.** `find src test -type f | xargs cat | wc -l` — every file under `src/` and `test/`,
-whatever its extension — must be under 600. CI fails otherwise. No exemption mechanism, no
-per-file waiver, no directory that does not count.
+Two budgets, because v4 buys correctness with tests and a rule that taxes tests would delete the
+thing that makes the rewrite worth having.
 
-It counts every file, not `*.gleam`, because `src/choir_ffi.erl` is otherwise a hole big enough
-to put a state machine through.
+**1,500 — production.** `find crates -name '*.rs' -path '*/src/*' | xargs cat | wc -l`.
+Currently 1,256, leaving about 240 lines of headroom.
 
-This number may be edited downward. It may never be edited upward by an agent. The measured
-implementation is 503 lines — 374 production, 129 test — leaving about 95 lines of headroom.
+**Tests are unbudgeted,** but only under `crates/*/tests/` and `#[cfg(kani)]`. A test directory
+is not a place to park a subsystem: anything under `tests/` that is not a `#[test]`, a
+`proptest!`, or a fixture for one counts against the production budget.
 
-It was 400, then 300, and both were wrong, because both were arithmetic done by agents that had
-never compiled Gleam. The 300 counted ten components and omitted every category around them:
-imports, type declarations, `main`, and the blank line `gleam format` forces between every
-definition — 81 lines nobody budgeted. Reaching 300 for the specified behaviour would have meant
-deleting `--providers` and the round-robin, which is the dual-subscription feature this program
-exists to provide. A budget that can only be met by deleting the product is a wrong budget, and
-the owner said so.
+Both may be edited downward by anyone. Neither may be edited upward by an agent.
 
-What did work: the number forced that conversation instead of letting 493 lines land silently.
-That is the entire job. 600 is still 0.37% of v2, and every single v2 subsystem individually
-exceeded it.
+## The four CI checks
 
-## The two CI checks
+```sh
+cargo test --workspace                                 # 1
+cargo clippy --workspace --all-targets -- -D warnings  # 2
+cargo kani -p choir-core                               # 3
+grep -rE 'std::(process|fs|env|io|time|net|thread)' crates/choir-core/src/   # 4: must be empty
+```
 
-1. The line count above.
-2. One run of the full product against a repository that is not Choir, with the command and its
-   printed table pasted into the PR body.
+Check 4 is the whole architecture in one grep. `choir-core` decides everything and touches
+nothing; `choir` touches everything and decides nothing. If that grep ever matches, the purity
+boundary is gone, the Kani proofs stop meaning anything, and the decision surface is no longer
+testable without a jail.
 
-There are exactly two. Do not add a third. v2's only mechanically enforced rule was an
-architectural layering lint; it held perfectly and directly caused 7,594 lines of
-package-splitting refactors (commits `48c2da54` and `877aa7b9`). Enforcing shape produces more
-shape. Enforcing size produces less code. And v2's conformance subsystem was 20,856 lines that
-CI never ran — a check nobody runs is worse than no check.
+Plus the one from v3, which is still the only check that has ever caught a real defect:
 
-Check 2 carries more weight than it looks. v2's take path — the only code that ever ran a
+**5. One run of the full product against a repository that is not Choir, with the command and
+its printed table pasted into the PR body.**
+
+Check 5 carries more weight than it looks. v2's take path — the only code that ever ran a
 provider in a sandbox and verified a patch — was 6% of the tree and was never once run against a
-foreign repository. Every quality signal the project had came from its own gates.
+foreign repository. Every quality signal that project had came from its own gates.
+
+Do not add a sixth. v2's only mechanically enforced rule was an architectural layering lint; it
+held perfectly and directly caused 7,594 lines of package-splitting refactors (commits
+`48c2da54` and `877aa7b9`). Enforcing shape produces more shape. And v2's conformance subsystem
+was 20,856 lines that CI never ran — a check nobody runs is worse than no check.
 
 ## Reviewer questions
 
@@ -63,30 +73,35 @@ Answer from the diff alone. Any yes is a rejection.
 
 | Question | What it would have stopped |
 | --- | --- |
-| Does this take `src/` plus `test/` over 600 lines? | Everything below it. |
-| Does anything Choir wrote survive its exit, other than files under `--out`? The scratch `mktemp -d` is deleted before the last line of `main`. | The control store, the artifact store, `durable_shape.mbt` (5,131 lines, one caller), and the 25,071 lines across 45 files whose names alone say storage / witness / snapshot / lease / resume. |
+| Does this take `crates/*/src` over 1,500 lines? | Everything below it. |
+| Does it add an import of `std::process`, `std::fs`, `std::env`, `std::io`, `std::time`, `std::net`, or `std::thread` to `choir-core`? | The purity boundary, and with it every proof and most of the test suite. |
+| Does it add a `panic!`, `unwrap`, `expect`, `todo!`, `unimplemented!`, or a slice index to either crate? | All of them are denied by the workspace lints. A panic in a wave runner strands paid jails. |
+| Does anything Choir wrote survive its exit, other than files under `--out`? The scratch `mktemp -d` is deleted before `execute` returns. | The control store, the artifact store, `durable_shape.mbt` (5,131 lines, one caller), and the 25,071 lines across 45 files whose names alone say storage / witness / snapshot / lease / resume. |
 | Does it add a retry, backoff, lease, fence, deferral, heartbeat, queue, poll loop, or capacity model? | The 9,166-line lease/fencing/capacity/allowance chain that consumed ~32 of v2's final ~80 commits, five of whose commit subjects appear twice verbatim because the work was redone. |
-| Does the diff add a branch that ends the run early, skips a jail, or changes a patch's bytes? Exactly two such branches are allowed to exist, and both are mechanical facts about the patch rather than judgements of it: a zero-byte patch gets no verify jail, and a patch `git apply` rejects gets none either, because it has no tree to test. Count `return`, `panic`, `Error`, `todo`, and any `case` arm that omits work — an auth preflight and a dirty-tree check are both just branches. | `PartOwnershipViolation`, which discarded completed provider work, and the 2,562-line "fix: bind audit context to audited trees". Not one Goal in v2's production logs died because the work failed; every one died to a Choir gate. |
-| Does it add a third nsjail argv template, a mount-set parameter, a jail-profile type, a seccomp policy, a cgroup flag, a network flag, or a config file for jail options? | nsjail has roughly forty flags where the previous runtime had five. Choir contains exactly two literal argv templates — provider and verify — and their only holes are the timeout, the slot path, the repo mount, the provider binary path and name, and the credential env var. A list of mounts becomes a named mount set, then a jail profile, then a config file. |
+| Does the diff add a branch that ends the run early, skips a jail, or changes a patch's bytes? Exactly two such branches are allowed, both mechanical facts about the patch rather than judgements of it: a zero-byte patch gets no verify jail, and a patch `git apply` rejects gets none either. Count `return`, `panic`, `Err`, `todo!`, and any `match` arm that omits work — an auth preflight and a dirty-tree check are both just branches. | `PartOwnershipViolation`, which discarded completed provider work, and the 2,562-line "fix: bind audit context to audited trees". Not one Goal in v2's production logs died because the work failed; every one died to a Choir gate. |
+| Does it add a third nsjail argv template, a mount-set parameter, a jail-profile type, a seccomp policy, a cgroup flag, a network flag, or a config file for jail options? | nsjail has roughly forty flags where the previous runtime had five. `jail.rs` contains exactly two templates — provider and verify — and their only holes are the timeout, the slot path, the run directory, the repo mount, the provider binary path and name, and the credential env var. A list of mounts becomes a named mount set, then a jail profile, then a config file. |
 | Does it add a host process that outlives the command, a socket, a server, an MCP endpoint, a TUI, a terminal multiplexer, or a second subcommand? | v1's whole Zellij orchestration layer; `src/mcp` + `src/uds` + two JS sidecars (~4,900 lines); `src/bin` at 12,006 lines carrying ten subcommands. |
-| Does it read any file other than these six — the tree at `--repo`, the scratch `mktemp -d`, a patch under `--out`, the one provider credential, the one provider binary, and `/dev/stdin` when the instruction is `-`? | `src/config` and its TOML parser, the beads database, and the whole class of work where a new behaviour needs a key, which needs validation, which needs a rejection taxonomy. |
-| Does it name a provider version, a model id, or a built-in agent name? | `claude_driver.mbt` (756) and `surface_probe.mbt` (477 lines with an `exact_version` field). Claude's built-in agent roster changed between two runs of the same binary, and the installed CLI moved 2.1.220 → 2.1.221 while these documents were being written. |
-| Does it check Choir's own shape or its host — a linter, conformance suite, doctor, schema, migration, version check, or a probe for what nsjail or the host supports? | `choir_lint` (3,617), conformance (20,856, never run by CI), `src/migration` (4,974, zero production callers), doctor (529). None of it is reachable by a user running the product. |
-| Does it parse provider output beyond taking the last line of the jail's log? | `src/harness` + `src/exec/provider_host` (10,528 lines). A Claude session blocked on a permission prompt exits 0 with `is_error: false` and `subtype: "success"`, so the self-report is worthless anyway. |
-| Does it add a third string that Choir sends to a model, or interpolate anything into the audit prompt? | The prompt package, its templates, and the generated Conductor prompt — the seed of every "just one more instruction to the model" fix. Choir sends two strings: the user's instruction, verbatim, and one fixed audit sentence. Both travel as the contents of `/cmd`, never as shell tokens. |
+| Does it read any file other than these six — the tree at `--repo`, the scratch `mktemp -d`, a patch under `--out`, the one provider credential, the one provider binary, and stdin when the instruction is `-`? | `src/config` and its TOML parser, the beads database, and the whole class of work where a new behaviour needs a key, which needs validation, which needs a rejection taxonomy. |
+| Does it name a provider version, a model id, or a built-in agent name? | `claude_driver.mbt` (756) and `surface_probe.mbt` (477 lines with an `exact_version` field). Claude's built-in agent roster changed between two runs of the same binary. |
+| Does it check Choir's own shape or its host — a linter, conformance suite, doctor, schema, migration, version check, or a probe for what nsjail or the host supports? | `choir_lint` (3,617), conformance (20,856, never run by CI), `src/migration` (4,974, zero production callers), doctor (529). None of it was reachable by a user running the product. |
+| Does it parse provider output beyond taking the last non-blank line of the jail's log? | `src/harness` + `src/exec/provider_host` (10,528 lines). A Claude session blocked on a permission prompt exits 0 with `is_error: false` and `subtype: "success"`, so the self-report is worthless anyway. |
+| Does it add a third string that Choir sends to a model, or interpolate anything into `AUDIT_PROMPT`? | The prompt package, its templates, and the generated Conductor prompt — the seed of every "just one more instruction to the model" fix. Choir sends two strings: the user's instruction, verbatim, and one fixed audit sentence. Both travel as the contents of `/cmd`, never as shell tokens. |
 | Does it add a second function that starts a jail, or a second place that builds a provider command line? | v2 shipped `direct_take` (2,820 lines) while still carrying 16,697 lines doing the same job. |
-| Does `gleam.toml` name a package other than `gleam_stdlib`, `shellout`, `simplifile`, `argv`, `gleeunit`? | An actor acquires state, then a lifecycle enum, then a transition validator. A wave is one blocking `sh -c` that backgrounds N jails and `wait`s, so there is nothing to fan out on the BEAM. `gleam_otp` and `gleam_erlang` are both absent, so there is no `spawn` and no `send` to reach for. |
-| Does the tree contain more than 3 `pub type` declarations? `grep -rc '^pub type' src/` | `src/workflow`'s 110 public enums; 807 public types across v2's 38 packages. |
-| Does the commit add more than 100 net lines, whatever the prefix says? | All 28 v2 `fix:` commits over 500 lines, including a 1,140-line repository-size preflight shipped as a bugfix. |
+| Does `Cargo.toml` add a runtime dependency? `proptest` is the only third-party crate in the tree and it is a dev-dependency. | An async runtime is a dependency tree larger than the program, to await processes the shell already waits on. |
+| Does the tree contain more than 8 public types? `grep -rc '^pub \(struct\|enum\)' crates/*/src/` | `src/workflow`'s 110 public enums; 807 public types across v2's 38 packages. |
+| Does a new behaviour land without a `C-*` or `E-*` entry in `docs/spec.md` and a test naming it? | Untraceable code. The spec is the reason a reviewer can tell a feature from a whim. |
+| Does the commit add more than 200 net lines, whatever the prefix says? | All 28 v2 `fix:` commits over 500 lines, including a 1,140-line repository-size preflight shipped as a bugfix. |
 
 ## Process
 
+- Spec first. A behaviour that is not in `docs/spec.md` does not get written; a spec item
+  without a test does not get merged. Both are cheap to check and neither is a judgement call.
 - An agent may add lines to an existing function and functions to an existing file. Creating a
-  new file under `src/` or `test/` requires the owner to have named that file first.
+  new file under `crates/*/src/` requires the owner to have named that file first.
 - Any change that is not a single-function edit must state, before the diff: (a) the verbatim
-  command a user ran, (b) its verbatim output, (c) the lines added and the new total against 600.
-  Missing any of the three is a refusal without discussion. The refusal is arithmetic, not
-  judgement.
+  command a user ran, (b) its verbatim output, (c) the lines added and the new production total
+  against 1,500. Missing any of the three is a refusal without discussion. The refusal is
+  arithmetic, not judgement.
 - If a PR asserts that a library, flag, or API exists, it must include the command that showed
   it. A dependency or flag that does not exist is a failure mode this project has already had —
   and so is a flag that exists and lies: `nsjail --rlimit_fsize max` reports a `ulimit -f` of
@@ -94,18 +109,18 @@ Answer from the diff alone. Any yes is a rejection.
 - `fix:` gets no allowance. In v2, `fix:` outgrew `feat:` 42,310 lines to 40,587. Every rule
   above applies identically to a commit repairing a crash you just watched happen.
 - Delete on sight. If a function's only caller is a test, delete both.
-- Formatting is `gleam format`. There are no style rules in this file.
+- Formatting is `cargo fmt`. There are no style rules in this file.
 
 ## Commits and PRs
 
 Semantic prefix (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`/`chore:`), imperative subject
 ≤72 chars, no body unless it carries non-obvious context. Never add `Generated with`,
-`Co-Authored-By: Claude`, or robot-emoji footers. PR body: what changed, the line total against
-600, and the pasted output of check 2. Nothing else.
+`Co-Authored-By: Claude`, or robot-emoji footers. PR body: what changed, the production line
+total against 1,500, and the pasted output of check 5. Nothing else.
 
 ## The tree
 
-`src/`, `test/`, `docs/`, `gleam.toml`, `manifest.toml`, `README.md`, `CLAUDE.md`, `LICENSE`,
+`crates/`, `docs/`, `Cargo.toml`, `Cargo.lock`, `README.md`, `CLAUDE.md`, `LICENSE`,
 `.gitignore`. Nothing else is tracked. v1 and v2 both accumulated a `.choir/` of settings, logs
 and prompts that outlived the code they configured; there is no such directory now and adding
 one is the first move of the thing this file exists to prevent.

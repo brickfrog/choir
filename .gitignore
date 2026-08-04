@@ -1,7 +1,9 @@
-build/
-*.beam
-*.ez
-erl_crash.dump
+/target
+**/*.rs.bk
+
+# Kani output
+/kani_output
+**/kani_output
 
 # Local tooling, not part of the project
 .claude/
@@ -10,5 +12,5 @@ erl_crash.dump
 .beads/
 .mcp.json
 
-# gleam export escript output
-/choir
+# Default patch output directory
+/choir-out

@@ -1,0 +1,17 @@
+[package]
+name = "choir-core"
+description = "Pure core of Choir: argv parsing, jail command lines, wave scripts, verdicts, and report formatting. No I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# N-2: the pure core has no third-party build dependencies.
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

@@ -57,15 +57,17 @@ anything. If you drive `claude` through a shell function that injects a token, n
 that Choir invokes the resolved binary directly and authenticates from the credential
 file alone.
 
-**3. Choir itself.** Gleam 1.18 on Erlang/OTP 29:
+**3. Choir itself.** Rust 1.85 or newer:
 
 ```sh
-gleam export escript && install -m755 choir ~/.local/bin/choir
+cargo build --release && install -m755 target/release/choir ~/.local/bin/choir
 ```
 
-That is one 317 KB file. It is not statically linked — an escript needs `erl` on the
-machine that runs it, which you already have if you built it. Erlang is the only runtime
-dependency Choir adds to a host that already has nsjail, passt and a provider CLI.
+That is one 377 KB executable linking nothing but `libc` and `libgcc_s`. Choir adds
+**no runtime dependency at all** to a host that already has nsjail, passt and a
+provider CLI — no VM, no interpreter, no shared library you do not already have.
+
+`choir --help` prints the flag table below.
 
 ## Usage
 
@@ -74,6 +76,7 @@ choir "<instruction>" --test '<cmd>' [options]
 choir -  --test '<cmd>' [options]   <<'EOF'
 <instruction, as long as you like>
 EOF
+choir --help
 ```
 
 Run it from inside the repository you want worked on; `--repo` defaults to `.`. An
@@ -314,3 +317,43 @@ Deliberate, permanent, and not a roadmap:
 - **No streaming.** Output is captured per jail and reported at the end of the wave.
 - **No daemon, no server, no MCP, no TUI, no subcommands, no config file.** Everything
   happens between your Enter key and the exit code.
+
+## Building and verifying
+
+Choir is a two-crate Cargo workspace split on a purity boundary:
+
+```
+crates/choir-core   pure. argv -> Config, jail command lines, wave scripts,
+                    verdicts, table rows. No I/O, no process spawn, no clock.
+                    Zero third-party build dependencies.
+crates/choir        the effectful shell. Every syscall in the program lives
+                    in sys.rs; run.rs is the three waves in order.
+```
+
+The dependency runs one way. The core cannot perform I/O because it cannot name
+it, which is what makes the whole decision surface of the program testable
+without a jail, a provider, or a network — and formally provable in the places
+where Rust's fixed-width integers can bite.
+
+```sh
+cargo test --workspace                              # 54 tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo kani -p choir-core                            # 3 proof harnesses
+```
+
+`docs/spec.md` is the contract. Every test names the requirement it defends —
+`C-*` behavioural, `E-*` edge case, `P-*` proved property, `N-*` non-functional
+— so you can read a failure back to the sentence it broke.
+
+Three properties are **proved** rather than tested, because they are the places
+where porting arithmetic from a language with arbitrary-precision integers into
+one with wrapping `usize` silently introduces bugs: the provider rotation index
+is always in range, the KiB split never overflows, and column padding never
+underflows. Kani explores the entire `usize` domain for each.
+
+The isolation claims in *Safety* are nsjail's, not Choir's, so they are
+exercised rather than proved: `crates/choir/tests/sealed_jail.rs` runs a real
+verify jail and asserts that `/home`, `/root`, `/mnt`, `/var` and `/etc/shadow`
+are unreachable, that `NoNewPrivs` is 1 and `CapEff` is empty, and that three
+two-second jails finish in under four seconds rather than six. Those skip with a
+notice if nsjail is absent.
