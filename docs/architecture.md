@@ -3,11 +3,11 @@
 ```mermaid
 flowchart TD
   CLI["choir INSTRUCTION, with test, repo, n, providers, timeout, out"]
-  CLI --> W["wave 1: n work jails, nsjail with -N<br/>one blocking sh -c that backgrounds n jails and waits<br/>each jail edits its own repo copy through a rw bind mount"]
+  CLI --> W["wave 1: n work jails, nsjail with --use_pasta<br/>one blocking sh -c that backgrounds n jails and waits<br/>each jail edits its own repo copy through a rw bind mount"]
   W --> P["host git: add -A then diff --cached HEAD<br/>out/N.patch written before any verdict exists"]
-  P --> V["wave 2: one verify jail per patch, no -N, no network namespace<br/>host cp -a and git apply first, then your test command<br/>its exit code is the only verdict in the program"]
+  P --> V["wave 2: one verify jail per patch, no network flag, no namespace<br/>host cp -a and git apply first, then your test command<br/>its exit code is the only verdict in the program"]
   V --> T["table: one row per jail in index order,<br/>plus a git apply line per passing patch"]
-  T --> A["wave 3: audit jail, -N, repo and patches read-only<br/>prose printed after the table is already on screen"]
+  T --> A["wave 3: audit jail, --use_pasta, repo and patches read-only<br/>prose printed after the table is already on screen"]
 ```
 
 Six nodes is the whole program. The three waves are three literal blocks of code in `main`,
@@ -80,8 +80,10 @@ FFI boundary. That attribute names a real Erlang BIF, so there is no FFI source 
 **The jail argv builder.** Two literal argv templates — provider and verify — whose only
 holes are strings: the timeout, the slot path, the repo mount, the provider binary path
 and name, and the credential environment variable name. No mount-set parameter, no
-network boolean, no jail-profile type; `-N`, the four networking `/etc` mounts, `/prov`,
-`/cred` and `/patches` appear together or not at all, so there are two shapes, not a matrix.
+network boolean, no jail-profile type; `--use_pasta`, the four networking `/etc` mounts,
+`/prov`, `/cred` and `/patches` appear together or not at all, so there are two shapes, not
+a matrix. The `resolv.conf` the provider template mounts is one line written once per run
+into the run directory, not a template and not a parameter.
 
 **The two provider command lines.** Two arms of one `case`, written out, no model id and
 no version:
@@ -138,7 +140,8 @@ nsjail -Mo -q -t <timeout> --disable_rlimits
 A **provider jail** (the N work jails, and the audit jail) adds:
 
 ```
-  -N -R /etc/resolv.conf -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates
+  --use_pasta -R <run>/resolv.conf:/etc/resolv.conf
+  -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates
   -R <readlink -f provider>:/prov/<name> -R <run>/patches:/patches
   -B <slot>/cred:/cred -E CLAUDE_CONFIG_DIR=/cred        (or CODEX_HOME)
   -B <slot>/repo:/repo                                   (audit: -R <run>/repo:/repo)
@@ -276,13 +279,19 @@ kernel or namespace escape lands on the whole account. Nothing here is a hypervi
 Verified to hold, from inside a work jail: no `/home`, `/mnt`, `/root`, `/var`, `/run`, no
 `~/.ssh`, no other repository, no host process in `/proc`, no `/etc/shadow`; `/usr` and
 `/etc` read-only and not remountable; `CapEff 0000000000000000` and `NoNewPrivs 1`. Verified
-not to hold: `-N` places a provider jail in the host's network namespace verbatim —
-the whole internet with no filter, every service on the host's `127.0.0.1`, the LAN, and
-every host **abstract unix socket**, which on a desktop includes the X server (`xdpyinfo`
-opened display `:0` and `xwininfo` enumerated the host's windows from the exact command line
-above; `xdotool`, `import` and `scrot` are in the mounted `/usr`). Nothing unprivileged closes it:
-`--macvlan` needs root and `pasta` is not installed. The verify jail has none of it. The
-README states this in the user's words — do not maintain a second copy that can drift.
+not to hold: a provider jail reaches the whole internet with no egress filter, because
+nsjail has none and pasta adds none. `--use_pasta` gives the jail its own namespace with
+user-mode NAT, which closes what `-N` left open — measured against the command line above,
+a host loopback listener goes from `HOST-LOOPBACK-REACHED` to `Connection refused`, and
+`xdpyinfo`, which opened display `:0` under `-N`, gives *unable to open display ":0"*.
+Vendor reachability is unchanged: `api.anthropic.com` and `api.openai.com` return the same
+status codes either way, and twelve consecutive jails connected with no delay before the
+first request, so there is no readiness race to wait on. The one cost is DNS: the host's
+`/etc/resolv.conf` names `127.0.0.53`, which inside the namespace is the jail's own empty
+loopback, so Choir mounts a one-line `resolv.conf` naming pasta's gateway instead.
+`--macvlan`, the only other facility, needs root. The verify jail takes no network flag at
+all. The README states this in the user's words — do not maintain a second copy that can
+drift.
 
 The credential is a full-account OAuth token with a refresh token and no scoping, because
 neither vendor mints anything narrower, and the provider runs with its own permission checks

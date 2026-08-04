@@ -29,13 +29,17 @@ would take.
 
 Three things.
 
-**1. nsjail.** It is a distro package. On Arch and derivatives it is in `extra`:
+**1. nsjail and passt.** Both are distro packages. On Arch and derivatives both are in
+`extra`:
 
 ```sh
-pacman -S nsjail
+pacman -S nsjail passt
 ```
 
-Verified against 3.6. You also need unprivileged user namespaces enabled
+Verified against nsjail 3.6 and passt 2026_07_28. `passt` supplies `pasta`, which gives
+a provider jail its own network namespace; without it a jail that needs the network has
+to run in your host's namespace, which exposes your loopback services and your X server
+to the model. You also need unprivileged user namespaces enabled
 (`kernel.unprivileged_userns_clone=1`, which is the default on most desktop distros).
 That is the entire requirement: nsjail is a single executable with no daemon, no image,
 no kernel virtualisation and no state directory. It starts a jail in about 10 ms and
@@ -155,39 +159,47 @@ and `CapEff` is `0000000000000000`, so the setuid `sudo` visible in the read-onl
 `/usr` is inert. The scratch directory the jails write through is deleted before Choir
 exits.
 
-**The verify jail is genuinely sealed.** It gets no `-N`, which means nsjail's default:
+**The verify jail is genuinely sealed.** It gets no network flag at all, which means
+nsjail's default:
 its own empty network namespace. Verified: only `lo`, no route, no DNS, no TCP, no UDP,
 and a service bound to the host's own `127.0.0.1` is unreachable. It sees no host
 abstract unix sockets and cannot open your X display. That is the jail your untrusted
 patch runs in.
 
-**The work and audit jails have your entire network, and that is worse than it
-sounds.** A subscription CLI has to reach its vendor, so those jails run with `-N`.
-`-N` does not mean "restricted networking" — it disables the network namespace
-entirely, so the jail is in *your host's* network namespace, verbatim. That gets you
-three things at once, all verified from inside a work jail on this machine:
+**The work and audit jails reach the whole internet, with no allowlist.** A
+subscription CLI has to reach its vendor, so those jails get networking through
+`--use_pasta`: their own network namespace with user-mode outbound NAT. nsjail has no
+egress filter, and pasta does not add one. A model in a work jail can reach any host on
+the internet and send it anything it can read, which includes the contents of the
+repository you handed it and the credential you handed it.
 
-- The whole internet, with no allowlist of any kind. nsjail has no egress filter.
-- Every service on your host's `127.0.0.1` and everything on your LAN. Local databases,
-  local model servers, your router's admin page.
-- Every **abstract unix socket** on the host, because those are scoped by the network
-  namespace and not by the filesystem. On a desktop that includes your X server. From
-  the exact work-jail command line, `xdpyinfo` opened display `:0` and `xwininfo -root
-  -children` enumerated the host's open windows by title. `xdotool`, `import`, `scrot`
-  and `curl` are all present in the read-only `/usr` that Choir mounts. A model can
-  enumerate your open windows, screenshot your screen, and type into your X11
-  applications.
+**What pasta does close**, both verified from the exact work-jail command line on this
+machine:
 
-Do not read that as "so the jail is pointless". The same command line still cannot see
-your home directory, your SSH keys, or any repository other than the one you named.
-But the network flag is the one deliberate hole in this design and it is a big one.
+- Your host's `127.0.0.1`. A host listener that a `-N` jail reached — it printed
+  `HOST-LOOPBACK-REACHED` — is `Connection refused` under pasta. Local databases, local
+  model servers, and anything else bound to loopback are out of reach.
+- Every **abstract unix socket** on the host, which are scoped by network namespace
+  rather than by the filesystem. On a desktop that includes your X server. Under `-N`,
+  `xdpyinfo` opened display `:0` and `xwininfo -root -children` enumerated host windows
+  by title, with `xdotool`, `import` and `scrot` all present in the read-only `/usr`
+  Choir mounts — screenshots and keystroke injection. Under pasta the same command
+  gives *unable to open display ":0"*.
 
-**There is no middle setting, and none is available to you unprivileged.** nsjail's
-only other network facility is `--macvlan`, which fails with *Operation not permitted*
-without root. `--use_pasta` would give a jail its own namespace with outbound NAT and
-no host loopback — that would close both the loopback and the abstract-socket holes —
-but `pasta` is not installed here and this has never been tested. It is one package
-from the same repository nsjail came from. Until someone runs it, it is not a claim.
+The cost is one line: the host's `/etc/resolv.conf` names `127.0.0.53`, which inside a
+pasta namespace is the jail's own empty loopback, so Choir writes a one-line
+`resolv.conf` naming pasta's gateway and mounts that instead. Reachability is otherwise
+identical — `api.anthropic.com` and `api.openai.com` return the same status codes under
+pasta as under `-N` — and there is no startup race: twelve consecutive jails connected
+successfully with no delay before the first request.
+
+Do not read the remaining hole as "so the jail is pointless". A work jail still cannot
+see your home directory, your SSH keys, your host loopback, your X server, or any
+repository other than the one you named. But egress is unrestricted and that is the one
+deliberate hole left in this design.
+
+**`--macvlan` is the only other network facility and it needs root**, failing with
+*Operation not permitted* unprivileged. Nothing available here filters egress by host.
 
 **The credential.** What you hand a jail is a full-account OAuth token with a refresh
 token and no scoping, because neither vendor mints anything narrower. Anything in that
