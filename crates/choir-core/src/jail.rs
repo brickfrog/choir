@@ -1,18 +1,20 @@
 //! nsjail command-line construction.
 //!
-//! Implements contract items C-11 … C-15 of `docs/spec.md`.
+//! Implements contract items C-11 … C-15 and C-27 of `docs/spec.md`.
 //!
-//! There are exactly two templates, provider and verify (C-14), and their only
-//! holes are the timeout, the slot path, the run directory, the repo mount, the
-//! provider binary path and name, and the credential environment variable. No
-//! mount-set parameter, no jail-profile type, no network boolean.
+//! There are exactly two templates, provider and verify (C-14). Still no
+//! jail-profile type and no network boolean: the verify jail's empty namespace
+//! is the absence of a flag. The one caller-supplied mount is `--cache` (C-27),
+//! added when self-hosting proved a sealed jail cannot build most projects.
 //!
 //! Values are interpolated with `format!`, not by successive string replacement.
 //! The Gleam original folded `string.replace` over a placeholder list, so a
 //! value containing a later placeholder token would itself be substituted; this
 //! version cannot have that bug.
 
-use crate::config::Provider;
+use core::fmt::Write as _;
+
+use crate::config::{Config, Provider};
 
 /// One jail ready to run: its full command line and the slot it reports into.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,14 +44,22 @@ impl Jail {
 /// bare SIGSEGV. `-R /etc/passwd -R /etc/group` are required or nothing in the
 /// jail can name uid 1000.
 #[must_use]
-pub fn prefix(timeout: u32, slot: &str) -> String {
-    format!(
-        "nsjail -Mo -q -t {timeout} --disable_rlimits \
+pub fn prefix(cfg: &Config, slot: &str) -> String {
+    let mut s = format!(
+        "nsjail -Mo -q -t {} --disable_rlimits \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
          -R {slot}/cmd:/cmd -B {slot}/tmp:/tmp -D /repo \
-         -E PATH=/usr/local/bin:/usr/bin -E HOME=/tmp"
-    )
+         -E PATH=/usr/local/bin:/usr/bin -E HOME=/tmp",
+        cfg.timeout
+    );
+    // Read-only, at its own host path, so a test command finds it where it
+    // already expects it (C-27). `'` and `:` are refused at parse time (E-23),
+    // so single-quoting into the wave script is total.
+    for path in &cfg.cache {
+        let _ = write!(s, " -R '{path}':'{path}'");
+    }
+    s
 }
 
 /// The command line a provider runs inside its jail.
@@ -75,7 +85,7 @@ pub const fn provider_command(provider: Provider) -> &'static str {
 /// and so costs no extra copy of the repository.
 #[must_use]
 pub fn provider(
-    timeout: u32,
+    cfg: &Config,
     run_dir: &str,
     slot: &str,
     repo_mount: &str,
@@ -91,7 +101,7 @@ pub fn provider(
          -R {binary}:/prov/{name} -R {run_dir}/patches:/patches \
          -B {slot}/cred:/cred -E {env}=/cred {repo_mount} \
          -- /usr/bin/sh -c '{command}'",
-        prefix(timeout, slot)
+        prefix(cfg, slot)
     )
 }
 
@@ -102,9 +112,9 @@ pub fn provider(
 /// runs in, and the difference from [`provider`] is the entire network policy of
 /// the program.
 #[must_use]
-pub fn verify(timeout: u32, slot: &str) -> String {
+pub fn verify(cfg: &Config, slot: &str) -> String {
     format!(
         "{} -B {slot}/repo:/repo -- /usr/bin/sh /cmd",
-        prefix(timeout, slot)
+        prefix(cfg, slot)
     )
 }

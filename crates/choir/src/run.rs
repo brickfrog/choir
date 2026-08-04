@@ -255,7 +255,7 @@ fn work_wave(cfg: &Config, paths: &Paths) {
             let binary = prep_provider_slot(&slot, &cfg.instruction, provider);
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
             let mount = format!("-B {slot}/repo:/repo");
-            let command = jail::provider(cfg.timeout, &paths.dir, &slot, &mount, &binary, provider);
+            let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
             Jail::new(command, slot)
         })
         .collect();
@@ -382,7 +382,7 @@ fn verify_wave(cfg: &Config, attempts: &[Attempt]) {
     let jails: Vec<Jail> = attempts
         .iter()
         .filter_map(|a| match &a.staged {
-            Staged::Ready(slot) => Some(Jail::new(jail::verify(cfg.timeout, slot), slot.clone())),
+            Staged::Ready(slot) => Some(Jail::new(jail::verify(cfg, slot), slot.clone())),
             Staged::Skipped(_) => None,
         })
         .collect();
@@ -436,7 +436,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     let slot = format!("{}/a", paths.dir);
     let binary = prep_provider_slot(&slot, AUDIT_PROMPT, provider);
     let mount = format!("-R {}/repo:/repo", paths.dir);
-    let command = jail::provider(cfg.timeout, &paths.dir, &slot, &mount, &binary, provider);
+    let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
     let jails = [Jail::new(command, slot.clone())];
     let _ = sys::sh(&wave::script(&jails));
     shred_credentials(&jails);

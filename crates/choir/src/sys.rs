@@ -127,16 +127,12 @@ pub fn remove_tree(path: &str) {
 
 /// Restore write and search permission across a tree a jailed model owned (E-22).
 ///
-/// `rm -rf` needs write and execute on a directory to unlink what is inside it.
-/// A model that runs `chmod 0500` on its own `.git` — or on the repository root
-/// above it — makes the pristine-`.git` restore fail, and because Choir ignores
-/// the exit status its hostile git config then survives and executes during
-/// extraction. Measured end to end: the payload fired.
-///
-/// The uid mapping into a jail is the identity, so everything a model creates is
-/// owned by the invoking user and `chmod` always succeeds. Unlocking first is
-/// therefore total, not best-effort. `u+rwX` sets the execute bit on directories
-/// only, so file modes in the patch are unchanged.
+/// `rm -rf` needs write and execute on a directory to unlink what is inside it,
+/// so `chmod 0500` across a jail's own `.git` — or the repo root above it — made
+/// the pristine-`.git` restore fail silently, leaving a hostile config to run at
+/// extraction. Measured firing. The uid mapping into a jail is the identity, so
+/// the user owns every file a model made and the unlock cannot fail. `u+rwX`
+/// touches the execute bit on directories only, so patch file modes are intact.
 pub fn unlock_tree(path: &str) {
     let _ = run("chmod", &["-R", "u+rwX", path]);
 }

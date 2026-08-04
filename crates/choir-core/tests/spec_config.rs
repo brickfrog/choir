@@ -279,3 +279,26 @@ fn rotation_slot_is_in_range() {
 fn empty_rotation_is_unrepresentable() {
     assert!(Providers::new(Vec::new()).is_none());
 }
+
+/// C-27: `--cache` is repeatable and preserves order.
+#[test]
+fn c27_cache_is_repeatable() {
+    let cfg = config(&["x", "--test", "t", "--cache", "/a", "--cache", "/b c"]);
+    assert_eq!(cfg.cache, vec!["/a".to_owned(), "/b c".to_owned()]);
+    assert!(config(&["x", "--test", "t"]).cache.is_empty());
+}
+
+/// E-23: a `--cache` path the mount spec cannot express is rejected, not escaped.
+#[test]
+fn e23_cache_rejects_unquotable_paths() {
+    for bad in ["/a'b", "/a:/etc/passwd", "/a:b"] {
+        let err = parse(&argv(&["x", "--test", "t", "--cache", bad])).unwrap_err();
+        assert_eq!(
+            err,
+            ParseError::UnsafePath(bad.to_owned()),
+            "accepted {bad}"
+        );
+    }
+    // Every other byte survives: a space is quoted, not refused.
+    assert!(parse(&argv(&["x", "--test", "t", "--cache", "/a b$`"])).is_ok());
+}

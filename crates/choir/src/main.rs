@@ -26,6 +26,14 @@ fn main() -> ExitCode {
             if cfg.instruction == "-" {
                 cfg.instruction = sys::read_stdin();
             }
+            // Resolved up front: nsjail names neither flag nor path (E-24).
+            for path in &mut cfg.cache {
+                *path = sys::absolute(path);
+                if !std::path::Path::new(path).exists() {
+                    eprintln!("choir: --cache path does not exist: {path}");
+                    return ExitCode::FAILURE;
+                }
+            }
             exit_code(run::execute(&cfg))
         }
         Err(err) => {

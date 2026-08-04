@@ -9,6 +9,7 @@
 
 use proptest::prelude::*;
 
+use choir_core::config::Config;
 use choir_core::config::{rotation_slot, Providers};
 use choir_core::report::{self, Row};
 use choir_core::{jail, parse, verdict, wave, Invocation, Jail, Provider, Verdict};
@@ -193,7 +194,7 @@ proptest! {
     /// is handed. This is the security invariant of the whole program.
     #[test]
     fn verify_jail_stays_sealed(timeout in 1_u32..100_000, slot in "[a-z0-9/]{1,20}") {
-        let j = jail::verify(timeout, &slot);
+        let j = jail::verify(&jail_cfg(timeout, &[]), &slot);
         prop_assert!(!j.contains("pasta"));
         prop_assert!(!j.contains("/cred"));
         prop_assert!(!j.contains("/prov"));
@@ -207,7 +208,7 @@ proptest! {
         timeout in 1_u32..100_000,
         provider in any_provider(),
     ) {
-        let j = jail::provider(timeout, "/r", "/r/s", "-B /r/s/repo:/repo", "/b", provider);
+        let j = jail::provider(&jail_cfg(timeout, &[]), "/r", "/r/s", "-B /r/s/repo:/repo", "/b", provider);
         let other = match provider {
             Provider::Claude => Provider::Codex,
             Provider::Codex => Provider::Claude,
@@ -217,5 +218,14 @@ proptest! {
         prop_assert!(j.contains(&cred));
         prop_assert!(!j.contains(other.cred_env()));
         prop_assert!(j.contains(&prov));
+    }
+}
+
+/// A `Config` carrying only what the jail templates read: timeout and caches.
+fn jail_cfg(timeout: u32, cache: &[&str]) -> Config {
+    Config {
+        timeout,
+        cache: cache.iter().map(|s| (*s).to_owned()).collect(),
+        ..Config::default()
     }
 }

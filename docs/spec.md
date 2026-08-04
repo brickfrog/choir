@@ -82,6 +82,16 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **C-14** There are exactly two argv templates. No third shape exists.
 - **C-15** The instruction and the test command are never interpolated into a
   command line. They travel as the contents of `<slot>/cmd`.
+- **C-27** `--cache <path>`, repeatable, mounts a host path read-only into every
+  jail at the *same* path it has on the host, so a test command and a model's
+  tooling find it where they already expect it. Read-only, never a bind: a jail
+  cannot corrupt what the host shares. It carries no network with it — the verify
+  jail keeps its empty namespace. Without this, no project with a dependency
+  cache can be tested at all: measured, `cargo test` inside a verify jail dies on
+  `Could not resolve host: index.crates.io`, and every patch is reported FAIL
+  whatever it contains. This is a deliberate reversal of the "no mount-set
+  parameter" note in `choir_core::jail`, taken after self-hosting proved the
+  program could not test itself.
 
 ### Wave script (`choir_core::wave`)
 
@@ -177,6 +187,17 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-25** `nsjail --help` succeeding taken as "nsjail works" → probe by actually
+  launching a jail. `--help` runs fine *inside* an nsjail but creating a nested
+  user namespace does not, so the suite hard-failed with "Couldn't initialize
+  user namespace" when Choir was run on its own repository, instead of skipping.
+- **E-24** A `--cache` path that is relative or absent → rejected up front,
+  naming the flag and the path. nsjail reports only "Failed to build mount tree",
+  which names neither, once per jail.
+- **E-23** A `--cache` path containing `'` or `:` → usage error. The path is
+  single-quoted into the wave script and paired into an nsjail `-R src:dst`, so a
+  `'` would end the quoting and a `:` would move the mount destination. Refused
+  rather than escaped; every other byte, spaces included, survives.
 - **E-22** A work jail that made its own `.git` undeletable → the restore still
   happens. `rm -rf` needs write and execute on a directory to unlink what is
   inside it, so `chmod 0500` across `.git` — or on the repository root above

@@ -5,6 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
+use choir_core::config::Config;
 use choir_core::jail;
 use choir_core::wave;
 use choir_core::{Jail, Provider};
@@ -12,7 +13,7 @@ use choir_core::{Jail, Provider};
 /// C-11: every jail shares one prefix carrying the rlimit and mount decisions.
 #[test]
 fn c11_shared_prefix() {
-    let p = jail::prefix(9, "/r/w1");
+    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1");
     assert_eq!(
         p,
         "nsjail -Mo -q -t 9 --disable_rlimits \
@@ -27,7 +28,7 @@ fn c11_shared_prefix() {
 #[test]
 fn c12_provider_jail() {
     let j = jail::provider(
-        9,
+        &jail_cfg(9, &[]),
         "/r",
         "/r/w1",
         "-B /r/w1/repo:/repo",
@@ -35,7 +36,7 @@ fn c12_provider_jail() {
         Provider::Codex,
     );
 
-    assert!(j.starts_with(&jail::prefix(9, "/r/w1")));
+    assert!(j.starts_with(&jail::prefix(&jail_cfg(9, &[]), "/r/w1")));
     assert!(j.contains(
         " --use_pasta -R /r/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates"
@@ -50,7 +51,7 @@ fn c12_provider_jail() {
     ));
 
     let c = jail::provider(
-        9,
+        &jail_cfg(9, &[]),
         "/r",
         "/r/a",
         "-R /r/repo:/repo",
@@ -66,7 +67,7 @@ fn c12_provider_jail() {
 /// C-13: a verify jail has no network flag, no credential, and no provider binary.
 #[test]
 fn c13_verify_jail_is_sealed() {
-    let j = jail::verify(7, "/r/v0");
+    let j = jail::verify(&jail_cfg(7, &[]), "/r/v0");
     assert!(!j.contains("pasta"));
     assert!(!j.contains("/cred"));
     assert!(!j.contains("/prov"));
@@ -79,15 +80,15 @@ fn c13_verify_jail_is_sealed() {
 #[test]
 fn c14_two_templates_only() {
     let provider = jail::provider(
-        5,
+        &jail_cfg(5, &[]),
         "/r",
         "/r/w0",
         "-B /r/w0/repo:/repo",
         "/b",
         Provider::Claude,
     );
-    let verify = jail::verify(5, "/r/w0");
-    let shared = jail::prefix(5, "/r/w0");
+    let verify = jail::verify(&jail_cfg(5, &[]), "/r/w0");
+    let shared = jail::prefix(&jail_cfg(5, &[]), "/r/w0");
     assert!(provider.starts_with(&shared));
     assert!(verify.starts_with(&shared));
 }
@@ -99,7 +100,7 @@ fn c15_commands_travel_as_files() {
         assert!(jail::provider_command(provider).contains("$(cat /cmd)"));
     }
     // The verify jail runs the file directly rather than interpolating it.
-    assert!(jail::verify(5, "/s").ends_with("/usr/bin/sh /cmd"));
+    assert!(jail::verify(&jail_cfg(5, &[]), "/s").ends_with("/usr/bin/sh /cmd"));
 }
 
 /// C-16, C-17: the wave backgrounds each jail in a subshell, then waits.
@@ -146,4 +147,47 @@ fn p5_wave_shape() {
 #[test]
 fn empty_wave_is_just_wait() {
     assert_eq!(wave::script(&[]), "wait");
+}
+
+/// C-27: a cache path is mounted read-only, at its own path, in *both* templates.
+#[test]
+fn c27_cache_is_mounted_read_only_in_both_templates() {
+    let want = "-R '/home/u/.cargo':'/home/u/.cargo'";
+
+    let v = jail::verify(&jail_cfg(9, &["/home/u/.cargo"]), "/r/w1");
+    assert!(v.contains(want), "verify jail lost the cache: {v}");
+    // The seal is unchanged: still no network flag on the verify jail.
+    assert!(
+        !v.contains("use_pasta"),
+        "cache mount opened the verify jail: {v}"
+    );
+
+    let p = jail::provider(
+        &jail_cfg(9, &["/home/u/.cargo"]),
+        "/r",
+        "/r/w1",
+        "-B /r/w1/repo:/repo",
+        "/b",
+        Provider::Claude,
+    );
+    assert!(p.contains(want), "provider jail lost the cache: {p}");
+
+    // Never a writable bind: a jail cannot corrupt the host's cache.
+    assert!(!v.contains("-B '/home/u/.cargo'") && !p.contains("-B '/home/u/.cargo'"));
+}
+
+/// C-27: a path with a space survives quoting intact, in one argv word.
+#[test]
+fn c27_cache_quotes_a_path_with_a_space() {
+    assert!(jail::verify(&jail_cfg(9, &["/opt/my cache"]), "/s")
+        .contains("-R '/opt/my cache':'/opt/my cache'"));
+}
+
+/// A `Config` carrying only what the jail templates read: timeout and caches.
+fn jail_cfg(timeout: u32, cache: &[&str]) -> Config {
+    Config {
+        timeout,
+        cache: cache.iter().map(|s| (*s).to_owned()).collect(),
+        ..Config::default()
+    }
 }

@@ -16,13 +16,34 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use choir_core::config::Config;
 use choir_core::{jail, verdict, wave, Jail, Verdict};
 
+/// Probe by launching a jail, not by `--help` (E-25).
+///
+/// `nsjail --help` runs fine *inside* an nsjail, but creating a nested user
+/// namespace does not — so a presence check made this suite hard-fail with
+/// "Couldn't initialize user namespace" when Choir was run on its own
+/// repository, instead of skipping. Found by self-hosting; the only honest
+/// probe is whether a jail actually starts.
 fn nsjail_available() -> bool {
     Command::new("nsjail")
-        .arg("--help")
+        .args([
+            "-Mo",
+            "-q",
+            "-t",
+            "10",
+            "-R",
+            "/usr",
+            "-R",
+            "/lib64",
+            "-R",
+            "/bin",
+            "--",
+            "/usr/bin/true",
+        ])
         .output()
-        .is_ok_and(|o| o.status.code().is_some())
+        .is_ok_and(|o| o.status.success())
 }
 
 /// A scratch directory that removes itself.
@@ -54,6 +75,11 @@ impl Drop for Scratch {
 /// whatever the kernel reported. This is the whole verify path, minus the
 /// `git apply` that fills `repo/`.
 fn run_verify(script_body: &str) -> Verdict {
+    run_verify_with(script_body, &[])
+}
+
+/// As [`run_verify`], with read-only cache mounts (C-27).
+fn run_verify_with(script_body: &str, cache: &[String]) -> Verdict {
     let scratch = Scratch::new("verify");
     let slot = scratch.path().join("v0");
     fs::create_dir_all(slot.join("tmp")).expect("tmp");
@@ -61,7 +87,7 @@ fn run_verify(script_body: &str) -> Verdict {
     fs::write(slot.join("cmd"), script_body).expect("cmd");
 
     let slot_str = slot.to_str().expect("utf-8 path");
-    let command = jail::verify(30, slot_str);
+    let command = jail::verify(&jail_cfg(30, cache), slot_str);
     let script = wave::script(&[Jail::new(command, slot_str)]);
 
     let status = Command::new("/bin/sh")
@@ -176,7 +202,10 @@ fn a_wave_runs_its_jails_in_parallel() {
         fs::create_dir_all(slot.join("repo")).expect("repo");
         fs::write(slot.join("cmd"), "sleep 2\n").expect("cmd");
         let slot_str = slot.to_str().expect("utf-8 path").to_owned();
-        jails.push(Jail::new(jail::verify(30, &slot_str), slot_str));
+        jails.push(Jail::new(
+            jail::verify(&jail_cfg(30, &[]), &slot_str),
+            slot_str,
+        ));
     }
 
     let script = wave::script(&jails);
@@ -195,5 +224,57 @@ fn a_wave_runs_its_jails_in_parallel() {
     for jail in &jails {
         let rc = fs::read_to_string(format!("{}.rc", jail.slot)).unwrap_or_default();
         assert_eq!(verdict::from_rc(&rc), Verdict::Pass);
+    }
+}
+
+/// C-27: a real sealed jail sees the cache, read-only, with no network.
+///
+/// The sealed jail has no network, so a command that needs a host directory can
+/// only succeed if the mount arrived. Measured while self-hosting: without this,
+/// `cargo test` inside a verify jail dies on "Could not resolve host", and every
+/// patch is reported FAIL whatever it contains.
+#[test]
+fn c27_cache_reaches_a_sealed_jail_read_only() {
+    if !nsjail_available() {
+        eprintln!("skipping: nsjail cannot start here");
+        return;
+    }
+    let host = Scratch::new("cache");
+    fs::write(host.path().join("dep.txt"), "from the host\n").expect("dep");
+    let dir = host.path().to_str().expect("utf-8").to_owned();
+    let mounts = vec![dir.clone()];
+
+    // Present and readable.
+    assert_eq!(
+        run_verify_with(&format!("grep -q 'from the host' {dir}/dep.txt\n"), &mounts),
+        Verdict::Pass,
+        "the cache did not reach the sealed jail"
+    );
+    // Read-only: the jail cannot corrupt what the host shares with it.
+    assert_ne!(
+        run_verify_with(&format!("echo x > {dir}/dep.txt\n"), &mounts),
+        Verdict::Pass,
+        "the cache mount was writable"
+    );
+    // Still sealed: the mount did not bring a network with it.
+    assert_ne!(
+        run_verify_with("getent hosts index.crates.io\n", &mounts),
+        Verdict::Pass,
+        "the cache mount opened a network"
+    );
+    // Absent unless asked for.
+    assert_eq!(
+        run_verify_with(&format!("test -e {dir}/dep.txt\n"), &[]),
+        Verdict::Fail(1),
+        "the cache appeared without --cache"
+    );
+}
+
+/// A `Config` carrying only what the jail templates read.
+fn jail_cfg(timeout: u32, cache: &[String]) -> Config {
+    Config {
+        timeout,
+        cache: cache.to_vec(),
+        ..Config::default()
     }
 }

@@ -181,6 +181,8 @@ pub struct Config {
     pub timeout: u32,
     /// Directory patches are written to.
     pub out: String,
+    /// Read-only host paths mounted into every jail, at their own path (C-27).
+    pub cache: Vec<String>,
 }
 
 impl Default for Config {
@@ -193,6 +195,7 @@ impl Default for Config {
             providers: Providers::default(),
             timeout: 1200,
             out: "./choir-out".to_owned(),
+            cache: Vec::new(),
         }
     }
 }
@@ -257,6 +260,8 @@ pub enum ParseError {
     UnknownProvider(String),
     /// A second bare argument appeared (C-3).
     UnexpectedArgument(String),
+    /// A `--cache` path held `'` or `:`, which the mount spec cannot express (E-23).
+    UnsafePath(String),
 }
 
 impl fmt::Display for ParseError {
@@ -271,6 +276,7 @@ impl fmt::Display for ParseError {
             }
             Self::UnknownProvider(word) => write!(f, "unknown provider: {word}"),
             Self::UnexpectedArgument(arg) => write!(f, "unexpected argument: {arg}"),
+            Self::UnsafePath(p) => write!(f, "--cache path may not contain ' or : — {p}"),
         }
     }
 }
@@ -316,6 +322,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
                 })?;
             }
             "--providers" => cfg.providers = Providers::parse(&value(&mut rest, "--providers")?)?,
+            "--cache" => {
+                let path = value(&mut rest, "--cache")?;
+                // Refused, not escaped (E-23); every other byte survives.
+                if path.contains('\'') || path.contains(':') {
+                    return Err(ParseError::UnsafePath(path));
+                }
+                cfg.cache.push(path);
+            }
             other if instruction.is_none() => instruction = Some(other.to_owned()),
             other => return Err(ParseError::UnexpectedArgument(other.to_owned())),
         }
@@ -369,6 +383,9 @@ pub fn help_text() -> String {
     s.push_str("  --providers <list>  comma-separated: claude, codex (default both).\n");
     s.push_str("  --timeout <secs>    per-jail deadline (default 1200), enforced by nsjail.\n");
     s.push_str("  --out <dir>         patch directory (default ./choir-out).\n");
+    s.push_str("  --cache <path>      read-only mount into every jail, at its own path.\n");
+    s.push_str("                      Repeat it; verify jails have no network, so a\n");
+    s.push_str("                      dependency cache can only arrive this way.\n");
     s.push_str("  -h, --help          print this and exit.\n\n");
     s.push_str("EXIT\n");
     s.push_str("  0 if at least one patch passed your test command, 1 otherwise.\n\n");
