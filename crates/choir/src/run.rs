@@ -589,7 +589,8 @@ mod tests {
     /// commands in `extract` executed them as the user, outside every jail.
     #[test]
     fn extract_neutralises_a_hostile_git_config() {
-        let canary = scratch("canary").join("PWNED");
+        let canary_dir = scratch("canary");
+        let canary = canary_dir.join("PWNED");
         let canary_s = canary.to_str().expect("utf-8").to_owned();
 
         let (paths, bytes) = staged_run("escape", |slot_repo| {
@@ -618,6 +619,7 @@ mod tests {
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
         sys::remove_tree(&paths.dir);
+        sys::remove_tree(canary_dir.to_str().expect("utf-8"));
     }
 
     /// E-26: a `core.worktree` in the user's config cannot redirect extraction.
@@ -671,7 +673,8 @@ mod tests {
     /// extraction — a complete bypass of E-18. Verified to fire before the fix.
     #[test]
     fn extract_defeats_a_permission_locked_git_dir() {
-        let canary = scratch("lockcanary").join("PWNED");
+        let canary_dir = scratch("lockcanary");
+        let canary = canary_dir.join("PWNED");
         let canary_s = canary.to_str().expect("utf-8").to_owned();
 
         let (paths, bytes) = staged_run("locked", |slot_repo| {
@@ -703,6 +706,7 @@ mod tests {
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
         sys::remove_tree(&paths.dir);
+        sys::remove_tree(canary_dir.to_str().expect("utf-8"));
     }
 
     /// E-18: a model that commits its work still yields a complete patch.
