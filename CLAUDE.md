@@ -1,8 +1,8 @@
 # Choir Repo Rules
 
 > **v4 note.** The owner directed the Rust rewrite and said to disregard the v3 limits.
-> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 3071 (1,469
-> shipped, 1602 test and proof). The v3 document said that number "may never be edited
+> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 3,071 (1,469
+> shipped, 1,602 test and proof). The v3 document said that number "may never be edited
 > upward by an agent" — so this edit is recorded as the owner's decision, not an agent's.
 > The postmortem below is unchanged, because none of it stopped being true.
 
