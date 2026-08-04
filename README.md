@@ -106,22 +106,27 @@ diff against. A patch therefore contains what the model changed and nothing else
 own repository is never written to, and nothing is ever committed in it.
 
 Choir copies your repository `1 + 2n` times per run — once as the base, once per work
-jail, once per verify jail — into the scratch directory `mktemp -d` chooses, so `TMPDIR`
-decides what that costs. Put it on the *same filesystem* as `--repo` and a copy-on-write
-filesystem makes the copies nearly free; anywhere else they are real byte copies, and a
-`tmpfs` `/tmp` spends RAM on them. Measured on a 392 MB checkout, same btrfs volume
-against the default `/tmp`:
+jail, once per verify jail — into the scratch directory `mktemp -d` chooses, and all of
+them exist at once. On a roomy machine that is usually nothing to think about: a 392 MB
+checkout at the default `-n 2` is five copies, about 2 GB.
+
+It starts to matter when `(1 + 2n) × <repo size>` approaches the size of whatever `TMPDIR`
+lives on — a capped `tmpfs /tmp` is the common case, and a multi-gigabyte checkout at
+`-n 4` clears it easily. **A copy that runs out of room fails silently**, and the jail runs
+against a partial tree, so the symptom is a strange result rather than an error.
+
+Pointing `TMPDIR` at the *same filesystem* as `--repo` removes the question: a
+copy-on-write filesystem then shares extents instead of copying bytes. Measured on this
+392 MB checkout:
 
 ```
-$ du -sh ~/proj                    392M
-$ TMPDIR=/mnt/data/tmp             0.22 s per copy, 0 bytes of new space (reflinked)
-$ TMPDIR=/tmp        (tmpfs)       0.35 s per copy, 392 MB of RAM each
+$ TMPDIR=/mnt/data/tmp     0.22 s per copy, 0 bytes of new space (reflinked)
+$ TMPDIR=/tmp   (tmpfs)    0.35 s per copy, 392 MB each
 ```
 
-Same *kind* of filesystem is not enough: two separate btrfs volumes cannot share extents,
-and `cp` falls back to a full copy. Choir does not detect any of this — it never inspects
-the host — so pointing `TMPDIR` somewhere sensible is yours to do. At the default `-n 2`
-that is five copies: 2 GB of RAM on `/tmp`, or nothing at all beside the repo.
+The same *kind* of filesystem is not enough — two separate btrfs volumes cannot share
+extents and `cp` falls back to a full copy. Choir detects none of this; it never inspects
+the host.
 
 ### Example
 
