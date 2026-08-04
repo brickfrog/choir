@@ -11,6 +11,7 @@ fn row_of(index: usize, provider: Provider, bytes: usize, v: Verdict, last: &str
         index,
         provider,
         bytes,
+        exit: Some(0),
         verdict: v,
         last_line: last.to_owned(),
     })
@@ -104,6 +105,7 @@ fn c26_apply_lines() {
             index: 0,
             provider: Provider::Claude,
             bytes: 10,
+            exit: Some(0),
             verdict: Verdict::Pass,
             last_line: String::new(),
         },
@@ -111,6 +113,7 @@ fn c26_apply_lines() {
             index: 1,
             provider: Provider::Codex,
             bytes: 0,
+            exit: Some(0),
             verdict: Verdict::NoPatch,
             last_line: String::new(),
         },
@@ -118,6 +121,7 @@ fn c26_apply_lines() {
             index: 2,
             provider: Provider::Claude,
             bytes: 20,
+            exit: Some(0),
             verdict: Verdict::Fail(1),
             last_line: String::new(),
         },
@@ -125,6 +129,7 @@ fn c26_apply_lines() {
             index: 3,
             provider: Provider::Codex,
             bytes: 30,
+            exit: Some(0),
             verdict: Verdict::Pass,
             last_line: String::new(),
         },
@@ -192,4 +197,36 @@ fn audit_heading_disclaims() {
     assert!(h.starts_with("audit (codex"));
     assert!(h.contains("unverified"));
     assert!(h.contains("no effect on the table"));
+}
+
+/// C-29: the exit column tells a clean-but-empty provider from a killed one.
+#[test]
+fn exit_column_separates_empty_from_killed() {
+    let clean = row_of(0, Provider::Claude, 0, Verdict::NoPatch, "done");
+    let killed = row_of(1, Provider::Codex, 0, Verdict::NoPatch, "done");
+    assert!(clean.contains(" 0 "), "{clean:?}");
+    assert_eq!(report::exit_label(Some(137)), "137");
+    assert_eq!(report::exit_label(None), "?", "unknown is not exit 0");
+    assert_ne!(report::exit_label(Some(0)), report::exit_label(None));
+    assert!(killed.starts_with('1'));
+}
+
+/// C-23: the header names every column a row renders, in order.
+#[test]
+fn header_matches_the_row_layout() {
+    for column in [
+        "JAIL",
+        "PROVIDER",
+        "PATCH",
+        "EXIT",
+        "TESTS",
+        "LAST LINE FROM PROVIDER",
+    ] {
+        assert!(report::HEADER.contains(column), "header lost {column}");
+    }
+    let line = row_of(0, Provider::Claude, 141, Verdict::Pass, "ok");
+    assert!(line.contains("141 B") && line.contains("PASS"));
+    assert!(
+        report::HEADER.find("EXIT").expect("exit") < report::HEADER.find("TESTS").expect("tests")
+    );
 }

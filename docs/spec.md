@@ -113,11 +113,21 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 ### Report (`choir_core::report`)
 
 - **C-22** Sizes render as `<n> B` below 1024, else one decimal place of KiB.
-- **C-23** A row is jail index, provider, size, verdict label, and the last
-  non-blank line of the jail log, in fixed columns, with trailing space trimmed.
+- **C-23** A row is jail index, provider, size, work-jail exit code, verdict
+  label, and the last non-blank line of the jail log, in fixed columns, with
+  trailing space trimmed.
 - **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `APPLY FAILED`, `-`.
 - **C-25** Rows print in jail index order. There is no ranking and no sort.
 - **C-26** A `git apply` line prints for each passing patch, and only those.
+- **C-28** Each work jail's log is copied to `<out>/<index>.log`, and each verify
+  jail's to `<out>/<index>.verify.log`. The table shows one line of the first and
+  a pass/fail of the second, and the scratch tree holding both is removed before
+  `execute` returns, so without this a run that produced no patch leaves no
+  evidence that it ran at all. Copies of what the jail already wrote: no parsing,
+  no new information, and still nothing outside `--out`.
+- **C-29** A row shows the work jail's own exit code, or `?` when it wrote no
+  readable `.rc`. A `0 B` patch beside `0` is a provider that ran cleanly and
+  produced nothing; beside `137` it is one the deadline killed.
 
 ---
 
@@ -187,6 +197,16 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-27** An untracked file the run rewrites -> the base copy is committed
+  before any jail starts, so it is tracked and the patch carries a modification
+  rather than a `new file`. Patches are `git diff --cached HEAD` but are applied
+  to a copy of the working tree; anything untracked and not ignored arrives via
+  `cp -a`, stages as a new file, and `git apply` rejects the *entire* patch with
+  `already exists in working directory`. Found by check 5 on a foreign Python
+  repository with one untracked `__pycache__`: both providers fixed the task,
+  both patches were reported `APPLY FAILED`, and the paid run was discarded.
+  This also retires the rule that the user's tree be committed first — the same
+  collision hit uncommitted tracked edits, and every row said `APPLY FAILED`.
 - **E-26** A `core.worktree` in the repository's own config → stripped from the
   base copy before any jail runs. `cp -a` brings the user's `.git/config` into
   every jail and `extract` restores it, so host `git add -A` staged against the

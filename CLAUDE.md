@@ -1,10 +1,8 @@
 # Choir Repo Rules
 
-> **v4 note.** The owner directed the Rust rewrite and said to disregard the v3 limits.
-> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 3,305 (1,500
-> shipped, 1,805 test and proof). The v3 document said that number "may never be edited
-> upward by an agent" — so this edit is recorded as the owner's decision, not an agent's.
-> The postmortem below is unchanged, because none of it stopped being true.
+> **v4 note.** The owner directed the Rust rewrite, said to disregard the v3 limits, and has
+> since removed the line budget outright: it was a proxy for a failure mode the rules below
+> already name exactly. The postmortem is unchanged, because none of it stopped being true.
 
 ## Why this file exists
 
@@ -25,35 +23,31 @@ So nothing below asks anyone to decide whether something is warranted. Every rul
 that prints a number or a list, and a reviewer answers yes or no in five seconds without reading
 the diff's justification.
 
-## The numbers
+## The failure mode this file exists to stop
 
-One budget, on shipped code only. v4 buys correctness with tests and proofs, and a rule
-that taxes those would delete the thing that makes the rewrite worth having.
+v2 did not die of line count. It died of one move, repeated: **machinery built to make a
+nondeterministic model behave deterministically.** `durable_shape.mbt` was 5,131 lines computing
+a stable version string for a thing that has no stable version. `surface_probe.mbt` carried an
+`exact_version` field for a CLI whose built-in agent roster changed between two runs of the same
+binary. The 9,166-line lease/fencing/capacity chain was scheduling theory applied to `sh -c`.
+Conformance was 20,856 lines asserting a shape instead of running the product.
 
-**1,500 — shipped production.** Everything the release binary actually contains:
+The instinct is always the same: the model is unpredictable, so add types, states and gates until
+it isn't. It never is. What you get is a second nondeterministic system to debug, and the model's
+work discarded by your own gate — which is what v2's logs actually show. Not one Goal died
+because the work failed; every one died to a Choir gate.
 
-```sh
-find crates -name '*.rs' -path '*/src/*' ! -name proofs.rs \
-  -exec sed -s '/^#\[cfg(test)\]/,$d' {} + | wc -l
-```
+A line budget was v3's proxy for that instinct. It is not the instinct, and it taxed the wrong
+thing. In the session that found `--cache`, the `nsjail --help` probe and the `core.worktree`
+escape — three defects no line count can see — the cap was paid for five separate times by
+compressing doc comments, deleting the explanations that make the jail templates readable.
+Removed by the owner.
 
-Currently **1,500** — the budget is exactly full, with zero headroom. Adding any
-shipped line now requires either removing another or the owner raising the cap;
-an agent may do the first, never the second. The `-s` is load-bearing: without
-it sed treats the files as one stream and silently deletes everything after the first
-`#[cfg(test)]` it sees, reporting a number hundreds of lines too low.
-
-**Tests and proofs are unbudgeted** — `crates/*/tests/`, `#[cfg(test)]` modules inside
-`src/`, and `proofs.rs`. None of them is in the binary. In-module tests are not a loophole
-but a necessity: `extract` and `absolute` are private, and the two regressions that matter
-most (the `.git` sandbox escape and an unresolvable `--out`) can only be tested from
-inside their own module.
-
-A test location is not a place to park a subsystem. Anything under `tests/`, in a
-`#[cfg(test)]` module, or in `proofs.rs` that is not a `#[test]`, a `proptest!`, a
-`#[kani::proof]`, or a fixture for one counts against the shipped budget.
-
-The budget may be edited downward by anyone. It may never be edited upward by an agent.
+Nothing replaces it. The reviewer table below already names the machinery directly, and every row
+prints a list rather than asking whether something is warranted. A test location is still not a
+place to park a subsystem: anything under `tests/`, in a `#[cfg(test)]` module, or in `proofs.rs`
+that is not a `#[test]`, a `proptest!`, a `#[kani::proof]`, or a fixture for one is production
+code, and obeys every rule here.
 
 ## The four CI checks
 
@@ -89,7 +83,6 @@ Answer from the diff alone. Any yes is a rejection.
 
 | Question | What it would have stopped |
 | --- | --- |
-| Does this take shipped `src/` over 1,500 lines, by the command in *The numbers*? | Everything below it. |
 | Does it add an import of `std::process`, `std::fs`, `std::env`, `std::io`, `std::time`, `std::net`, or `std::thread` to `choir-core`? | The purity boundary, and with it every proof and most of the test suite. |
 | Does it add a `panic!`, `unwrap`, `expect`, `todo!`, `unimplemented!`, or a slice index to either crate? | All of them are denied by the workspace lints. A panic in a wave runner strands paid jails. |
 | Does anything Choir wrote survive its exit, other than files under `--out`? The scratch `mktemp -d` is deleted before `execute` returns. | The control store, the artifact store, `durable_shape.mbt` (5,131 lines, one caller), and the 25,071 lines across 45 files whose names alone say storage / witness / snapshot / lease / resume. |
@@ -115,9 +108,8 @@ Answer from the diff alone. Any yes is a rejection.
 - An agent may add lines to an existing function and functions to an existing file. Creating a
   new file under `crates/*/src/` requires the owner to have named that file first.
 - Any change that is not a single-function edit must state, before the diff: (a) the verbatim
-  command a user ran, (b) its verbatim output, (c) the lines added and the new production total
-  against 1,500. Missing any of the three is a refusal without discussion. The refusal is
-  arithmetic, not judgement.
+  command a user ran, and (b) its verbatim output. Missing either is a refusal without
+  discussion. Evidence, not argument — the agent writing the code also writes the justification.
 - If a PR asserts that a library, flag, or API exists, it must include the command that showed
   it. A dependency or flag that does not exist is a failure mode this project has already had —
   and so is a flag that exists and lies: `nsjail --rlimit_fsize max` reports a `ulimit -f` of
@@ -131,8 +123,8 @@ Answer from the diff alone. Any yes is a rejection.
 
 Semantic prefix (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`/`chore:`), imperative subject
 ≤72 chars, no body unless it carries non-obvious context. Never add `Generated with`,
-`Co-Authored-By: Claude`, or robot-emoji footers. PR body: what changed, the production line
-total against 1,500, and the pasted output of check 5. Nothing else.
+`Co-Authored-By: Claude`, or robot-emoji footers. PR body: what changed and the pasted output of
+check 5. Nothing else.
 
 ## The tree
 

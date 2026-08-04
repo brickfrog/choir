@@ -111,8 +111,47 @@ fn prepare(cfg: &Config) -> Option<Paths> {
 
     let out = sys::absolute(&cfg.out);
     exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out, cfg.n);
+    commit_base(&dir);
 
     Some(Paths { dir, out })
+}
+
+/// Make the tree the jails actually received the baseline every patch diffs
+/// against (E-27).
+///
+/// A patch is `git diff --cached HEAD`, but it is applied to a copy of the
+/// user's *working tree*. Anything untracked and not ignored — `__pycache__`, a
+/// scratch note, a half-written file — reaches the jail through `cp -a` and is
+/// staged as a **new file**, while the tree it lands on already has that path.
+/// `git apply` then rejects the entire patch with `already exists in working
+/// directory`, taking the model's real work with it. Measured on a foreign
+/// repository with one untracked `__pycache__`: both providers fixed the task,
+/// both reported `APPLY FAILED`, and the whole paid run was discarded.
+///
+/// Committing the copy makes `HEAD` equal the tree every jail starts from, so a
+/// patch carries the model's changes and nothing else. Ignored files stay
+/// untracked and never enter a patch at all. This also retires the rule that the
+/// user's tree must be committed first: uncommitted work is now the baseline
+/// instead of colliding with itself on apply.
+///
+/// The identity is on the command line because `sys::git` reads no user config,
+/// and `--allow-empty` because a clean tree is the common case, not an error.
+fn commit_base(dir: &str) {
+    let repo = format!("{dir}/repo");
+    let _ = sys::git(&["-C", &repo, "add", "-A"]);
+    let _ = sys::git(&[
+        "-C",
+        &repo,
+        "-c",
+        "user.name=choir",
+        "-c",
+        "user.email=choir@localhost",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "choir: the working tree as the jails received it",
+    ]);
 }
 
 /// Make the base copy a standalone repository when `--repo` is a git worktree
@@ -395,22 +434,39 @@ fn verify_wave(cfg: &Config, attempts: &[Attempt]) {
     let _ = sys::sh(&wave::script(&jails));
 }
 
-/// Read each jail's verdict and log line into a renderable row.
+/// Read each jail's verdict and log line into a renderable row, and copy the
+/// logs the table only summarises into `--out` (C-28).
+///
+/// The table shows one line of the work log and a pass/fail of the verify log,
+/// and the scratch tree holding both is removed before `execute` returns. For a
+/// run that produced no patch that left nothing to read afterwards: the evidence
+/// of a paid run died with the run. These are copies, not new information.
 fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
     attempts
         .iter()
         .map(|a| {
             let verdict = match &a.staged {
                 Staged::Ready(slot) => {
+                    let log = sys::read_text(Path::new(&format!("{slot}.log")));
+                    sys::write_bytes(
+                        Path::new(&format!("{}/{}.verify.log", paths.out, a.index)),
+                        log.as_bytes(),
+                    );
                     verdict::from_rc(&sys::read_text(Path::new(&format!("{slot}.rc"))))
                 }
                 Staged::Skipped(v) => *v,
             };
-            let log = sys::read_text(Path::new(&format!("{}.log", paths.slot("w", a.index))));
+            let slot = paths.slot("w", a.index);
+            let log = sys::read_text(Path::new(&format!("{slot}.log")));
+            sys::write_bytes(
+                Path::new(&format!("{}/{}.log", paths.out, a.index)),
+                log.as_bytes(),
+            );
             Row {
                 index: a.index,
                 provider: a.provider,
                 bytes: a.bytes,
+                exit: verdict::code_from_rc(&sys::read_text(Path::new(&format!("{slot}.rc")))),
                 verdict,
                 last_line: report::last_line(&log),
             }
@@ -459,9 +515,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        detach_gitfile, exclude_out_from_base, extract, gitignore_escape, strip_host_config, Paths,
+        collect, detach_gitfile, exclude_out_from_base, extract, gitignore_escape, prepare,
+        strip_host_config, Attempt, Paths, Staged,
     };
     use crate::sys;
+    use choir_core::config::{Config, Provider};
+    use choir_core::verdict::Verdict;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -923,5 +982,130 @@ mod tests {
         let after = fs::read_to_string(format!("{base}/.git/info/exclude")).expect("read");
         assert_eq!(after, "# original\n", "unrelated --out must change nothing");
         sys::remove_tree(&root_s);
+    }
+
+    /// C-28: the logs outlive the scratch tree, or a paid run that produced no
+    /// patch leaves nothing to read. The verify log is the only record of *why*
+    /// a patch failed, and the work log the only record of what the model said.
+    #[test]
+    fn collect_copies_both_logs_into_the_out_dir() {
+        let dir = scratch("logs");
+        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+
+        fs::write(format!("{dir_s}/w0.log"), "model said this\n").expect("w log");
+        fs::write(format!("{dir_s}/w0.rc"), "0\n").expect("w rc");
+        fs::write(format!("{dir_s}/v0.log"), "assertion failed\n").expect("v log");
+        fs::write(format!("{dir_s}/v0.rc"), "1\n").expect("v rc");
+
+        let rows = collect(
+            &paths,
+            &[Attempt {
+                index: 0,
+                provider: Provider::Claude,
+                bytes: 12,
+                staged: Staged::Ready(format!("{dir_s}/v0")),
+            }],
+        );
+
+        let row = rows.first().expect("one row");
+        assert_eq!(row.verdict, Verdict::Fail(1));
+        assert_eq!(
+            row.exit,
+            Some(0),
+            "the work jail's own code, not the verify jail's"
+        );
+        assert_eq!(
+            fs::read_to_string(format!("{}/0.log", paths.out)).expect("work log"),
+            "model said this\n"
+        );
+        assert_eq!(
+            fs::read_to_string(format!("{}/0.verify.log", paths.out)).expect("verify log"),
+            "assertion failed\n"
+        );
+        sys::remove_tree(&dir_s);
+    }
+
+    /// C-29: a jail that never wrote an `.rc` is not the same fact as exit 0.
+    #[test]
+    fn a_missing_rc_reads_as_unknown_not_zero() {
+        let dir = scratch("norc");
+        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+
+        let rows = collect(
+            &paths,
+            &[Attempt {
+                index: 0,
+                provider: Provider::Codex,
+                bytes: 0,
+                staged: Staged::Skipped(Verdict::NoPatch),
+            }],
+        );
+
+        assert_eq!(rows.first().expect("one row").exit, None);
+        sys::remove_tree(&dir_s);
+    }
+
+    /// E-27: an untracked file in the user's tree must not make every patch
+    /// unappliable. Reproduces the foreign-repo run that discarded two correct
+    /// fixes because `cp -a` carried a `__pycache__` the jail then rewrote.
+    #[test]
+    fn an_untracked_file_does_not_break_every_patch() {
+        let dir = scratch("untracked");
+        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let base = format!("{dir_s}/repo");
+        fs::create_dir_all(&base).expect("base");
+        git(&base, &["init", "-q"]);
+        git(&base, &["config", "user.email", "t@t"]);
+        git(&base, &["config", "user.name", "t"]);
+        fs::write(format!("{base}/calc.py"), "old\n").expect("calc");
+        git(&base, &["add", "-A"]);
+        git(&base, &["commit", "-qm", "base"]);
+        // Untracked, not ignored, and about to be rewritten inside the jail.
+        fs::write(format!("{base}/cached.pyc"), "stale\n").expect("pyc");
+
+        // Through the real entry point, so the test covers the wiring too.
+        let cfg = Config {
+            repo: base.clone(),
+            out: format!("{dir_s}/out"),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+
+        fs::create_dir_all(format!("{}/w0", paths.dir)).expect("slot");
+        let slot_repo = format!("{}/w0/repo", paths.dir);
+        sys::copy_tree(&paths.base_repo(), &slot_repo);
+        fs::write(format!("{slot_repo}/calc.py"), "fixed\n").expect("edit");
+        fs::write(format!("{slot_repo}/cached.pyc"), "rebuilt\n").expect("rebuild");
+
+        assert!(
+            extract(&paths, 0) > 0,
+            "the model's edit must reach a patch"
+        );
+
+        // Exactly what `stage` applies to: a fresh copy of the base the jails
+        // were cloned from.
+        let fresh = format!("{}/fresh", paths.dir);
+        sys::copy_tree(&paths.base_repo(), &fresh);
+        let (code, _) = sys::git(&[
+            "-C",
+            &fresh,
+            "apply",
+            "--check",
+            &format!("{}/0.patch", paths.out),
+        ]);
+        assert_eq!(code, 0, "patch must apply to the tree it was made from");
+        sys::remove_tree(&paths.dir);
+        sys::remove_tree(&dir_s);
     }
 }

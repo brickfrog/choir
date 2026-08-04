@@ -10,11 +10,12 @@ use crate::config::Provider;
 use crate::verdict::Verdict;
 
 /// Column header for the results table.
-pub const HEADER: &str = "JAIL PROVIDER  PATCH    TESTS         LAST LINE FROM PROVIDER";
+pub const HEADER: &str = "JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER";
 
 const COL_JAIL: usize = 5;
 const COL_PROVIDER: usize = 10;
 const COL_PATCH: usize = 9;
+const COL_EXIT: usize = 6;
 const COL_TESTS: usize = 14;
 
 /// One finished attempt, ready to render.
@@ -26,6 +27,10 @@ pub struct Row {
     pub provider: Provider,
     /// Patch size in bytes. Exists to tell `0 B` from not-`0 B`.
     pub bytes: usize,
+    /// The work jail's own exit code, or `None` when it wrote no readable `.rc`.
+    /// Distinguishes a provider that ran and produced nothing from one that was
+    /// killed (C-29).
+    pub exit: Option<i32>,
     /// The verdict.
     pub verdict: Verdict,
     /// Last non-blank line of the jail's log.
@@ -86,14 +91,25 @@ pub fn pad(text: &str, width: usize) -> String {
 #[must_use]
 pub fn row(entry: &Row) -> String {
     let line = format!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{}{}",
         pad(&entry.index.to_string(), COL_JAIL),
         pad(entry.provider.name(), COL_PROVIDER),
         pad(&size_label(entry.bytes), COL_PATCH),
+        pad(&exit_label(entry.exit), COL_EXIT),
         pad(&entry.verdict.label(), COL_TESTS),
         entry.last_line
     );
     line.trim_end().to_owned()
+}
+
+/// Render a work jail's exit code for the `EXIT` column (C-29).
+///
+/// `?` means the jail wrote no readable `.rc`, which is not the same fact as
+/// exit 0: a `0 B` patch beside `0` is a provider that ran cleanly and wrote
+/// nothing, and beside `137` is one the deadline killed mid-edit.
+#[must_use]
+pub fn exit_label(code: Option<i32>) -> String {
+    code.map_or_else(|| "?".to_owned(), |c| c.to_string())
 }
 
 /// The `git apply` lines for the passing patches, in jail order (C-26).

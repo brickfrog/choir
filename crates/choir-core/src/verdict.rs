@@ -64,3 +64,13 @@ pub fn from_rc(raw: &str) -> Verdict {
         Err(_) => Verdict::Fail(255),
     }
 }
+
+/// The raw exit code in a `<slot>.rc` file, or `None` when unparseable (C-29).
+///
+/// Deliberately not [`from_rc`]: a work jail has no verdict, only an exit code,
+/// and collapsing an unreadable `.rc` into `Fail(255)` would print a `255` the
+/// jail never reported.
+#[must_use]
+pub fn code_from_rc(raw: &str) -> Option<i32> {
+    raw.trim().parse::<i32>().ok()
+}

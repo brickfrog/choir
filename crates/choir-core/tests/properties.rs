@@ -152,12 +152,13 @@ proptest! {
         provider in any_provider(),
         bytes in any::<usize>(),
         v in any_verdict(),
+        exit in proptest::option::of(any::<i32>()),
         last in "[a-zA-Z0-9 ]{1,30}",
     ) {
         let trimmed = last.trim_end().to_owned();
         prop_assume!(!trimmed.is_empty());
         let line = report::row(&Row {
-            index, provider, bytes, verdict: v, last_line: last,
+            index, provider, bytes, exit, verdict: v, last_line: last,
         });
         prop_assert!(line.ends_with(&trimmed), "{line:?} should end with {trimmed:?}");
         prop_assert!(line.starts_with(&index.to_string()));
@@ -176,6 +177,7 @@ proptest! {
                 index,
                 provider: Provider::Claude,
                 bytes: 1,
+                exit: Some(0),
                 verdict: *v,
                 last_line: String::new(),
             })

@@ -94,17 +94,16 @@ If you always pass the same `--test` for a project, that is what a shell alias i
 | `-n <count>` | `2` | Work jails. Providers alternate, so the default is one of each. |
 | `--providers <list>` | `claude,codex` | Comma-separated. The only accepted words are `claude` and `codex`; anything else is an error. `--providers claude` gives an all-Claude run. The audit jail takes the next index in the same rotation, which is why the example below audits with `codex`. |
 | `--timeout <secs>` | `1200` | Per jail, passed straight to `nsjail --time_limit`. The kernel enforces it. |
-| `--out <dir>` | `./choir-out` | Where patches are written. The only thing Choir leaves on disk. Relative to your current directory, so running from inside the repo puts it in your working tree. |
+| `--out <dir>` | `./choir-out` | Where patches are written, as `<index>.patch`, beside each jail's log: `<index>.log` from the work jail and `<index>.verify.log` from the sealed one. The only thing Choir leaves on disk, and the only record of a run once the scratch tree is removed. Relative to your current directory, so running from inside the repo puts it in your working tree. |
 | `--cache <path>` | none | Repeatable. Mounts a host path read-only into every jail, at the same path it has on the host, so a test command finds it where it already expects it. Verify jails have no network at all, so this is the only way a dependency cache reaches one: without it `cargo test` cannot resolve crates.io and every patch is reported as failing whatever it contains. Read-only, never a writable bind, and it brings no network with it. |
 
 Exit code is 0 if at least one patch passed your test command, 1 otherwise.
 
-Your working tree must be committed or stashed. Choir copies `--repo` as it stands,
-and the patch it extracts is relative to `HEAD`, so uncommitted changes ship into every
-jail, appear inside every patch, and then collide with themselves when the patch is
-applied for testing. Every row will say `APPLY FAILED`. Choir does not check for this,
-because a check that refuses to run is the shape of thing that killed the last two
-versions of this program.
+Your working tree does not need to be committed. Choir copies `--repo` as it stands and
+commits that copy inside its own scratch directory, so the tree the jails receive — your
+uncommitted edits and your untracked files included — is the baseline every patch is a
+diff against. A patch therefore contains what the model changed and nothing else. Your
+own repository is never written to, and nothing is ever committed in it.
 
 ### Example
 
