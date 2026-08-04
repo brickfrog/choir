@@ -12,6 +12,25 @@ use crate::verdict::Verdict;
 /// Column header for the results table.
 pub const HEADER: &str = "JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER";
 
+/// Render the unpatched tree's test verdict immediately above the table (C-30).
+///
+/// The table alone cannot tell a run where every patch is bad from one where the
+/// `--test` command cannot run sealed at all: before `--cache` existed, every
+/// patch in this repository was reported `FAIL` because cargo could not reach
+/// crates.io from a verify jail. A baseline that already passes is the same gap
+/// inverted — every `PASS` below it says nothing. So: the same command, the same
+/// jail, the same labels, against the tree the models started from. One more
+/// fact, and nothing else — every patch is still tested, printed, and offered
+/// whatever this says. Spelled out rather than abbreviated because the table is
+/// pasted into review threads by people who have never run Choir.
+#[must_use]
+pub fn baseline(verdict: Verdict) -> String {
+    format!(
+        "baseline (--test on the unpatched tree, same sealed jail): {}",
+        verdict.label()
+    )
+}
+
 const COL_JAIL: usize = 5;
 const COL_PROVIDER: usize = 10;
 const COL_PATCH: usize = 9;

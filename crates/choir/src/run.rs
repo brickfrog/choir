@@ -1,6 +1,6 @@
 //! The three waves, in order.
 //!
-//! Wave 1 runs the providers, wave 2 tests their patches, wave 3 comments. Each
+//! Wave 1 runs the providers, wave 2 tests the base and patches, wave 3 comments. Each
 //! wave is one blocking shell-out that backgrounds its jails and waits, so a
 //! wave costs about its longest jail rather than the serial sum (N-4).
 //!
@@ -69,10 +69,10 @@ pub fn execute(cfg: &Config) -> i32 {
 
     work_wave(cfg, &paths);
     let attempts = stage(cfg, &paths);
-    verify_wave(cfg, &attempts);
+    let baseline = verify_wave(cfg, &paths, &attempts);
 
     let rows = collect(&paths, &attempts);
-    print_table(&rows, &paths.out);
+    print_table(baseline, &rows, &paths.out);
     let passed = rows.iter().filter(|r| r.verdict.passed()).count();
 
     audit_wave(cfg, &paths);
@@ -420,18 +420,21 @@ fn stage(cfg: &Config, paths: &Paths) -> Vec<Attempt> {
         .collect()
 }
 
-/// Wave 2: one sealed jail per applicable patch. No network flag at all.
-fn verify_wave(cfg: &Config, attempts: &[Attempt]) {
-    let jails: Vec<Jail> = attempts
-        .iter()
-        .filter_map(|a| match &a.staged {
-            Staged::Ready(slot) => Some(Jail::new(jail::verify(cfg, slot), slot.clone())),
-            Staged::Skipped(_) => None,
-        })
-        .collect();
+/// Wave 2: the unpatched base and one sealed jail per applicable patch.
+fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> Verdict {
+    let baseline = paths.slot("b", 0);
+    prep_slot(&baseline, &cfg.test_cmd);
+    sys::copy_tree(&paths.base_repo(), &format!("{baseline}/repo"));
+
+    let mut jails = vec![Jail::new(jail::verify(cfg, &baseline), baseline.clone())];
+    jails.extend(attempts.iter().filter_map(|a| match &a.staged {
+        Staged::Ready(slot) => Some(Jail::new(jail::verify(cfg, slot), slot.clone())),
+        Staged::Skipped(_) => None,
+    }));
 
     println!("[verify] {} jails started", jails.len());
     let _ = sys::sh(&wave::script(&jails));
+    verdict::from_rc(&sys::read_text(Path::new(&format!("{baseline}.rc"))))
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -476,8 +479,9 @@ fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
 
 /// The entire user interface: rows in jail order, then a `git apply` line per
 /// passing patch. No ranking, no recommendation, no winner.
-fn print_table(rows: &[Row], out_dir: &str) {
-    println!("\n{}", report::HEADER);
+fn print_table(baseline: Verdict, rows: &[Row], out_dir: &str) {
+    println!("\n{}", report::baseline(baseline));
+    println!("{}", report::HEADER);
     for entry in rows {
         println!("{}", report::row(entry));
     }

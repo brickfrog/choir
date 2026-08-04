@@ -3,7 +3,8 @@
 Choir runs one coding task N times in parallel. Each attempt gets its own throwaway
 nsjail sandbox with its own copy of your repository, and runs a provider CLI — Claude
 Code or Codex, on your own paid subscription — inside it. Each jail returns a patch.
-Choir then applies each patch to a fresh copy of the repo and runs your test command
+Choir first runs your test command on the unpatched base, then applies each patch to a
+fresh copy of the repo and runs the command again
 against it in a jail with no network namespace at all, and prints a table of which
 patches passed. One more jail reads the repo and the patches and prints commentary.
 Choir never modifies or deletes anything in your checkout: it writes one new directory
@@ -89,7 +90,7 @@ If you always pass the same `--test` for a project, that is what a shell alias i
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | *(positional)* | — | The instruction. Exactly one, passed verbatim to every work jail. |
-| `--test '<cmd>'` | required | Your repository's own test command. Run inside a jail, against each patch. |
+| `--test '<cmd>'` | required | Your repository's own test command. Run inside a jail against the unpatched base and each patch. |
 | `--repo <path>` | `.` | Repository to copy. Read only; Choir never writes inside it. |
 | `-n <count>` | `2` | Work jails. Providers alternate, so the default is one of each. |
 | `--providers <list>` | `claude,codex` | Comma-separated. The only accepted words are `claude` and `codex`; anything else is an error. `--providers claude` gives an all-Claude run. The audit jail takes the next index in the same rotation, which is why the example below audits with `codex`. |
@@ -136,12 +137,13 @@ $ choir "the auth test is flaky under load — find and fix the real race" \
 
 3 work jails: 0=claude 1=codex 2=claude; audit=codex; timeout 1200s
 [work]   3 jails started
-[verify] 2 jails started
+[verify] 3 jails started
 
-JAIL PROVIDER  PATCH    TESTS         LAST LINE FROM PROVIDER
-0    claude    4.1 KB   PASS          Replaced the double-checked flag with a lock in session.py.
-1    codex     0 B      -             stream error: rate limit reached; resets 14:05
-2    claude    6.8 KB   FAIL(1)       Rewrote the fixture to drive a fake clock.
+BASELINE TESTS FAIL(1)
+JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER
+0    claude    4.1 KB   0     PASS          Replaced the double-checked flag with a lock in session.py.
+1    codex     0 B      1     -             stream error: rate limit reached; resets 14:05
+2    claude    6.8 KB   0     FAIL(1)       Rewrote the fixture to drive a fake clock.
 
   git apply /home/justin/proj/choir-out/0.patch
 
@@ -154,6 +156,9 @@ test timing rather than the code under test, which is why it fails.
 
 Rows are in jail order. Choir does not rank them, does not sort them, and does not pick
 one. `PATCH` is a byte count and exists for one reason: to tell `0 B` from not-`0 B`.
+Before the table, `BASELINE TESTS` reports the same command against the unpatched base
+copy in the same sealed verify jail. It is context only: Choir does not use it to rank,
+gate, skip, or alter any patch or verdict.
 `0 B` means that jail produced no diff — it may have been rate-limited, refused, hung,
 or simply not solved the problem, and Choir does not know which. `TESTS` is `PASS`,
 `FAIL(<code>)`, `APPLY FAILED` if the patch would not apply to a clean tree, or `-` if

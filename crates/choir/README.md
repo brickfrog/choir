@@ -17,8 +17,9 @@ what the program *concludes* rather than what it *does*, it belongs in the core.
 
 1. **work** — `n` provider jails, each with a writable copy of the repository
    and one credential. Networked through pasta.
-2. **verify** — one jail per applicable patch, with no network flag at all: its
-   own empty network namespace. This is where untrusted patches run.
+2. **verify** — one jail for the unpatched base and one per applicable patch,
+   with no network flag at all: their own empty network namespaces. This is
+   where the baseline and untrusted patches run.
 3. **audit** — one more provider jail, read-only on the repo, after the table is
    already printed.
 

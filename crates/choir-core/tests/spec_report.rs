@@ -39,6 +39,19 @@ fn c24_verdict_labels() {
     assert_eq!(Verdict::NoPatch.label(), "-");
 }
 
+/// C-30: the baseline line reports the existing mechanical verdict label.
+#[test]
+fn c30_baseline_verdict_line() {
+    let pass = report::baseline(Verdict::Pass);
+    assert!(
+        pass.starts_with("baseline (--test on the unpatched tree"),
+        "{pass}"
+    );
+    assert!(pass.ends_with("PASS"));
+    assert!(report::baseline(Verdict::Fail(101)).ends_with("FAIL(101)"));
+    assert_ne!(pass, report::baseline(Verdict::Fail(1)));
+}
+
 /// C-22, E-10: byte counts below 1 KiB are plain; above, one decimal of KiB.
 #[test]
 fn c22_size_label() {
@@ -66,19 +79,19 @@ fn e10_size_label_at_the_limit() {
 fn c23_row_layout() {
     assert_eq!(
         row_of(0, Provider::Claude, 4198, Verdict::Pass, "did it"),
-        "0    claude    4.0 KB   PASS          did it"
+        "0    claude    4.0 KB   0     PASS          did it"
     );
     assert_eq!(
         row_of(1, Provider::Codex, 0, Verdict::NoPatch, "rate limited"),
-        "1    codex     0 B      -             rate limited"
+        "1    codex     0 B      0     -             rate limited"
     );
     assert_eq!(
         row_of(2, Provider::Codex, 512, Verdict::ApplyFailed, ""),
-        "2    codex     512 B    APPLY FAILED"
+        "2    codex     512 B    0     APPLY FAILED"
     );
     assert_eq!(
         row_of(3, Provider::Claude, 2048, Verdict::Fail(1), "x"),
-        "3    claude    2.0 KB   FAIL(1)       x"
+        "3    claude    2.0 KB   0     FAIL(1)       x"
     );
 }
 
@@ -186,7 +199,7 @@ fn e15_audit_body_is_sanitised() {
 /// The header matches the column widths the rows are rendered with.
 #[test]
 fn header_matches_columns() {
-    assert!(report::HEADER.starts_with("JAIL PROVIDER  PATCH    TESTS "));
+    assert!(report::HEADER.starts_with("JAIL PROVIDER  PATCH    EXIT  TESTS "));
     assert!(report::HEADER.ends_with("LAST LINE FROM PROVIDER"));
 }
 
@@ -209,24 +222,4 @@ fn exit_column_separates_empty_from_killed() {
     assert_eq!(report::exit_label(None), "?", "unknown is not exit 0");
     assert_ne!(report::exit_label(Some(0)), report::exit_label(None));
     assert!(killed.starts_with('1'));
-}
-
-/// C-23: the header names every column a row renders, in order.
-#[test]
-fn header_matches_the_row_layout() {
-    for column in [
-        "JAIL",
-        "PROVIDER",
-        "PATCH",
-        "EXIT",
-        "TESTS",
-        "LAST LINE FROM PROVIDER",
-    ] {
-        assert!(report::HEADER.contains(column), "header lost {column}");
-    }
-    let line = row_of(0, Provider::Claude, 141, Verdict::Pass, "ok");
-    assert!(line.contains("141 B") && line.contains("PASS"));
-    assert!(
-        report::HEADER.find("EXIT").expect("exit") < report::HEADER.find("TESTS").expect("tests")
-    );
 }

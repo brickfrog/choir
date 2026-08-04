@@ -128,6 +128,11 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **C-29** A row shows the work jail's own exit code, or `?` when it wrote no
   readable `.rc`. A `0 B` patch beside `0` is a provider that ran cleanly and
   produced nothing; beside `137` it is one the deadline killed.
+- **C-30** The verify wave first runs `--test` once against an unpatched copy of
+  the base tree, through the same verify jail template and wave runner as patch
+  trees. Immediately above the results table Choir prints `BASELINE TESTS`
+  followed by that jail's existing verdict label. The baseline neither gates nor
+  changes any patch jail or result.
 
 ---
 

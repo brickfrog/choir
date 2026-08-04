@@ -5,7 +5,7 @@ flowchart TD
   CLI["choir INSTRUCTION, with test, repo, n, providers, timeout, out"]
   CLI --> W["wave 1: n work jails, nsjail with --use_pasta<br/>one blocking sh -c that backgrounds n jails and waits<br/>each jail edits its own repo copy through a rw bind mount"]
   W --> P["host git: restore pristine .git, add -A, diff --cached --binary HEAD<br/>out/N.patch written before any verdict exists"]
-  P --> V["wave 2: one verify jail per patch, no network flag, no namespace<br/>host cp -a and git apply first, then your test command<br/>its exit code is the only verdict in the program"]
+  P --> V["wave 2: one verify jail for the base and per patch, no network flag, no namespace<br/>host cp -a and git apply first, then your test command<br/>each exit code is a mechanical verdict"]
   V --> T["table: one row per jail in index order,<br/>plus a git apply line per passing patch"]
   T --> A["wave 3: audit jail, --use_pasta, repo and patches read-only<br/>prose printed after the table is already on screen"]
 ```

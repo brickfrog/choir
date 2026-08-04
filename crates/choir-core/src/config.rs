@@ -377,7 +377,9 @@ pub fn help_text() -> String {
     s.push_str("  choir <instruction> --test '<cmd>' [FLAGS]\n");
     s.push_str("  choir - --test '<cmd>' [FLAGS]        # instruction from stdin\n\n");
     s.push_str("FLAGS\n");
-    s.push_str("  --test '<cmd>'      required. Your test command, run by sh inside a jail.\n");
+    s.push_str("  --test '<cmd>'      required. Your test command, run by sh inside a jail:\n");
+    s.push_str("                      against every patch, and once against the tree as it\n");
+    s.push_str("                      stands, reported above the table.\n");
     s.push_str("  --repo <path>       repository to copy (default .). Never written to.\n");
     s.push_str("  -n <count>          work jails (default 2). Providers alternate.\n");
     s.push_str("  --providers <list>  comma-separated: claude, codex (default both).\n");
