@@ -144,12 +144,16 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   credential to `/w0/cred/`, and clean up with `rm -rf ''`, which exits 0 having
   removed nothing.
 - **E-17** A second run with `--out` inside `--repo` → the previous run's
-  patches do not enter any jail. `--out` defaults to `./choir-out`, which the
-  base `cp -a` would otherwise sweep up, `git add -A` would stage inside every
-  jail, and `git apply` would then reject with *already exists in working
-  directory* — losing an entire billed wave to a directory Choir created itself.
-  Choir writes a `.gitignore` of `*` into `--out`, which ignores the directory
-  including the ignore file.
+  patches do not enter any jail, and nothing in the user's checkout is written.
+  `--out` defaults to `./choir-out`, which the base `cp -a` would otherwise
+  sweep up, `git add -A` would stage inside every jail, and `git apply` would
+  then reject with *already exists in working directory* — losing an entire
+  billed wave to a directory Choir created itself. The exclusion is written to
+  `.git/info/exclude` in Choir's own scratch copy: per-repository, never
+  tracked, and inert for files that *are* tracked, which is correct because a
+  committed output directory causes no pollution to begin with. Writing a
+  `.gitignore` into `--out` instead is prohibited: with `--out .` that silently
+  destroys the user's own `.gitignore`.
 - **E-18** A work jail that modified its own `.git` → neither escapes the
   sandbox nor loses its patch. The pristine git directory is restored from the
   base copy before any host `git` runs. Two distinct failures, one cause:

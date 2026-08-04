@@ -100,14 +100,6 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     sys::mkdir_all(Path::new(&format!("{dir}/patches")));
     sys::mkdir_all(Path::new(&cfg.out));
 
-    // `--out` defaults to `./choir-out`, i.e. inside `--repo`. Without this the
-    // next run's `cp -a` sweeps up this run's patches, `git add -A` stages them
-    // inside every jail, every patch carries every earlier patch, and every
-    // `git apply` then fails with "already exists in working directory" — a
-    // whole billed wave lost to a directory Choir created itself. A `.gitignore`
-    // of `*` ignores the directory including the ignore file (E-17).
-    sys::write_text(Path::new(&format!("{}/.gitignore", cfg.out)), "*\n");
-
     // The host's resolv.conf names 127.0.0.53, which inside a pasta namespace is
     // the jail's own empty loopback. One line naming pasta's gateway instead.
     sys::write_text(
@@ -115,10 +107,36 @@ fn prepare(cfg: &Config) -> Option<Paths> {
         "nameserver 10.255.255.1\n",
     );
 
-    Some(Paths {
-        out: sys::absolute(&cfg.out),
-        dir,
-    })
+    let out = sys::absolute(&cfg.out);
+    exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out);
+
+    Some(Paths { dir, out })
+}
+
+/// Hide `--out` from the jails, when it sits inside `--repo` (E-17).
+///
+/// `--out` defaults to `./choir-out`, i.e. inside the repository. Without this
+/// the next run's `cp -a` sweeps up this run's patches, `git add -A` stages them
+/// inside every jail, every patch carries every earlier patch, and every
+/// `git apply` then fails with *already exists in working directory* — a whole
+/// billed wave lost to a directory Choir created itself.
+///
+/// The exclusion is written to `.git/info/exclude` in Choir's own scratch copy,
+/// never to the user's tree. `info/exclude` is per-repository, is never tracked,
+/// and has no effect on files that *are* tracked — which is exactly right, since
+/// a committed output directory causes no pollution in the first place.
+///
+/// An earlier attempt wrote a `.gitignore` of `*` into `--out` itself. That
+/// silently overwrote the user's own `.gitignore` when `--out` was the
+/// repository root, breaking the one promise Choir makes: it never modifies
+/// anything in your checkout.
+fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str) {
+    let Some(relative) = out_abs.strip_prefix(&format!("{repo_abs}/")) else {
+        return;
+    };
+    let exclude = format!("{dir}/repo/.git/info/exclude");
+    let existing = sys::read_text(Path::new(&exclude));
+    sys::write_text(Path::new(&exclude), &format!("{existing}\n/{relative}/\n"));
 }
 
 /// Lay out the part of a slot every jail needs: `tmp`, and `cmd` holding the
@@ -342,7 +360,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{extract, Paths};
+    use super::{exclude_out_from_base, extract, Paths};
     use crate::sys;
     use std::fs;
     use std::path::PathBuf;
@@ -454,5 +472,80 @@ mod tests {
         assert!(patch.contains("REAL FIX"), "missing edit: {patch}");
         assert!(patch.contains("b.txt"), "missing new file: {patch}");
         sys::remove_tree(&paths.dir);
+    }
+
+    /// E-17: an output directory inside the repo never enters a jail, and the
+    /// user's own tree is never written to.
+    ///
+    /// The first attempt at this fix wrote a `.gitignore` of `*` into `--out`,
+    /// which silently destroyed the user's own `.gitignore` when `--out` was the
+    /// repository root. This test pins both halves: the patches are excluded,
+    /// and nothing outside Choir's scratch copy is touched.
+    #[test]
+    fn out_dir_inside_the_repo_is_hidden_from_jails() {
+        let root = scratch("exclude");
+        let root_s = root.to_str().expect("utf-8").to_owned();
+        let user_repo = format!("{root_s}/proj");
+
+        fs::create_dir_all(&user_repo).expect("repo");
+        git(&user_repo, &["init", "-q"]);
+        git(&user_repo, &["config", "user.email", "t@t"]);
+        git(&user_repo, &["config", "user.name", "t"]);
+        fs::write(format!("{user_repo}/f.txt"), "orig\n").expect("f.txt");
+        fs::write(format!("{user_repo}/.gitignore"), "target/\n").expect("gitignore");
+        git(&user_repo, &["add", "-A"]);
+        git(&user_repo, &["commit", "-qm", "init"]);
+
+        // A previous run left patches behind, untracked.
+        let out = format!("{user_repo}/choir-out");
+        fs::create_dir_all(&out).expect("out");
+        fs::write(format!("{out}/0.patch"), "PREVIOUS\n").expect("patch");
+
+        // What prepare() does: copy the tree, then exclude --out in the copy.
+        let base = format!("{root_s}/repo");
+        sys::copy_tree(&user_repo, &base);
+        exclude_out_from_base(&root_s, &user_repo, &out);
+
+        // A jail edits the tree; extraction stages it.
+        fs::write(format!("{base}/f.txt"), "changed\n").expect("edit");
+        git(&base, &["add", "-A"]);
+        let (_, staged) = sys::run("git", &["-C", &base, "diff", "--cached", "--name-only"]);
+        let staged = String::from_utf8_lossy(&staged);
+
+        assert!(staged.contains("f.txt"), "real edit must stage: {staged:?}");
+        assert!(
+            !staged.contains("choir-out"),
+            "previous run's patches leaked into the jail: {staged:?}"
+        );
+
+        // The user's tree is untouched: their .gitignore still says what it said.
+        let user_ignore = fs::read_to_string(format!("{user_repo}/.gitignore")).expect("read");
+        assert_eq!(
+            user_ignore, "target/\n",
+            "Choir modified the user's .gitignore"
+        );
+        assert!(
+            !fs::exists(format!("{out}/.gitignore")).unwrap_or(false),
+            "Choir wrote into the user's output directory"
+        );
+
+        sys::remove_tree(&root_s);
+    }
+
+    /// E-17: an output directory outside the repo needs no exclusion, and the
+    /// helper must leave the scratch copy alone rather than guessing.
+    #[test]
+    fn out_dir_outside_the_repo_is_left_alone() {
+        let root = scratch("noexclude");
+        let root_s = root.to_str().expect("utf-8").to_owned();
+        let base = format!("{root_s}/repo");
+        fs::create_dir_all(format!("{base}/.git/info")).expect("git dir");
+        fs::write(format!("{base}/.git/info/exclude"), "# original\n").expect("exclude");
+
+        exclude_out_from_base(&root_s, "/some/repo", "/elsewhere/out");
+
+        let after = fs::read_to_string(format!("{base}/.git/info/exclude")).expect("read");
+        assert_eq!(after, "# original\n", "unrelated --out must change nothing");
+        sys::remove_tree(&root_s);
     }
 }
