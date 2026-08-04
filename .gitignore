@@ -11,6 +11,7 @@ target/
 .moonagent/
 test_syntax.mbt
 _build/
+build/
 pkg.generated.mbti
 .serena/
 SPEC.md
