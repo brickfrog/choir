@@ -177,6 +177,22 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-22** A work jail that made its own `.git` undeletable → the restore still
+  happens. `rm -rf` needs write and execute on a directory to unlink what is
+  inside it, so `chmod 0500` across `.git` — or on the repository root above
+  it — made the E-18 restore fail, and the swallowed failure left the hostile
+  config in place to execute. That is a complete bypass of E-18 and it was
+  measured firing. The slot tree is unlocked with `chmod -R u+rwX` first; the
+  uid mapping into a jail is the identity, so the user owns every file a model
+  created and the unlock cannot fail.
+- **E-21** `--repo` being a git worktree or submodule → the base copy is made a
+  standalone repository first. `cp -a` copies such a `.git` verbatim and it is
+  a *file* reading `gitdir: /absolute/path/into/the/user's/real/repository`, so
+  host-side extraction followed it straight back out of the scratch tree and
+  staged the model's changes into the user's own index — measured, their
+  worktree came back reading `MM a.txt`, with N jails racing on one index.
+  Re-initialising loses nothing: Choir only ever diffs the model's changes
+  against the tree the jail started from.
 - **E-20** Any flag given an empty value → usage error. `--out ""` would
   resolve to the filesystem root and `--test ""` would run nothing and exit 0,
   marking every patch `PASS`. No flag here has a meaningful empty form.

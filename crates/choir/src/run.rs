@@ -97,6 +97,7 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     }
 
     sys::copy_tree(&cfg.repo, &format!("{dir}/repo"));
+    detach_gitfile(&dir);
     sys::mkdir_all(Path::new(&format!("{dir}/patches")));
     sys::mkdir_all(Path::new(&cfg.out));
 
@@ -111,6 +112,40 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out, cfg.n);
 
     Some(Paths { dir, out })
+}
+
+/// Make the base copy a standalone repository when `--repo` is a git worktree
+/// or a submodule (E-21).
+///
+/// `cp -a` copies such a `.git` verbatim, and it is a *file* reading
+/// `gitdir: /absolute/path/into/the/user's/real/repository`. Host-side
+/// extraction then follows it straight back out of the scratch tree: measured,
+/// `git add -A` in a jail's copy staged the model's changes into the user's own
+/// index and left their worktree reading `MM a.txt`. With N jails they race on
+/// that one index. It breaks the only promise Choir makes.
+///
+/// Re-initialising is enough because Choir never needs the user's history — it
+/// only ever diffs the model's changes against the tree the jail started from,
+/// and every patch is applied to a copy of that same tree.
+fn detach_gitfile(dir: &str) {
+    let repo = format!("{dir}/repo");
+    if !Path::new(&format!("{repo}/.git")).is_file() {
+        return;
+    }
+    sys::remove_tree(&format!("{repo}/.git"));
+    let _ = sys::git(&["-C", &repo, "init", "-q"]);
+    let _ = sys::git(&["-C", &repo, "add", "-A"]);
+    let _ = sys::git(&[
+        "-C",
+        &repo,
+        "-c",
+        "user.name=choir",
+        "-c",
+        "user.email=choir@localhost",
+        "commit",
+        "-qm",
+        "base",
+    ]);
 }
 
 /// Hide `--out` from the jails, when it sits inside `--repo` (E-17).
@@ -271,6 +306,13 @@ fn shred_credentials(jails: &[Jail]) {
 /// reached a patch anyway.
 fn extract(paths: &Paths, index: usize) -> usize {
     let repo = format!("{}/repo", paths.slot("w", index));
+    // Unlock before removing (E-22): a model that runs `chmod 0500` on its own
+    // `.git`, or on the repository root above it, makes a plain `rm -rf` fail —
+    // and the swallowed failure leaves its hostile git config in place to
+    // execute below. Measured: the payload fired. The whole slot tree is
+    // unlocked, because the entry for `.git` is unlinked from `repo`, not from
+    // `.git` itself.
+    sys::unlock_tree(&repo);
     sys::remove_tree(&format!("{repo}/.git"));
     sys::copy_tree(
         &format!("{}/.git", paths.base_repo()),
@@ -412,10 +454,10 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{exclude_out_from_base, extract, gitignore_escape, Paths};
+    use super::{detach_gitfile, exclude_out_from_base, extract, gitignore_escape, Paths};
     use crate::sys;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn scratch(tag: &str) -> PathBuf {
@@ -509,6 +551,48 @@ mod tests {
         sys::remove_tree(&paths.dir);
     }
 
+    /// E-22: a model cannot survive the `.git` restore by locking directories.
+    ///
+    /// `rm -rf` needs write and execute on a directory to unlink its contents.
+    /// A model that `chmod 0500`s every directory in its own `.git` made the
+    /// restore fail silently, so its hostile config stayed and executed during
+    /// extraction — a complete bypass of E-18. Verified to fire before the fix.
+    #[test]
+    fn extract_defeats_a_permission_locked_git_dir() {
+        let canary = scratch("lockcanary").join("PWNED");
+        let canary_s = canary.to_str().expect("utf-8").to_owned();
+
+        let (paths, bytes) = staged_run("locked", |slot_repo| {
+            fs::write(
+                format!("{slot_repo}/.gitattributes"),
+                "* diff=evil filter=evil\n",
+            )
+            .expect("attrs");
+            let hostile = format!(
+                "[diff \"evil\"]\n\ttextconv = sh -c \"echo x > {canary_s}; cat\"\n\
+                 [filter \"evil\"]\n\tclean = sh -c \"echo x > {canary_s}; cat\"\n\tsmudge = cat\n"
+            );
+            let cfg_path = format!("{slot_repo}/.git/config");
+            let existing = fs::read_to_string(&cfg_path).unwrap_or_default();
+            fs::write(&cfg_path, existing + &hostile).expect("hostile config");
+            fs::write(format!("{slot_repo}/keep.txt"), "REAL FIX\n").expect("edit");
+
+            // The bypass: make every directory in .git undeletable, and the
+            // repository root too, so the entry for .git cannot be unlinked.
+            let _ = sys::run("chmod", &["-R", "u-w", &format!("{slot_repo}/.git")]);
+            let _ = sys::run("chmod", &["u-w", slot_repo]);
+        });
+
+        assert!(
+            !canary.exists(),
+            "a permission-locked .git survived the restore and executed"
+        );
+        assert!(bytes > 0, "the real edit must still reach the patch");
+        let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
+        assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
+        sys::remove_tree(&paths.dir);
+    }
+
     /// E-18: a model that commits its work still yields a complete patch.
     ///
     /// `git diff --cached HEAD` asks a model-controlled repository what its own
@@ -579,6 +663,58 @@ mod tests {
             "spaced path lost"
         );
         sys::remove_tree(&paths.dir);
+    }
+
+    /// E-21: a git worktree's `.git` gitfile must not lead host git back into
+    /// the user's real repository.
+    ///
+    /// `cp -a` copies the gitfile verbatim, so before the fix `git add -A` in a
+    /// jail's copy staged the model's changes into the user's own index and
+    /// left their worktree dirty.
+    #[test]
+    fn a_worktree_gitfile_is_detached_from_the_users_repo() {
+        let root = scratch("worktree");
+        let root_s = root.to_str().expect("utf-8").to_owned();
+        let main = format!("{root_s}/main");
+
+        fs::create_dir_all(&main).expect("main");
+        git(&main, &["init", "-q"]);
+        git(&main, &["config", "user.email", "t@t"]);
+        git(&main, &["config", "user.name", "t"]);
+        fs::write(format!("{main}/a.txt"), "base\n").expect("a.txt");
+        git(&main, &["add", "-A"]);
+        git(&main, &["commit", "-qm", "init"]);
+
+        let wt = format!("{root_s}/feature");
+        git(&main, &["worktree", "add", "-q", &wt, "-b", "feature"]);
+        assert!(
+            Path::new(&format!("{wt}/.git")).is_file(),
+            "a worktree's .git must be a gitfile for this test to mean anything"
+        );
+
+        // What prepare() does: copy the tree, then detach it.
+        let dir = format!("{root_s}/run");
+        fs::create_dir_all(&dir).expect("run");
+        sys::copy_tree(&wt, &format!("{dir}/repo"));
+        detach_gitfile(&dir);
+
+        assert!(
+            Path::new(&format!("{dir}/repo/.git")).is_dir(),
+            "the base copy must own a real git directory"
+        );
+
+        // A jail edits its copy; extraction must not reach the user's repo.
+        fs::write(format!("{dir}/repo/a.txt"), "jailwork\n").expect("edit");
+        let _ = sys::git(&["-C", &format!("{dir}/repo"), "add", "-A"]);
+
+        let (_, dirty) = sys::run("git", &["-C", &wt, "status", "--porcelain"]);
+        assert!(
+            dirty.is_empty(),
+            "Choir dirtied the user's worktree: {}",
+            String::from_utf8_lossy(&dirty)
+        );
+
+        sys::remove_tree(&root_s);
     }
 
     /// E-17: an output directory inside the repo never enters a jail, and the

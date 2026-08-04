@@ -1,8 +1,8 @@
 # Choir Repo Rules
 
 > **v4 note.** The owner directed the Rust rewrite and said to disregard the v3 limits.
-> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 2,919 (1,411
-> shipped, 1,508 test and proof). The v3 document said that number "may never be edited
+> The old rules capped `src/` plus `test/` at **600 lines**; v4 is 3071 (1,469
+> shipped, 1602 test and proof). The v3 document said that number "may never be edited
 > upward by an agent" — so this edit is recorded as the owner's decision, not an agent's.
 > The postmortem below is unchanged, because none of it stopped being true.
 
@@ -37,7 +37,7 @@ find crates -name '*.rs' -path '*/src/*' ! -name proofs.rs \
   -exec sed -s '/^#\[cfg(test)\]/,$d' {} + | wc -l
 ```
 
-Currently **1,411**, leaving about 90 lines of headroom. The `-s` is load-bearing: without
+Currently **1,469**, leaving about 30 lines of headroom. The `-s` is load-bearing: without
 it sed treats the files as one stream and silently deletes everything after the first
 `#[cfg(test)]` it sees, reporting a number hundreds of lines too low.
 
