@@ -9,3 +9,6 @@ erl_crash.dump
 .serena/
 .beads/
 .mcp.json
+
+# gleam export escript output
+/choir

@@ -40,11 +40,25 @@ const audit_prompt = "Read the repository at /repo and the patches at /patches. 
 
 pub fn main() {
   case parse(argv.load().arguments) {
-    Ok(cfg) -> halt(run_choir(cfg))
+    Ok(cfg) -> halt(run_choir(from_stdin(cfg)))
     Error(e) -> {
       io.println_error("choir: " <> e)
       halt(1)
     }
+  }
+}
+
+/// An instruction of `-` is read from stdin instead. A paragraph does not
+/// belong in a shell argument, and a heredoc is the shell's own answer to
+/// that. Only `-` reads it, so `choir` with no stdin never blocks waiting.
+fn from_stdin(c: Cfg) -> Cfg {
+  case c.instruction {
+    "-" ->
+      case simplifile.read("/dev/stdin") {
+        Ok(s) -> Cfg(..c, instruction: string.trim(s))
+        Error(_) -> c
+      }
+    _ -> c
   }
 }
 

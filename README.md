@@ -60,16 +60,28 @@ file alone.
 **3. Choir itself.** Gleam 1.18 on Erlang/OTP 29:
 
 ```sh
-gleam export escript
+gleam export escript && install -m755 choir ~/.local/bin/choir
 ```
 
-That produces a single self-contained executable.
+That is one 317 KB file. It is not statically linked — an escript needs `erl` on the
+machine that runs it, which you already have if you built it. Erlang is the only runtime
+dependency Choir adds to a host that already has nsjail, passt and a provider CLI.
 
 ## Usage
 
 ```
 choir "<instruction>" --test '<cmd>' [options]
+choir -  --test '<cmd>' [options]   <<'EOF'
+<instruction, as long as you like>
+EOF
 ```
+
+Run it from inside the repository you want worked on; `--repo` defaults to `.`. An
+instruction of `-` is read from stdin, because a paragraph does not belong in a shell
+argument. Nothing else is read from stdin, so `choir` never blocks waiting for input.
+
+If you always pass the same `--test` for a project, that is what a shell alias is for —
+`alias ct='choir --test "pytest -q"'`. Choir has no config file and will not grow one.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
