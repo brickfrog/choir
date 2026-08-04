@@ -203,6 +203,16 @@ and `CapEff` is `0000000000000000`, so the setuid `sudo` visible in the read-onl
 `/usr` is inert. The scratch directory the jails write through is deleted before Choir
 exits.
 
+**`--cache` is a deliberate hole in that inventory.** Each path you cache reappears
+inside *every* jail at its host path, so `--cache ~/.cargo` puts a `/home/<you>/.cargo`
+back into a tree that otherwise has no `/home` at all. Read-only, so a jail cannot
+corrupt what it shares — but a work jail has network, so treat anything you cache as
+readable by the model and by any code the model runs. Cache dependency caches, not
+directories that happen to sit beside credentials: `~/.npmrc`, `~/.m2/settings.xml` and
+`~/.docker/config.json` routinely hold registry tokens, and `~/.cargo/credentials.toml`
+exists the moment you run `cargo login`. The verify jail keeps its empty network
+namespace either way, so a cache reaches it without carrying a route out.
+
 **The verify jail is genuinely sealed.** It gets no network flag at all, which means
 nsjail's default: its own empty network namespace. Verified, and now asserted by a test
 that runs on every `cargo test`: exactly one interface and it is `lo`, an empty routing
