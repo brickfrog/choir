@@ -105,6 +105,24 @@ uncommitted edits and your untracked files included — is the baseline every pa
 diff against. A patch therefore contains what the model changed and nothing else. Your
 own repository is never written to, and nothing is ever committed in it.
 
+Choir copies your repository `1 + 2n` times per run — once as the base, once per work
+jail, once per verify jail — into the scratch directory `mktemp -d` chooses, so `TMPDIR`
+decides what that costs. Put it on the *same filesystem* as `--repo` and a copy-on-write
+filesystem makes the copies nearly free; anywhere else they are real byte copies, and a
+`tmpfs` `/tmp` spends RAM on them. Measured on a 392 MB checkout, same btrfs volume
+against the default `/tmp`:
+
+```
+$ du -sh ~/proj                    392M
+$ TMPDIR=/mnt/data/tmp             0.22 s per copy, 0 bytes of new space (reflinked)
+$ TMPDIR=/tmp        (tmpfs)       0.35 s per copy, 392 MB of RAM each
+```
+
+Same *kind* of filesystem is not enough: two separate btrfs volumes cannot share extents,
+and `cp` falls back to a full copy. Choir does not detect any of this — it never inspects
+the host — so pointing `TMPDIR` somewhere sensible is yours to do. At the default `-n 2`
+that is five copies: 2 GB of RAM on `/tmp`, or nothing at all beside the repo.
+
 ### Example
 
 ```
