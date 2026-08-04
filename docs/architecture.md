@@ -114,8 +114,11 @@ structurally impossible for Choir to discard work a provider produced.
 **Verify prep.** `cp -a <run>/repo <run>/v<N>/repo` then `git apply <out>/N.patch`, host side,
 before the verify jail starts. Without it, "the patch does not apply" and "the tests failed"
 collapse into one nonzero exit code. A zero-byte patch gets no verify jail and its row reads
-`-`, because there is nothing to apply. That byte count is the only condition in the program
-that skips anything. A size threshold, a path check, or a "looks like it only touches tests"
+`-`, because there is nothing to apply. A patch `git apply` rejects skips its jail too and
+reads `APPLY FAILED` — the host-side apply happens before the jail starts, so a rejected
+patch has no tree to test. Those two are the only conditions in the program that skip
+anything, and both are mechanical facts about the patch. A size threshold, a path check, or
+a "looks like it only touches tests"
 heuristic is the gate this design exists to not have.
 
 **Report.** One row per jail in index order, then a `git apply` line per passing patch, then
@@ -288,7 +291,13 @@ Vendor reachability is unchanged: `api.anthropic.com` and `api.openai.com` retur
 status codes either way, and twelve consecutive jails connected with no delay before the
 first request, so there is no readiness race to wait on. The one cost is DNS: the host's
 `/etc/resolv.conf` names `127.0.0.53`, which inside the namespace is the jail's own empty
-loopback, so Choir mounts a one-line `resolv.conf` naming pasta's gateway instead.
+loopback, so Choir mounts a one-line `resolv.conf` naming pasta's gateway instead. Know
+what that does and does not buy: nsjail runs pasta with `-g 10.255.255.1` and no
+`--dns-forward`, and `/etc/nsswitch.conf` is not in the mount list, so glibc NSS resolution
+fails in the jail with either that gateway or the host's real one. `curl` and Node's
+`getaddrinfo` both succeed with either. Both provider CLIs bundle their own resolution, so
+both work — a provider that resolved through pure NSS would not, and the fix then is to
+mount `/etc/nsswitch.conf`, not to probe the host for a nameserver.
 `--macvlan`, the only other facility, needs root. The verify jail takes no network flag at
 all. The README states this in the user's words — do not maintain a second copy that can
 drift.

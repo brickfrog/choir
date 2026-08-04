@@ -119,9 +119,10 @@ one. `PATCH` is a byte count and exists for one reason: to tell `0 B` from not-`
 `0 B` means that jail produced no diff — it may have been rate-limited, refused, hung,
 or simply not solved the problem, and Choir does not know which. `TESTS` is `PASS`,
 `FAIL(<code>)`, `APPLY FAILED` if the patch would not apply to a clean tree, or `-` if
-there was no patch to test. A `0 B` patch is the only condition that skips a verify
-jail, because there is nothing to apply, and it is the only condition under which Choir
-skips anything at all.
+there was no patch to test. Two conditions skip a verify jail and there are no others:
+a `0 B` patch, because there is nothing to apply, and a patch that `git apply` rejects,
+because the tree it would be tested against was never built. Both are mechanical facts
+about the patch, not judgements about it.
 
 `FAIL(137)` is the one ambiguous code. A jail killed by its `--timeout` exits 137, and
 so does a test process the kernel's OOM killer picked, and so does a test suite that
@@ -186,12 +187,17 @@ machine:
   Choir mounts — screenshots and keystroke injection. Under pasta the same command
   gives *unable to open display ":0"*.
 
-The cost is one line: the host's `/etc/resolv.conf` names `127.0.0.53`, which inside a
-pasta namespace is the jail's own empty loopback, so Choir writes a one-line
-`resolv.conf` naming pasta's gateway and mounts that instead. Reachability is otherwise
-identical — `api.anthropic.com` and `api.openai.com` return the same status codes under
-pasta as under `-N` — and there is no startup race: twelve consecutive jails connected
-successfully with no delay before the first request.
+The cost is DNS. The host's `/etc/resolv.conf` names `127.0.0.53`, which inside a pasta
+namespace is the jail's own empty loopback, so Choir writes a one-line `resolv.conf`
+naming pasta's gateway and mounts that instead. That is enough for `curl` and for
+anything using Node's resolver, which covers both provider CLIs, but it is not enough
+for glibc's NSS path — `/etc/nsswitch.conf` is not mounted, so `getent` fails in the
+jail regardless of which nameserver you name. A tool that resolves through pure NSS will
+not work in a Choir jail until that file is mounted.
+
+Reachability is otherwise identical — `api.anthropic.com` and `api.openai.com` return
+the same status codes under pasta as under `-N` — and there is no startup race: twelve
+consecutive jails connected successfully with no delay before the first request.
 
 Do not read the remaining hole as "so the jail is pointless". A work jail still cannot
 see your home directory, your SSH keys, your host loopback, your X server, or any

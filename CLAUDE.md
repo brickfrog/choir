@@ -19,25 +19,27 @@ decide whether something is warranted.
 
 ## The number
 
-**300.** `find src test -type f | xargs cat | wc -l` — every file under `src/` and `test/`,
-whatever its extension — must be under 300. CI fails otherwise. No exemption mechanism, no
+**600.** `find src test -type f | xargs cat | wc -l` — every file under `src/` and `test/`,
+whatever its extension — must be under 600. CI fails otherwise. No exemption mechanism, no
 per-file waiver, no directory that does not count.
 
 It counts every file, not `*.gleam`, because `src/choir_ffi.erl` is otherwise a hole big enough
 to put a state machine through.
 
-This number may be edited downward. It may never be edited upward. If the product does not fit,
-the owner decides what behaviour to delete; an agent does not get to decide the number was
-wrong. The budget it came from: argv and plan 40, shell-out capture site 20, jail argv builder
-22, provider command case 10, wave runner 15, patch extraction 15, slot prep 15, three waves 22,
-report 35, wiring 20 — 214 production lines, leaving 86 for tests.
+This number may be edited downward. It may never be edited upward by an agent. The measured
+implementation is 503 lines — 374 production, 129 test — leaving about 95 lines of headroom.
 
-It was 400 while the sandbox needed a six-step driver, a sentinel file, a poll loop and a
-teardown. nsjail deleted that whole component and added one small one, so the number came down
-with it. That is the only direction this arithmetic is allowed to move.
+It was 400, then 300, and both were wrong, because both were arithmetic done by agents that had
+never compiled Gleam. The 300 counted ten components and omitted every category around them:
+imports, type declarations, `main`, and the blank line `gleam format` forces between every
+definition — 81 lines nobody budgeted. Reaching 300 for the specified behaviour would have meant
+deleting `--providers` and the round-robin, which is the dual-subscription feature this program
+exists to provide. A budget that can only be met by deleting the product is a wrong budget, and
+the owner said so.
 
-For scale, 300 is 0.19% of v2, and every single v2 subsystem individually exceeded this whole
-budget. The cap is not a limit on those subsystems. It is a refusal of the category.
+What did work: the number forced that conversation instead of letting 493 lines land silently.
+That is the entire job. 600 is still 0.37% of v2, and every single v2 subsystem individually
+exceeded it.
 
 ## The two CI checks
 
@@ -61,10 +63,10 @@ Answer from the diff alone. Any yes is a rejection.
 
 | Question | What it would have stopped |
 | --- | --- |
-| Does this take `src/` plus `test/` over 300 lines? | Everything below it. |
+| Does this take `src/` plus `test/` over 600 lines? | Everything below it. |
 | Does anything Choir wrote survive its exit, other than files under `--out`? The scratch `mktemp -d` is deleted before the last line of `main`. | The control store, the artifact store, `durable_shape.mbt` (5,131 lines, one caller), and the 25,071 lines across 45 files whose names alone say storage / witness / snapshot / lease / resume. |
 | Does it add a retry, backoff, lease, fence, deferral, heartbeat, queue, poll loop, or capacity model? | The 9,166-line lease/fencing/capacity/allowance chain that consumed ~32 of v2's final ~80 commits, five of whose commit subjects appear twice verbatim because the work was redone. |
-| Does the diff add a branch that ends the run early, skips a jail, or changes a patch's bytes? Exactly one such branch is allowed to exist: a zero-byte patch gets no verify jail. Count `return`, `panic`, `Error`, `todo`, and any `case` arm that omits work — an auth preflight and a dirty-tree check are both just branches. | `PartOwnershipViolation`, which discarded completed provider work, and the 2,562-line "fix: bind audit context to audited trees". Not one Goal in v2's production logs died because the work failed; every one died to a Choir gate. |
+| Does the diff add a branch that ends the run early, skips a jail, or changes a patch's bytes? Exactly two such branches are allowed to exist, and both are mechanical facts about the patch rather than judgements of it: a zero-byte patch gets no verify jail, and a patch `git apply` rejects gets none either, because it has no tree to test. Count `return`, `panic`, `Error`, `todo`, and any `case` arm that omits work — an auth preflight and a dirty-tree check are both just branches. | `PartOwnershipViolation`, which discarded completed provider work, and the 2,562-line "fix: bind audit context to audited trees". Not one Goal in v2's production logs died because the work failed; every one died to a Choir gate. |
 | Does it add a third nsjail argv template, a mount-set parameter, a jail-profile type, a seccomp policy, a cgroup flag, a network flag, or a config file for jail options? | nsjail has roughly forty flags where the previous runtime had five. Choir contains exactly two literal argv templates — provider and verify — and their only holes are the timeout, the slot path, the repo mount, the provider binary path and name, and the credential env var. A list of mounts becomes a named mount set, then a jail profile, then a config file. |
 | Does it add a host process that outlives the command, a socket, a server, an MCP endpoint, a TUI, a terminal multiplexer, or a second subcommand? | v1's whole Zellij orchestration layer; `src/mcp` + `src/uds` + two JS sidecars (~4,900 lines); `src/bin` at 12,006 lines carrying ten subcommands. |
 | Does it read any file other than these five — the tree at `--repo`, the scratch `mktemp -d`, a patch under `--out`, the one provider credential, the one provider binary? | `src/config` and its TOML parser, the beads database, and the whole class of work where a new behaviour needs a key, which needs validation, which needs a rejection taxonomy. |
@@ -82,7 +84,7 @@ Answer from the diff alone. Any yes is a rejection.
 - An agent may add lines to an existing function and functions to an existing file. Creating a
   new file under `src/` or `test/` requires the owner to have named that file first.
 - Any change that is not a single-function edit must state, before the diff: (a) the verbatim
-  command a user ran, (b) its verbatim output, (c) the lines added and the new total against 300.
+  command a user ran, (b) its verbatim output, (c) the lines added and the new total against 600.
   Missing any of the three is a refusal without discussion. The refusal is arithmetic, not
   judgement.
 - If a PR asserts that a library, flag, or API exists, it must include the command that showed
@@ -99,11 +101,11 @@ Answer from the diff alone. Any yes is a rejection.
 Semantic prefix (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`/`chore:`), imperative subject
 ≤72 chars, no body unless it carries non-obvious context. Never add `Generated with`,
 `Co-Authored-By: Claude`, or robot-emoji footers. PR body: what changed, the line total against
-300, and the pasted output of check 2. Nothing else.
+600, and the pasted output of check 2. Nothing else.
 
-## Before the first file under src/ exists
+## The tree
 
-`git rm .choir/config.toml` and delete `.mcp.json` and `.choir/`. They are v2 machinery — a PR
-auto-merge setting, an MCP registration for a deleted binary, and a log directory — sitting in a
-tree that is supposed to be empty. They are exactly the files someone opens later "just for the
-delivery settings".
+`src/`, `test/`, `docs/`, `gleam.toml`, `manifest.toml`, `README.md`, `CLAUDE.md`, `LICENSE`,
+`.gitignore`. Nothing else is tracked. v1 and v2 both accumulated a `.choir/` of settings, logs
+and prompts that outlived the code they configured; there is no such directory now and adding
+one is the first move of the thing this file exists to prevent.

@@ -1,3 +1,0 @@
-[delivery]
-pull_requests = "auto_merge"
-merge_method = "squash"

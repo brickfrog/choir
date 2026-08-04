@@ -275,8 +275,14 @@ fn run_choir(cfg: Cfg) -> Int {
   let _ = run("cp", ["-a", cfg.repo, dir <> "/repo"])
   let _ = simplifile.create_directory_all(dir <> "/patches")
   let _ = simplifile.create_directory_all(cfg.out)
-  let out = line("readlink -f " <> cfg.out)
+  // argv, not a shell string: `--out` is user input and `line` runs /bin/sh -c.
+  let #(_, abs) = run("readlink", ["-f", cfg.out])
+  let out = string.trim(text(abs))
   let _ = simplifile.write(dir <> "/resolv.conf", "nameserver 10.255.255.1\n")
+  // The run directory is the only way to watch a wave: every jail's log and
+  // working tree is an ordinary host file under it, and a wave prints nothing
+  // until it ends. v1 died of exactly this silence.
+  io.println("run " <> dir)
   let plan =
     list.index_map(list.repeat(Nil, cfg.n), fn(_, i) {
       #(i, assign(cfg.providers, i))
