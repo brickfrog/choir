@@ -187,6 +187,14 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-26** A `core.worktree` in the repository's own config → stripped from the
+  base copy before any jail runs. `cp -a` brings the user's `.git/config` into
+  every jail and `extract` restores it, so host `git add -A` staged against the
+  path it names — the user's real checkout. Found by running Choir on its own
+  repository, where that key was set: both providers did the work, their trees
+  were never inspected, and both patches were reported `0 B`. A whole paid run,
+  discarded in silence. `core.hooksPath` and `core.fsmonitor` name programs and
+  go the same way.
 - **E-25** `nsjail --help` succeeding taken as "nsjail works" → probe by actually
   launching a jail. `--help` runs fine *inside* an nsjail but creating a nested
   user namespace does not, so the suite hard-failed with "Couldn't initialize

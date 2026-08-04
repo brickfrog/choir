@@ -98,6 +98,7 @@ fn prepare(cfg: &Config) -> Option<Paths> {
 
     sys::copy_tree(&cfg.repo, &format!("{dir}/repo"));
     detach_gitfile(&dir);
+    strip_host_config(&dir);
     sys::mkdir_all(Path::new(&format!("{dir}/patches")));
     sys::mkdir_all(Path::new(&cfg.out));
 
@@ -119,14 +120,11 @@ fn prepare(cfg: &Config) -> Option<Paths> {
 ///
 /// `cp -a` copies such a `.git` verbatim, and it is a *file* reading
 /// `gitdir: /absolute/path/into/the/user's/real/repository`. Host-side
-/// extraction then follows it straight back out of the scratch tree: measured,
+/// extraction follows it straight back out of the scratch tree: measured,
 /// `git add -A` in a jail's copy staged the model's changes into the user's own
-/// index and left their worktree reading `MM a.txt`. With N jails they race on
-/// that one index. It breaks the only promise Choir makes.
-///
-/// Re-initialising is enough because Choir never needs the user's history — it
-/// only ever diffs the model's changes against the tree the jail started from,
-/// and every patch is applied to a copy of that same tree.
+/// index and left their worktree reading `MM a.txt`, with N jails racing on that
+/// one index. Re-initialising is enough because Choir never needs the user's
+/// history — it only ever diffs against the tree the jail started from.
 fn detach_gitfile(dir: &str) {
     let repo = format!("{dir}/repo");
     if !Path::new(&format!("{repo}/.git")).is_file() {
@@ -148,23 +146,33 @@ fn detach_gitfile(dir: &str) {
     ]);
 }
 
+/// Drop repository config that aims host git outside the copy (E-26).
+///
+/// `cp -a` brings the user's own `.git/config` into every jail, and a
+/// `core.worktree` there points host `git` back at their real checkout. Measured
+/// here: both providers did the work, `git add -A` inspected the user's tree
+/// instead of the jail's, found it clean, and Choir reported `0 B` for both — a
+/// whole paid run discarded. `core.hooksPath`/`core.fsmonitor` name programs.
+fn strip_host_config(dir: &str) {
+    let cfg = format!("{dir}/repo/.git/config");
+    for key in ["core.worktree", "core.hooksPath", "core.fsmonitor"] {
+        let _ = sys::git(&["config", "--file", &cfg, "--unset-all", key]);
+    }
+}
+
 /// Hide `--out` from the jails, when it sits inside `--repo` (E-17).
 ///
-/// `--out` defaults to `./choir-out`, i.e. inside the repository. Without this
-/// the next run's `cp -a` sweeps up this run's patches, `git add -A` stages them
-/// inside every jail, every patch carries every earlier patch, and every
-/// `git apply` then fails with *already exists in working directory* — a whole
-/// billed wave lost to a directory Choir created itself.
+/// `--out` defaults to `./choir-out`, inside the repository. Without this the
+/// next run's `cp -a` sweeps up this run's patches, `git add -A` stages them in
+/// every jail, every patch carries every earlier one, and `git apply` fails with
+/// *already exists in working directory* — a billed wave lost to a directory
+/// Choir created itself.
 ///
-/// The exclusion is written to `.git/info/exclude` in Choir's own scratch copy,
-/// never to the user's tree. `info/exclude` is per-repository, is never tracked,
-/// and has no effect on files that *are* tracked — which is exactly right, since
-/// a committed output directory causes no pollution in the first place.
-///
-/// An earlier attempt wrote a `.gitignore` of `*` into `--out` itself. That
-/// silently overwrote the user's own `.gitignore` when `--out` was the
-/// repository root, breaking the one promise Choir makes: it never modifies
-/// anything in your checkout.
+/// The exclusion goes in `.git/info/exclude` in Choir's own scratch copy, never
+/// the user's tree: it is per-repository, never tracked, and has no effect on
+/// tracked files — right, since a committed output directory never pollutes.
+/// An earlier attempt wrote a `.gitignore` of `*` into `--out` itself, which
+/// silently overwrote the user's own when `--out` was the repository root.
 fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str, n: usize) {
     let exclude = format!("{dir}/repo/.git/info/exclude");
     let mut rules = String::new();
@@ -286,20 +294,16 @@ fn shred_credentials(jails: &[Jail]) {
 /// discard work a provider actually produced.
 ///
 /// The pristine `.git` is restored first, and that is load-bearing twice over
-/// (E-18):
-///
-/// 1. **It closes a sandbox escape.** The jail owned this tree through a
-///    read-write bind mount, `.git/` included. Git executes commands named in
-///    the repository's own config — `filter.<n>.clean`, `diff.<n>.textconv`,
-///    `core.fsmonitor` — so running host `git` here let a jailed model run
-///    arbitrary commands as the user, outside every jail. The dangerous keys are
-///    keyed on attacker-chosen driver names, so no list of `git -c` overrides can
-///    close them; only removing the config does.
-/// 2. **It stops Choir discarding real work.** `git diff --cached HEAD` asks a
-///    model-controlled repository what its own `HEAD` is. A model that commits —
-///    routine under `--dangerously-skip-permissions` — moved `HEAD` past its own
-///    changes and the diff came back empty, reporting `0 B` for a jail that had
-///    done the work.
+/// (E-18). It closes a sandbox escape: the jail owned this tree through a
+/// read-write bind, `.git/` included, and git executes commands named in the
+/// repository's own config — `filter.<n>.clean`, `diff.<n>.textconv`,
+/// `core.fsmonitor` — so host `git` here ran arbitrary commands as the user.
+/// Those keys are named by the attacker, so no list of `git -c` overrides can
+/// close them; only replacing the config does. And it stops Choir discarding
+/// real work: `git diff --cached HEAD` asks a model-controlled repository what
+/// its own `HEAD` is, and a model that commits — routine under
+/// `--dangerously-skip-permissions` — moved `HEAD` past its own changes, so the
+/// diff came back empty for a jail that had done the work.
 ///
 /// Nothing is lost by discarding the jail's git metadata: `git apply` refuses
 /// every patch path containing a `.git` component, so it could never have
@@ -454,7 +458,9 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{detach_gitfile, exclude_out_from_base, extract, gitignore_escape, Paths};
+    use super::{
+        detach_gitfile, exclude_out_from_base, extract, gitignore_escape, strip_host_config, Paths,
+    };
     use crate::sys;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -548,6 +554,49 @@ mod tests {
         assert!(bytes > 0, "the real edit must still reach the patch");
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// E-26: a `core.worktree` in the user's config cannot redirect extraction.
+    ///
+    /// The real defect, caught by running Choir on its own repository: the
+    /// user's `.git/config` carried `core.worktree = <their real checkout>`,
+    /// `cp -a` copied it into every jail, and because `extract` restores that
+    /// same config, host `git add -A` inspected their tree rather than the
+    /// jail's. Theirs was clean, so both providers' work was reported `0 B`.
+    #[test]
+    fn extract_ignores_a_core_worktree_pointing_at_the_host() {
+        let (paths, bytes) = staged_run("worktree-cfg", |slot_repo| {
+            // `<dir>/w0/repo` -> `<dir>`, the run directory `Paths` describes.
+            let dir = slot_repo.trim_end_matches("/w0/repo").to_owned();
+
+            // A decoy for the user's real checkout: a clean copy of the same
+            // tree, so staging *it* yields nothing — the exact live symptom.
+            let decoy = format!("{dir}/decoy");
+            sys::copy_tree(&format!("{dir}/repo"), &decoy);
+            sys::remove_tree(&format!("{decoy}/.git"));
+
+            // The poison goes in the *base* copy: that is the `.git` restored.
+            let base_cfg = format!("{dir}/repo/.git/config");
+            let _ = sys::git(&["config", "--file", &base_cfg, "core.worktree", &decoy]);
+
+            fs::write(format!("{slot_repo}/NOTES.md"), "REAL FIX\n").expect("work");
+            strip_host_config(&dir);
+        });
+
+        let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
+        assert!(
+            bytes > 0,
+            "extraction followed core.worktree and lost the work"
+        );
+        assert!(
+            patch.contains("REAL FIX"),
+            "patch missed the jail's file: {patch}"
+        );
+        assert!(
+            !Path::new(&format!("{}/decoy/NOTES.md", paths.dir)).exists(),
+            "extraction wrote into the decoy checkout"
+        );
         sys::remove_tree(&paths.dir);
     }
 

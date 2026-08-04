@@ -36,14 +36,12 @@ pub fn run(program: &str, args: &[&str]) -> (i32, Vec<u8>) {
 /// `core.fsmonitor`. Restoring the pristine `.git` removes the *repository*
 /// scope, but git also reads `~/.gitconfig` and `/etc/gitconfig` — so a model
 /// writing nothing but a `.gitattributes` in the worktree it legitimately owns
-/// could select any driver the user happens to have defined globally, and
-/// git-lfs, nbstripout and docx textconv are all common. Measured: with an
-/// lfs filter in `~/.gitconfig` and a model-written `* filter=lfs diff=lfs`,
-/// the payload ran as the user after the `.git` restore.
-///
-/// `/dev/null` is a valid empty config file, so both scopes read as empty.
-/// `GIT_ATTR_NOSYSTEM` drops `/etc/gitattributes` for the same reason.
-/// Extraction needs no user configuration: it stages and diffs, nothing more.
+/// could select any driver the user has defined globally, and git-lfs,
+/// nbstripout and docx textconv are all common. Measured: with an lfs filter in
+/// `~/.gitconfig` and a model-written `* filter=lfs`, the payload ran as the
+/// user after the `.git` restore. `/dev/null` is a valid empty config file, so
+/// both scopes read as empty, and `GIT_ATTR_NOSYSTEM` drops
+/// `/etc/gitattributes`. Extraction stages and diffs; it needs no user config.
 pub fn git(args: &[&str]) -> (i32, Vec<u8>) {
     match Command::new("git")
         .args(args)

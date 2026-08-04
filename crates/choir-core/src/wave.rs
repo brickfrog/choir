@@ -13,11 +13,9 @@ use crate::jail::Jail;
 ///
 /// Each line reads stdin from `/dev/null`, because a provider CLI that reads
 /// stdin stalls; and merges stdout and stderr into one log, because Claude
-/// prints its status to stdout and Codex to stderr, so only a merged stream
-/// makes "the last line of the log" work for both.
-///
-/// Property P-5 proves the output has exactly `jails.len() + 1` lines and that
-/// the last is exactly `wait`.
+/// prints status to stdout and Codex to stderr, so only a merged stream makes
+/// "the last line of the log" work for both. Property P-5 proves the output has
+/// exactly `jails.len() + 1` lines and that the last is exactly `wait`.
 #[must_use]
 pub fn script(jails: &[Jail]) -> String {
     let mut out = String::new();
