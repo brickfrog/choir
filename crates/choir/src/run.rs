@@ -543,14 +543,42 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn scratch(tag: &str) -> PathBuf {
+    /// A scratch directory that removes itself, on unwind as well as on return.
+    ///
+    /// `Drop` rather than a trailing call, because a panicking test otherwise
+    /// leaves its fixture behind -- and the hostile-permission fixtures leave one
+    /// `rm -rf` cannot remove at all, which is the same defect `extract` fixes in
+    /// production (E-22). So the guard unlocks with the product's own
+    /// [`sys::unlock_tree`] before removing. Mirrors `Scratch` in
+    /// `tests/sealed_jail.rs`; two cleanup conventions in one tree is one too many.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn str(&self) -> String {
+            self.0.to_str().expect("utf-8").to_owned()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let path = self.0.to_string_lossy().into_owned();
+            sys::unlock_tree(&path);
+            sys::remove_tree(&path);
+        }
+    }
+
+    fn scratch(tag: &str) -> Scratch {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
         let dir = std::env::temp_dir().join(format!("choir-run-{tag}-{nanos}"));
         fs::create_dir_all(&dir).expect("scratch");
-        dir
+        Scratch(dir)
     }
 
     fn git(repo: &str, args: &[&str]) {
@@ -561,9 +589,12 @@ mod tests {
 
     /// Build a run directory holding a committed base repo and one work slot
     /// that is a copy of it, then hand the slot to `body` to play the attacker.
-    fn staged_run(tag: &str, body: impl FnOnce(&str)) -> (Paths, usize) {
+    /// Returns the guard as well: dropping it here would delete the tree the
+    /// caller is about to assert against. Bind it to a named `_scratch`, never
+    /// to bare `_`, which drops immediately.
+    fn staged_run(tag: &str, body: impl FnOnce(&str)) -> (Scratch, Paths, usize) {
         let dir = scratch(tag);
-        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let dir_s = dir.str();
         let base = format!("{dir_s}/repo");
 
         fs::create_dir_all(&base).expect("base");
@@ -593,7 +624,7 @@ mod tests {
         };
         fs::create_dir_all(&paths.out).expect("out");
         let bytes = extract(&paths, 0).len();
-        (paths, bytes)
+        (dir, paths, bytes)
     }
 
     /// E-18: a jail cannot get host command execution through `.git/config`.
@@ -604,10 +635,10 @@ mod tests {
     #[test]
     fn extract_neutralises_a_hostile_git_config() {
         let canary_dir = scratch("canary");
-        let canary = canary_dir.join("PWNED");
+        let canary = canary_dir.path().join("PWNED");
         let canary_s = canary.to_str().expect("utf-8").to_owned();
 
-        let (paths, bytes) = staged_run("escape", |slot_repo| {
+        let (_scratch, paths, bytes) = staged_run("escape", |slot_repo| {
             fs::write(
                 format!("{slot_repo}/.gitattributes"),
                 "* diff=evil filter=evil\n",
@@ -632,8 +663,6 @@ mod tests {
         assert!(bytes > 0, "the real edit must still reach the patch");
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
-        sys::remove_tree(&paths.dir);
-        sys::remove_tree(canary_dir.to_str().expect("utf-8"));
     }
 
     /// E-26: a `core.worktree` in the user's config cannot redirect extraction.
@@ -645,7 +674,7 @@ mod tests {
     /// jail's. Theirs was clean, so both providers' work was reported `0 B`.
     #[test]
     fn extract_ignores_a_core_worktree_pointing_at_the_host() {
-        let (paths, bytes) = staged_run("worktree-cfg", |slot_repo| {
+        let (_scratch, paths, bytes) = staged_run("worktree-cfg", |slot_repo| {
             // `<dir>/w0/repo` -> `<dir>`, the run directory `Paths` describes.
             let dir = slot_repo.trim_end_matches("/w0/repo").to_owned();
 
@@ -676,7 +705,6 @@ mod tests {
             !Path::new(&format!("{}/decoy/NOTES.md", paths.dir)).exists(),
             "extraction wrote into the decoy checkout"
         );
-        sys::remove_tree(&paths.dir);
     }
 
     /// E-22: a model cannot survive the `.git` restore by locking directories.
@@ -688,10 +716,10 @@ mod tests {
     #[test]
     fn extract_defeats_a_permission_locked_git_dir() {
         let canary_dir = scratch("lockcanary");
-        let canary = canary_dir.join("PWNED");
+        let canary = canary_dir.path().join("PWNED");
         let canary_s = canary.to_str().expect("utf-8").to_owned();
 
-        let (paths, bytes) = staged_run("locked", |slot_repo| {
+        let (_scratch, paths, bytes) = staged_run("locked", |slot_repo| {
             fs::write(
                 format!("{slot_repo}/.gitattributes"),
                 "* diff=evil filter=evil\n",
@@ -719,8 +747,6 @@ mod tests {
         assert!(bytes > 0, "the real edit must still reach the patch");
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "patch lost the edit: {patch}");
-        sys::remove_tree(&paths.dir);
-        sys::remove_tree(canary_dir.to_str().expect("utf-8"));
     }
 
     /// E-18: a model that commits its work still yields a complete patch.
@@ -730,7 +756,7 @@ mod tests {
     /// came back empty — Choir reported `0 B` for a jail that had succeeded.
     #[test]
     fn extract_survives_a_model_commit() {
-        let (paths, bytes) = staged_run("commit", |slot_repo| {
+        let (_scratch, paths, bytes) = staged_run("commit", |slot_repo| {
             fs::write(format!("{slot_repo}/a.txt"), "REAL FIX\n").expect("edit");
             fs::write(format!("{slot_repo}/b.txt"), "new\n").expect("new file");
             git(slot_repo, &["add", "-A"]);
@@ -741,7 +767,6 @@ mod tests {
         let patch = fs::read_to_string(format!("{}/0.patch", paths.out)).unwrap_or_default();
         assert!(patch.contains("REAL FIX"), "missing edit: {patch}");
         assert!(patch.contains("b.txt"), "missing new file: {patch}");
-        sys::remove_tree(&paths.dir);
     }
 
     /// E-19: a patch touching a binary file still applies.
@@ -754,7 +779,7 @@ mod tests {
     /// and a path containing spaces.
     #[test]
     fn extract_produces_appliable_patches_for_every_change_kind() {
-        let (paths, bytes) = staged_run("fidelity", |slot_repo| {
+        let (_scratch, paths, bytes) = staged_run("fidelity", |slot_repo| {
             fs::write(format!("{slot_repo}/keep.txt"), "edited\n").expect("edit");
             fs::write(format!("{slot_repo}/bin.dat"), [0u8, 1, 2, b'Z']).expect("binary");
             fs::create_dir_all(format!("{slot_repo}/weird name")).expect("dir");
@@ -792,7 +817,6 @@ mod tests {
             fs::exists(format!("{target}/weird name/f g.txt")).unwrap_or(false),
             "spaced path lost"
         );
-        sys::remove_tree(&paths.dir);
     }
 
     /// E-21: a git worktree's `.git` gitfile must not lead host git back into
@@ -804,7 +828,7 @@ mod tests {
     #[test]
     fn a_worktree_gitfile_is_detached_from_the_users_repo() {
         let root = scratch("worktree");
-        let root_s = root.to_str().expect("utf-8").to_owned();
+        let root_s = root.str();
         let main = format!("{root_s}/main");
 
         fs::create_dir_all(&main).expect("main");
@@ -843,8 +867,6 @@ mod tests {
             "Choir dirtied the user's worktree: {}",
             String::from_utf8_lossy(&dirty)
         );
-
-        sys::remove_tree(&root_s);
     }
 
     /// E-17: an output directory inside the repo never enters a jail, and the
@@ -857,7 +879,7 @@ mod tests {
     #[test]
     fn out_dir_inside_the_repo_is_hidden_from_jails() {
         let root = scratch("exclude");
-        let root_s = root.to_str().expect("utf-8").to_owned();
+        let root_s = root.str();
         let user_repo = format!("{root_s}/proj");
 
         fs::create_dir_all(&user_repo).expect("repo");
@@ -901,8 +923,6 @@ mod tests {
             !fs::exists(format!("{out}/.gitignore")).unwrap_or(false),
             "Choir wrote into the user's output directory"
         );
-
-        sys::remove_tree(&root_s);
     }
 
     /// E-17: a glob metacharacter in `--out` must not hide the model's work.
@@ -921,7 +941,7 @@ mod tests {
         assert_eq!(gitignore_escape("choir-out"), "choir-out");
 
         let root = scratch("glob");
-        let root_s = root.to_str().expect("utf-8").to_owned();
+        let root_s = root.str();
         let repo = format!("{root_s}/proj");
         fs::create_dir_all(&repo).expect("repo");
         git(&repo, &["init", "-q"]);
@@ -945,7 +965,6 @@ mod tests {
             staged.contains("aXb/work.txt"),
             "glob in --out hid the model's work: {staged:?}"
         );
-        sys::remove_tree(&root_s);
     }
 
     /// E-17: `--out .` puts patches in the repository root, where there is no
@@ -956,7 +975,7 @@ mod tests {
     #[test]
     fn out_dir_equal_to_the_repo_root_excludes_the_patch_files() {
         let root = scratch("outroot");
-        let root_s = root.to_str().expect("utf-8").to_owned();
+        let root_s = root.str();
         let repo = format!("{root_s}/proj");
         fs::create_dir_all(&repo).expect("repo");
         git(&repo, &["init", "-q"]);
@@ -986,7 +1005,6 @@ mod tests {
             !staged.contains(".patch"),
             "previous run's patches leaked into the jail: {staged:?}"
         );
-        sys::remove_tree(&root_s);
     }
 
     /// E-17: an output directory outside the repo needs no exclusion, and the
@@ -994,7 +1012,7 @@ mod tests {
     #[test]
     fn out_dir_outside_the_repo_is_left_alone() {
         let root = scratch("noexclude");
-        let root_s = root.to_str().expect("utf-8").to_owned();
+        let root_s = root.str();
         let base = format!("{root_s}/repo");
         fs::create_dir_all(format!("{base}/.git/info")).expect("git dir");
         fs::write(format!("{base}/.git/info/exclude"), "# original\n").expect("exclude");
@@ -1003,7 +1021,6 @@ mod tests {
 
         let after = fs::read_to_string(format!("{base}/.git/info/exclude")).expect("read");
         assert_eq!(after, "# original\n", "unrelated --out must change nothing");
-        sys::remove_tree(&root_s);
     }
 
     /// C-28: the logs outlive the scratch tree, or a paid run that produced no
@@ -1012,7 +1029,7 @@ mod tests {
     #[test]
     fn collect_copies_both_logs_into_the_out_dir() {
         let dir = scratch("logs");
-        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let dir_s = dir.str();
         let paths = Paths {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
@@ -1049,14 +1066,13 @@ mod tests {
             fs::read_to_string(format!("{}/0.verify.log", paths.out)).expect("verify log"),
             "assertion failed\n"
         );
-        sys::remove_tree(&dir_s);
     }
 
     /// C-29: a jail that never wrote an `.rc` is not the same fact as exit 0.
     #[test]
     fn a_missing_rc_reads_as_unknown_not_zero() {
         let dir = scratch("norc");
-        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let dir_s = dir.str();
         let paths = Paths {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
@@ -1074,7 +1090,6 @@ mod tests {
         );
 
         assert_eq!(rows.first().expect("one row").exit, None);
-        sys::remove_tree(&dir_s);
     }
 
     /// E-27: an untracked file in the user's tree must not make every patch
@@ -1083,7 +1098,7 @@ mod tests {
     #[test]
     fn an_untracked_file_does_not_break_every_patch() {
         let dir = scratch("untracked");
-        let dir_s = dir.to_str().expect("utf-8").to_owned();
+        let dir_s = dir.str();
         let base = format!("{dir_s}/repo");
         fs::create_dir_all(&base).expect("base");
         git(&base, &["init", "-q"]);
@@ -1128,6 +1143,5 @@ mod tests {
         ]);
         assert_eq!(code, 0, "patch must apply to the tree it was made from");
         sys::remove_tree(&paths.dir);
-        sys::remove_tree(&dir_s);
     }
 }
