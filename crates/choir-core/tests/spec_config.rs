@@ -255,7 +255,14 @@ fn help_short_circuits() {
     assert_eq!(parse(&argv(&["-h"])), Ok(Invocation::Help));
     assert_eq!(parse(&argv(&["x", "--help"])), Ok(Invocation::Help));
     assert!(help_text().contains("--providers"));
-    assert!(help_text().contains("Commit or stash"));
+    // E-27 retired the commit-first rule: the base copy is committed before any
+    // jail starts, so uncommitted and untracked work is the baseline. The help
+    // told users the opposite, and described the collision E-27 had fixed.
+    assert!(help_text().contains("need not be committed"));
+    assert!(
+        !help_text().contains("Commit or stash"),
+        "help reinstates the rule E-27 retired"
+    );
 }
 
 /// The banner names every jail's provider and the audit's.

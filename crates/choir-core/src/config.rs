@@ -506,8 +506,8 @@ pub fn help_text() -> String {
     s.push_str("EXIT\n");
     s.push_str("  0 if at least one patch passed your test command, 1 otherwise.\n\n");
     s.push_str("NOTE\n");
-    s.push_str("  Commit or stash your working tree first. Choir diffs against HEAD, so\n");
-    s.push_str("  uncommitted changes ship into every jail and then collide with\n");
-    s.push_str("  themselves at apply time.\n");
+    s.push_str("  Your tree need not be committed. Choir commits its own copy before\n");
+    s.push_str("  any jail starts, so uncommitted and untracked files are the baseline\n");
+    s.push_str("  rather than noise in every patch (E-27).\n");
     s
 }

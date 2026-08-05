@@ -14,7 +14,15 @@ checkout, and it never picks a winner.
 ```sh
 choir "<instruction>" --test '<cmd>' [-n 3] [--cache /abs/path] [--repo .]
 choir - --test '<cmd>' < instruction.md     # instruction from stdin, for long briefs
+choir "<instruction>"                       # --test read off one root marker file
+choir "<instruction>" --test '<cmd>' --red  # tests must go red before implementation
 ```
+
+`--test` is optional. Omitted, Choir reads it off exactly one marker in the repository root
+(`Cargo.toml`, `go.mod`, `Makefile`, `package.json`, `pyproject.toml`) and prints
+`detected --test: <cmd>` before anything starts. None of them, or two, is a usage error naming
+what it found — there is no default and no guess. Pass `--test` yourself whenever the real
+command is narrower than the whole suite.
 
 ## Before the first run
 
@@ -30,9 +38,11 @@ choir - --test '<cmd>' < instruction.md     # instruction from stdin, for long b
 1. **The verify jail has no network.** If `--test` needs dependencies, mount the cache
    read-only at its own absolute host path: `--cache "$HOME/.cargo"`, `--cache "$HOME/.m2"`.
    Without it the tests cannot resolve a registry and *every* patch is reported `FAIL`
-   whatever it contains. Never cache a directory that also holds credentials — `~/.npmrc`,
-   `~/.m2/settings.xml` and `~/.docker/config.json` hold registry tokens, and work jails do
-   have network.
+   whatever it contains. Choir masks the credential names it knows (`credentials.toml`,
+   `credentials`, `.npmrc`, `.git-credentials`, `.netrc`, `config.json`) with `/dev/null`
+   inside the mount, so `~/.cargo` is safe to cache even after `cargo login`. It cannot know a
+   name it has never heard of, and work jails do have network — so still do not cache a
+   directory holding a secret under some other filename.
 2. **Read the `baseline` line before the rows.** It runs `--test` against the *unpatched* tree
    in the same sealed jail. `baseline PASS` means every `PASS` below it proves nothing — the
    tests already passed. `baseline FAIL` with every patch failing the same way usually means
@@ -51,6 +61,10 @@ choir - --test '<cmd>' < instruction.md     # instruction from stdin, for long b
   survived and `TESTS` speaks for it. Read the log for what an exit code does not say.
 - `TESTS` is the exit code of `--test`, and nothing else. No provider self-report is trusted.
   `TIMEOUT(<secs>s)` there is the verify jail hitting the same deadline.
+- Under `--red`, `RED FAILED` means that jail's tests passed without any implementation, so
+  they proved nothing and no implementation wave ran for it. `RED TAMPERED` means the jail
+  changed or deleted one of its own approved test files while implementing. Neither is a pass
+  and neither gets a `git apply` line.
 - The line under the rows says how many patches were byte-distinct. Fewer than `n` means the
   extra jails bought nothing, and this kind of task wants a smaller `n`.
 - `<out>/<i>.log` and `<out>/<i>.verify.log` hold what the table only summarises.
@@ -70,7 +84,12 @@ Choir does not rank, sort, or recommend. Read the patches before applying one.
   noise, and a run that finds nothing new is the signal to stop.
 - **Make the test discriminate.** For a new behaviour, commit the failing test first. Then
   `baseline FAIL` followed by a row that `PASS`es is real acceptance rather than "nothing
-  broke".
+  broke". When there is no failing test to commit, `--red` makes each jail write one and
+  proves it fails before implementing — at `2n+1` provider calls instead of `n+1`.
+- **Keep test-run debris out of the patch.** A jail runs the repository's own tests, and a
+  test run writes files. In a repo whose `.gitignore` does not name them they stage into the
+  patch as binary hunks: `--ignore '__pycache__/' --ignore 'target/'`. Measured on a one-file
+  Python repo: 4.1 KB of patch, of which 561 B was the actual change.
 
 ## If a run is interrupted
 
