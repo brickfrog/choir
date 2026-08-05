@@ -216,6 +216,14 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-31** `--repo` that is not a git repository -> the base copy is
+  initialised as one, so host `git` never searches upward out of the scratch
+  tree. Without a `.git` of its own, `git -C <run>/repo add -A` walks up, and
+  with the scratch tree anywhere inside a repository -- which this project's own
+  `TMPDIR` advice makes likely -- `commit_base` committed into *that* repository.
+  Reproduced on the host. It also turns a run that silently reported `0 B` for
+  every jail into ordinary diffs against an empty tree. Reported by an
+  adversarial Choir run against this repository.
 - **E-30** A jail that `chmod 0500`s its own `/cred` -> the credential copy is
   still shredded. `rm -rf` needs write and execute on a directory to unlink what
   is inside it, so the bare removal left the user's live OAuth token on the host;

@@ -222,7 +222,7 @@ fn commit_base(dir: &str) {
 }
 
 /// Make the base copy a standalone repository whenever its `.git` is anything
-/// other than a real directory (E-21, E-29).
+/// other than a real directory of its own (E-21, E-29, E-31).
 ///
 /// Two ways it is not. A git worktree or submodule has a `.git` *file* reading
 /// `gitdir: /absolute/path/into/the/user's/real/repository`, which `cp -a`
@@ -233,12 +233,19 @@ fn commit_base(dir: &str) {
 /// symlink for the same reason and lands in the same place, so it goes the same
 /// way — `rm -rf` on a symlink unlinks the link, never what it points at.
 ///
+/// The third way is absence. A `--repo` that is no repository at all leaves the
+/// base copy without a `.git`, and `git -C` then searches *upward*: with the
+/// scratch tree anywhere inside a repository — which this project's own `TMPDIR`
+/// advice makes likely — `commit_base` committed into that repository instead.
+/// Measured on the host. An empty init also turns a silent run of `0 B` rows
+/// into ordinary diffs against an empty tree.
+///
 /// Re-initialising is enough because Choir never needs the user's history — it
 /// only ever diffs against the tree the jail started from.
 fn detach_gitfile(dir: &str) {
     let repo = format!("{dir}/repo");
     let git = format!("{repo}/.git");
-    if !Path::new(&git).is_symlink() && !Path::new(&git).is_file() {
+    if Path::new(&git).is_dir() && !Path::new(&git).is_symlink() {
         return;
     }
     sys::remove_tree(&git);
@@ -1363,5 +1370,41 @@ mod tests {
             !Path::new(&cred).exists(),
             "the user's credential copy survived the shred"
         );
+    }
+
+    /// E-31: the base copy is always a repository, so host `git` never searches
+    /// upward out of it. A `--repo` that is not a git repository left
+    /// `<run>/repo` without a `.git`, and `git -C` then walks up: with a scratch
+    /// tree anywhere inside a repository -- which the README's own `TMPDIR`
+    /// advice encourages -- `commit_base` committed into *that* repository.
+    /// Reproduced on the host.
+    #[test]
+    fn e31_a_non_git_repo_never_lets_host_git_search_upward() {
+        let dir = scratch("nongit");
+        let plain = dir.path().join("plain");
+        fs::create_dir_all(&plain).expect("plain");
+        fs::write(plain.join("file.txt"), "hello\n").expect("file");
+
+        let cfg = Config {
+            repo: plain.to_str().expect("utf-8").to_owned(),
+            out: format!("{}/out", dir.str()),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+        let base = paths.base_repo();
+
+        let (code, top) = sys::git(&["-C", &base, "rev-parse", "--show-toplevel"]);
+        let top = String::from_utf8_lossy(&top).trim().to_owned();
+        assert_eq!(
+            code, 0,
+            "the base copy must be a repository in its own right"
+        );
+        assert_eq!(
+            sys::absolute(&top),
+            sys::absolute(&base),
+            "host git resolved out of the base copy and into an enclosing repository"
+        );
+        sys::remove_tree(&paths.dir);
     }
 }
