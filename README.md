@@ -83,7 +83,7 @@ Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `APPLY FAILED`, or `-
 ## Development
 
 ```sh
-cargo test --workspace                                  # 90 tests
+cargo test --workspace                                  # 93 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo kani -p choir-core                                # 3 proofs
 ```
