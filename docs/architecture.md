@@ -302,6 +302,10 @@ reconciler for state Choir does not have.
 What Choir *does* leave behind on that path is its own scratch directory, because
 `remove_tree` is the last line of `execute`. Each wave now unlinks its jails' credential
 copies as soon as it returns, so the exposure is bounded to the jails that were in flight.
+Bounded in count, not in time: those copies persist until the user removes the directory,
+and a full-account OAuth token is what they hold. Choir prints the run directory on its
+first line so there is always something to `rm -rf`. An exit trap is still the wrong fix --
+it cannot run when the process is killed with SIGKILL, which is the case that matters.
 
 ## Limits of the isolation boundary
 

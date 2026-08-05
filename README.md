@@ -276,6 +276,16 @@ access token expires roughly every five hours, so a long run — or N jails refr
 once — could plausibly log you out on the host. Testing that means letting a jail
 refresh against the vendor with a real credential, and nobody has done it.
 
+**"Dies with the scratch directory" holds only if Choir exits.** Each wave unlinks its jails' credential
+copies as soon as it returns, and the scratch directory goes at the end of `execute` — but
+a Choir killed mid-wave does neither, and by design it never sweeps on a later run. What is
+left behind is a full-account OAuth token, readable by anything running as you, until you
+delete it. That is why the run directory is printed on line 1: `rm -rf` it yourself. Delete
+it, do not *trash* it — a file manager or a "safe delete" wrapper moves the directory to
+`~/.local/share/Trash` or `/tmp/.Trash-$UID` and preserves the token there indefinitely.
+Measured: a scratch directory trashed rather than removed still held a byte-identical copy
+of a live `~/.codex/auth.json` sixteen hours later.
+
 **If you Ctrl-C Choir, the jails keep running.** Not for the reason you might guess:
 POSIX requires a non-interactive shell to set SIGINT and SIGQUIT to *ignored* for any
 command it starts asynchronously, and Choir starts every jail as `( nsjail … ) &` inside
