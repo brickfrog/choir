@@ -26,6 +26,10 @@ command is narrower than the whole suite.
 
 ## Before the first run
 
+- `choir` itself on PATH. The plugin ships this skill, not the binary: build it from
+  https://github.com/brickfrog/choir with `cargo build --release` and install
+  `target/release/choir`. If `command -v choir` is empty, say so rather than improvising a
+  substitute — nothing else in the toolbox gives sealed per-attempt jails.
 - `nsjail` on PATH and unprivileged user namespaces enabled.
 - `claude` and/or `codex` on PATH and logged in.
 - **Every run spends the user's real subscription quota.** N work jails plus one audit call.
