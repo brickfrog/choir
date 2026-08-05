@@ -198,7 +198,7 @@ are diagnoses of *your* setup rather than of the models:
 | `FAIL` | non-empty | all `FAIL` | **Suspect your `--test`, not the patches.** A command that cannot run sealed fails every patch identically. Compare against the baseline row: if that failed the same way, the harness is what is broken. |
 | `FAIL` | non-empty | mixed | The normal case. The table is telling you what it looks like it is telling you. |
 
-That fourth-from-last row is the expensive one. Before `--cache` existed, every patch in
+That second-from-last row is the expensive one. Before `--cache` existed, every patch in
 this repository was reported `FAIL` because cargo could not reach crates.io from a verify
 jail, and nothing on screen distinguished that from ten bad patches. The baseline row
 exists so that failure states its own cause.
