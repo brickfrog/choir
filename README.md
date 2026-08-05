@@ -139,7 +139,7 @@ $ choir "the auth test is flaky under load — find and fix the real race" \
 [work]   3 jails started
 [verify] 3 jails started
 
-BASELINE TESTS FAIL(1)
+baseline (--test on the unpatched tree, same sealed jail): FAIL(1)
 JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER
 0    claude    4.1 KB   0     PASS          Replaced the double-checked flag with a lock in session.py.
 1    codex     0 B      1     -             stream error: rate limit reached; resets 14:05
@@ -156,7 +156,7 @@ test timing rather than the code under test, which is why it fails.
 
 Rows are in jail order. Choir does not rank them, does not sort them, and does not pick
 one. `PATCH` is a byte count and exists for one reason: to tell `0 B` from not-`0 B`.
-Before the table, `BASELINE TESTS` reports the same command against the unpatched base
+Before the table, the `baseline` line reports the same command against the unpatched base
 copy in the same sealed verify jail. It is context only: Choir does not use it to rank,
 gate, skip, or alter any patch or verdict.
 `0 B` means that jail produced no diff — it may have been rate-limited, refused, hung,
@@ -166,6 +166,24 @@ there was no patch to test. Two conditions skip a verify jail and there are no o
 a `0 B` patch, because there is nothing to apply, and a patch that `git apply` rejects,
 because the tree it would be tested against was never built. Both are mechanical facts
 about the patch, not judgements about it.
+
+The three columns compose, and the combinations are worth learning because most of them
+are diagnoses of *your* setup rather than of the models:
+
+| `baseline` | `PATCH` | `EXIT` | What it means |
+| --- | --- | --- | --- |
+| `PASS` | `0 B` | `0` | The task was already done. The model looked and correctly declined. |
+| `PASS` | any | any | Whatever passes below proves nothing: the tests passed before the patch too. |
+| `FAIL` | `0 B` | `0` | The provider ran cleanly and chose to write nothing. Read `<n>.log`. |
+| `FAIL` | `0 B` | `137` | The deadline killed it mid-edit. Raise `--timeout`. |
+| `FAIL` | `0 B` | `1` | The provider itself errored — rate limit, auth, a crash. `<n>.log` says which. |
+| `FAIL` | non-empty | all `FAIL` | **Suspect your `--test`, not the patches.** A command that cannot run sealed fails every patch identically. Compare against the baseline row: if that failed the same way, the harness is what is broken. |
+| `FAIL` | non-empty | mixed | The normal case. The table is telling you what it looks like it is telling you. |
+
+That fourth-from-last row is the expensive one. Before `--cache` existed, every patch in
+this repository was reported `FAIL` because cargo could not reach crates.io from a verify
+jail, and nothing on screen distinguished that from ten bad patches. The baseline row
+exists so that failure states its own cause.
 
 `FAIL(137)` is the one ambiguous code. A jail killed by its `--timeout` exits 137, and
 so does a test process the kernel's OOM killer picked, and so does a test suite that
@@ -178,6 +196,41 @@ display and no progress bar; run it under `time` if you want one.
 
 Every patch is written to `--out` before any test runs, so nothing Choir does can
 discard work a provider actually produced.
+
+## Patterns
+
+Nothing here is a feature. They are consequences of the design that are not obvious from
+the flag table.
+
+**The patch does not have to be code.** Choir looks patch-shaped, so review work looks
+like failure — a reviewer writes no diff, the row reads `0 B`, and the finding survives
+only as a log. Make the finding a file instead:
+
+```
+$ choir "Attack crates/choir/src/run.rs. Assume the model in the jail is hostile.
+Write every finding to FINDINGS.md as file:line, the concrete input, and the
+observable consequence. Do not change any other file." \
+    --test 'cargo test --workspace' -n 3
+```
+
+Now the review *is* the patch: non-empty, diffable, three of them side by side, and
+`--test` still proves the reviewer did not break the build while writing it. Each jail is
+a genuine context reset — no shared history, no chance to anchor on a sibling's answer.
+
+**Divergence measures your instruction, not the models.** When independent attempts at one
+instruction come back structurally different and all passing, the usual reading is that
+one model is better. Usually the instruction was ambiguous, and the diff between the
+patches localises the clause that was underspecified. Convergent patches mean the task was
+unambiguous — and that `-n 3` bought you one attempt three times. Read the spread before
+you read the winner.
+
+**Convergence is a workflow, not a feature.** Choir keeps no state between runs, so it
+cannot tell you that an adversary has stopped finding things. You can: run the review
+above three times and compare the three `FINDINGS.md`. Findings that recur across
+independent runs are real; findings that appear once are usually noise; a run that finds
+nothing new is the signal to stop. The comparison material survives because every jail's
+log is copied to `--out`. Git and your own eyes hold that state, and nothing in Choir
+needs to.
 
 ## Safety
 
