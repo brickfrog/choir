@@ -399,10 +399,12 @@ fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str, n: usize) {
 /// and they ride into the patch as binary hunks. Under `--red` the red patch
 /// then carries them into the green jail's tree as well.
 ///
-/// Choir cannot know which paths those are without knowing the build system,
-/// and it refuses to: `--test` is required for the same reason. So the globs
-/// come from the user, and unlike `--out` they are written unescaped, because
-/// here a glob is the point rather than an accident.
+/// Choir does not guess which paths those are. A test command can at least be
+/// read off a marker file (C-35), and is printed before any jail starts; an
+/// artifact glob has no marker, and one guessed wrong quietly removes the
+/// model's own work from its patch. So the globs come from the user, and unlike
+/// `--out` they are written unescaped, because here a glob is the point rather
+/// than an accident.
 fn exclude_user_globs(dir: &str, globs: &[String]) {
     if globs.is_empty() {
         return;

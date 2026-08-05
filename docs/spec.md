@@ -25,16 +25,16 @@ applies one.
 ## 2. Interface
 
 ```
-choir <instruction> --test <cmd> [--repo <path>] [-n <count>]
+choir <instruction> [--test <cmd>] [--repo <path>] [-n <count>]
                     [--providers <list>] [--timeout <secs>] [--out <dir>]
-choir - --test <cmd> [...]        # instruction read from stdin
+choir - [--test <cmd>] [...]      # instruction read from stdin
 choir --help
 ```
 
 | Flag | Type | Default | Contract |
 | --- | --- | --- | --- |
 | *(positional)* | string | — | Required. Exactly one. `-` means read stdin. |
-| `--test` | string | — | Required. Run by `sh`; verdict is its exit status. |
+| `--test` | string | detected | Run by `sh`; verdict is its exit status. Omitted, it is read off one marker file in the repository root (C-35). |
 | `--repo` | path | `.` | Copied, never written to. |
 | `-n` | int > 0 | `2` | Work jail count. |
 | `--providers` | list | `claude,codex` | Comma-separated; only `claude`/`codex`. |
@@ -61,6 +61,23 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   `codex`; anything else is an error naming the offending word.
 - **C-7** A flag that expects a value and is given none is an error, not a panic.
 - **C-8** Later occurrences of the same flag override earlier ones.
+- **C-35** `--test` is optional. When it is absent, the command is detected from
+  the marker files in the repository root: `Cargo.toml` → `cargo test`,
+  `go.mod` → `go test ./...`, `Makefile` → `make test`, `package.json` →
+  `npm test`, `pyproject.toml` → `pytest`. Exactly one marker detects, and its
+  command prints on its own line above the run header, before any jail starts
+  and while `--test` can still override it. No marker, or more than one, is a
+  usage error naming every marker it looked for and listing the ones it found
+  beside their commands, so one can be copied into `--test`. No precedence
+  order and no generic default: two build systems in one root is a question
+  only its owner can answer, and a test command that is wrong runs green and
+  marks every patch `PASS` in the only table the user is given. No marker's
+  *contents* are read — a `package.json` with no `test` script fails loudly in
+  the verify jail, which beats a parser for five config formats. An explicit
+  `--test` never reaches detection: `config::parse` still rejects a missing one
+  (C-4), and that rejection is the detector's only route in. The decision is
+  `config::detect_test_cmd`, total from the root's file names to an `Option`
+  and unit-tested without a jail; reading the directory is the caller's job.
 
 ### Provider rotation (`choir_core::config::Providers`)
 
@@ -174,8 +191,9 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   them into the green jail's tree as well. Measured: a one-file Python repo
   produced a 4.1 KB patch of which all but 561 B was `__pycache__`. The globs
   are written unescaped, unlike `--out` (E-17), because here a glob is the
-  intent. Choir does not detect them, for the same reason `--test` has no
-  default: it does not know your build system.
+  intent. Choir does not detect them: a test command can be read off a marker
+  file (C-35), but an artifact glob has no such marker, and one guessed wrong
+  deletes the model's work from its patch with nothing on screen to say so.
 
 ---
 
@@ -365,7 +383,7 @@ run* is pure; everything that *runs it* is a thin shell.
 
 ```
 crates/choir-core   PURE. No I/O, no process spawn, no clock, no env.
-  config.rs   argv -> Config; provider rotation; help text
+  config.rs   argv -> Config; provider rotation; test-command detection; help
   jail.rs     Config + slot paths -> nsjail command lines
   wave.rs     jail command lines -> one shell script
   verdict.rs  rc text -> Verdict

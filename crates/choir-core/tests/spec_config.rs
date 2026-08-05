@@ -4,11 +4,18 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
-use choir_core::config::{help_text, rotation_slot, Providers};
+use choir_core::config::{
+    detect_error, detect_test_cmd, help_text, rotation_slot, Providers, TEST_MARKERS,
+};
 use choir_core::{parse, Config, Invocation, ParseError, Provider};
 
 fn argv(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// A repository root's file names, as the caller reads them off the directory.
+fn root(list: &[&str]) -> Vec<String> {
+    argv(list)
 }
 
 fn config(list: &[&str]) -> Config {
@@ -286,6 +293,74 @@ fn c27_cache_is_repeatable() {
     let cfg = config(&["x", "--test", "t", "--cache", "/a", "--cache", "/b c"]);
     assert_eq!(cfg.cache, vec!["/a".to_owned(), "/b c".to_owned()]);
     assert!(config(&["x", "--test", "t"]).cache.is_empty());
+}
+
+/// C-35: one marker file in the root is one test command, wherever it sits in
+/// the listing and whatever else is beside it.
+#[test]
+fn c35_one_marker_detects_its_command() {
+    for (marker, cmd) in TEST_MARKERS {
+        assert_eq!(
+            detect_test_cmd(&root(&["README.md", "src", marker, ".git"])),
+            Some(cmd),
+            "{marker} should detect {cmd}"
+        );
+    }
+    // A directory listing has no order; the answer does not depend on one.
+    assert_eq!(
+        detect_test_cmd(&root(&["go.mod", "vendor"])),
+        detect_test_cmd(&root(&["vendor", "go.mod"]))
+    );
+    // An explicit `--test` wins by never reaching detection: `parse` still
+    // rejects a missing one (C-4), and that rejection is the only route in.
+    assert_eq!(
+        config(&["x", "--test", "make check"]).test_cmd,
+        "make check"
+    );
+    assert_eq!(error(&["x"]), ParseError::MissingTest);
+}
+
+/// C-35: no marker and two markers are both errors, never a precedence
+/// contest, and both messages name every marker Choir looked for — so the list
+/// is learned from the failure rather than hunted for.
+#[test]
+fn c35_a_root_without_exactly_one_marker_is_an_error() {
+    let none = root(&["README.md", "src", "LICENSE"]);
+    let both = root(&["Cargo.toml", "package.json", "src"]);
+    for names in [&none, &both] {
+        assert_eq!(detect_test_cmd(names), None);
+        let msg = detect_error(names);
+        for (marker, _) in TEST_MARKERS {
+            assert!(msg.contains(marker), "{msg:?} never names {marker}");
+        }
+        assert!(msg.contains("--test"), "{msg:?} does not name the flag");
+    }
+
+    // What was found comes with the command it implies, so one can be copied
+    // into `--test`; what was not found does not, or the message would be
+    // offering a build system this root does not have.
+    let msg = detect_error(&both);
+    assert!(
+        msg.contains("cargo test"),
+        "{msg:?} omits the Cargo command"
+    );
+    assert!(msg.contains("npm test"), "{msg:?} omits the npm command");
+    assert!(!msg.contains("pytest"), "{msg:?} invented a candidate");
+}
+
+/// C-35: detection is total. Every list of names answers, including the empty
+/// one, and nothing that merely resembles a marker counts as one.
+#[test]
+fn c35_detection_is_total() {
+    assert_eq!(detect_test_cmd(&[]), None);
+    assert!(!detect_error(&[]).is_empty());
+
+    for near in ["cargo.toml", "Makefile.in", "go.mod.bak", "src/Cargo.toml"] {
+        assert_eq!(detect_test_cmd(&root(&[near])), None, "{near} is no marker");
+    }
+    // A name listed twice is still one marker, not an ambiguity.
+    let twice = root(&["Makefile", "Makefile"]);
+    assert_eq!(detect_test_cmd(&twice), Some("make test"));
 }
 
 /// E-23: a `--cache` path the mount spec cannot express is rejected, not escaped.

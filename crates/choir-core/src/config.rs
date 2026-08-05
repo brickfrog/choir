@@ -392,6 +392,70 @@ fn value<'a>(
     Ok(raw)
 }
 
+/// The marker files a test command can be read off, and the command each one
+/// implies (C-35).
+///
+/// Five entries, named here in the source, with no precedence between them: a
+/// root holding two is asked about rather than ranked. Nothing reads a marker's
+/// *contents* — a `package.json` with no `test` script fails loudly in the
+/// verify jail, which beats a parser for five config formats and loses to the
+/// `--test` the user can always pass instead.
+pub const TEST_MARKERS: [(&str, &str); 5] = [
+    ("Cargo.toml", "cargo test"),
+    ("go.mod", "go test ./..."),
+    ("Makefile", "make test"),
+    ("package.json", "npm test"),
+    ("pyproject.toml", "pytest"),
+];
+
+/// The markers present among a repository root's file `names`, in the fixed
+/// order of [`TEST_MARKERS`] rather than the directory's.
+fn markers_in(names: &[String]) -> Vec<(&'static str, &'static str)> {
+    TEST_MARKERS
+        .iter()
+        .copied()
+        .filter(|(marker, _)| names.iter().any(|name| name == marker))
+        .collect()
+}
+
+/// The test command a repository root's file `names` imply (C-35).
+///
+/// Total, and pure: the caller reads the directory, this decides. `None` in
+/// both directions — no marker at all, and more than one — because both have
+/// the same answer, `--test`, and a precedence order would silently pick a
+/// build system the user did not mean. [`detect_error`] says which case it was.
+#[must_use]
+pub fn detect_test_cmd(names: &[String]) -> Option<&'static str> {
+    match markers_in(names).as_slice() {
+        [(_, cmd)] => Some(*cmd),
+        _ => None,
+    }
+}
+
+/// The usage error for a root [`detect_test_cmd`] could not answer for (C-35).
+///
+/// Names every marker it looked for, and lists the ones it found beside the
+/// command each implies, so one can be copied into `--test` instead of hunted
+/// for. Both cases print both lists, so neither has to be worded as a guess.
+#[must_use]
+pub fn detect_error(names: &[String]) -> String {
+    let hits: Vec<String> = markers_in(names)
+        .iter()
+        .map(|(marker, cmd)| format!("{marker} -> {cmd}"))
+        .collect();
+    let found = if hits.is_empty() {
+        "none".to_owned()
+    } else {
+        hits.join("; ")
+    };
+    let looked = TEST_MARKERS.map(|(marker, _)| marker.to_owned()).join(", ");
+    format!(
+        "--test is required here: the repository root does not hold exactly one \
+         marker file\n  found: {found}\n  looked for: {looked}\n  \
+         pass one with --test '<cmd>'"
+    )
+}
+
 /// Parse a strictly-positive integer (C-5, E-3).
 fn positive(raw: &str, flag: &'static str) -> Result<usize, ParseError> {
     match raw.parse::<usize>() {
@@ -409,12 +473,16 @@ pub fn help_text() -> String {
     let mut s = String::new();
     s.push_str("choir — run one coding task N times in parallel, then test every patch\n\n");
     s.push_str("USAGE\n");
-    s.push_str("  choir <instruction> --test '<cmd>' [FLAGS]\n");
-    s.push_str("  choir - --test '<cmd>' [FLAGS]        # instruction from stdin\n\n");
+    s.push_str("  choir <instruction> [--test '<cmd>'] [FLAGS]\n");
+    s.push_str("  choir - [--test '<cmd>'] [FLAGS]      # instruction from stdin\n\n");
     s.push_str("FLAGS\n");
-    s.push_str("  --test '<cmd>'      required. Your test command, run by sh inside a jail:\n");
-    s.push_str("                      against every patch, and once against the tree as it\n");
-    s.push_str("                      stands, reported above the table.\n");
+    s.push_str("  --test '<cmd>'      your test command, run by sh inside a jail: against\n");
+    s.push_str("                      every patch, and once against the tree as it stands,\n");
+    s.push_str("                      reported above the table. Omit it and it is read off\n");
+    s.push_str("                      one marker file in the repository root (Cargo.toml,\n");
+    s.push_str("                      go.mod, Makefile, package.json, pyproject.toml) and\n");
+    s.push_str("                      printed in the run header. None or two of them is a\n");
+    s.push_str("                      usage error: there is no default and no guess.\n");
     s.push_str("  --repo <path>       repository to copy (default .). Never written to.\n");
     s.push_str("  -n <count>          work jails (default 2). Providers alternate.\n");
     s.push_str("  --providers <list>  comma-separated: claude, codex (default both).\n");

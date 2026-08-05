@@ -16,14 +16,14 @@ Needs unprivileged userns, Rust 1.85+, and `claude` or `codex` logged in.
 ## Usage
 
 ```
-choir "<instruction>" --test '<cmd>' [options]
-choir -  --test '<cmd>' [options]  <<'EOF'      # instruction on stdin
+choir "<instruction>" [--test '<cmd>'] [options]
+choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 ```
 
 | Flag | Default | |
 | --- | --- | --- |
 | *(positional)* | — | Instruction, verbatim to every jail. `-` reads stdin. |
-| `--test '<cmd>'` | required | Run against the unpatched base and each patch. |
+| `--test '<cmd>'` | detected | Run against the unpatched base and each patch. Omitted, it comes from one marker file in the repository root — `Cargo.toml`, `go.mod`, `Makefile`, `package.json`, `pyproject.toml` — and is printed before the run starts. None or two of them is a usage error naming all five. |
 | `--repo <path>` | `.` | Copied, never written. |
 | `-n <count>` | `2` | Work jails. Providers alternate. |
 | `--providers <list>` | `claude,codex` | |
@@ -72,7 +72,8 @@ Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `APPLY FAILED`, or `-
 
 ## Limits
 
-- One instruction per run. `--test` required, no detection, no default.
+- One instruction per run. `--test` is detected from exactly one marker file or
+  it is required: never ranked, never defaulted, never guessed.
 - `sh` runs the `--test` string, so the verdict is the last command's status. Use `&&`.
 - Never picks a winner, never applies a patch.
 - No retries, resume, state, quota accounting, or config file.
@@ -83,7 +84,7 @@ Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `APPLY FAILED`, or `-
 ## Development
 
 ```sh
-cargo test --workspace                                  # 93 tests
+cargo test --workspace                                  # 97 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo kani -p choir-core                                # 3 proofs
 ```

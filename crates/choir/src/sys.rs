@@ -135,6 +135,23 @@ pub fn unlock_tree(path: &str) {
     let _ = run("chmod", &["-R", "u+rwX", path]);
 }
 
+/// The names of the entries directly inside a directory, in no order (C-35).
+///
+/// Names, not paths: the pure detector compares them to its own marker list,
+/// and `<repo>/Cargo.toml` matches nothing. One level only — a marker belongs
+/// to the root, or to a subproject Choir was not pointed at. A directory that
+/// cannot be read lists as empty, which detection reports as no marker found —
+/// the same message, and the same fix, as a root that really holds none.
+pub fn dir_names(path: &str) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(path) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
 /// Read the whole of stdin as trimmed text, for an instruction of `-`.
 ///
 /// Only called when the instruction is exactly `-`, so `choir` with no stdin
@@ -231,6 +248,16 @@ mod tests {
         if inherited.is_empty() {
             eprintln!("note: no global git config on this host, assertion is weak");
         }
+    }
+
+    /// C-35: the detector is handed bare names, and an unreadable directory is
+    /// an empty listing rather than a failure. A listing of `<repo>/Cargo.toml`
+    /// matches no marker, so detection would find nothing anywhere.
+    #[test]
+    fn dir_names_lists_bare_names() {
+        let names = super::dir_names(env!("CARGO_MANIFEST_DIR"));
+        assert!(names.contains(&"Cargo.toml".to_owned()), "{names:?}");
+        assert!(super::dir_names("/nonexistent/directory").is_empty());
     }
 
     /// A missing file reads as empty rather than panicking (E-7, E-8).
