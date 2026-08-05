@@ -124,8 +124,10 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   integer, and `Fail(255)` on anything unparseable.
 - **C-19** A zero-byte patch yields `NoPatch` and skips its verify jail.
 - **C-20** A patch `git apply` rejects yields `ApplyFailed` and skips its jail.
-- **C-21** C-19 and C-20 are the only conditions that skip work. Both are
-  mechanical facts about the patch, never judgements of it.
+- **C-21** C-19, C-20, C-32 and C-36 are the only conditions that skip work.
+  All four are mechanical facts about the patch, never judgements of it: empty,
+  unappliable, a red wave that failed to go red, and a green wave that altered
+  a red-approved file.
 
 ### Report (`choir_core::report`)
 
@@ -133,7 +135,8 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **C-23** A row is jail index, provider, size, work-jail exit code, verdict
   label, and the last non-blank line of the jail log, in fixed columns, with
   trailing space trimmed.
-- **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `APPLY FAILED`, `-`.
+- **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `APPLY FAILED`, `-`,
+  and under `--red` also `RED FAILED` (C-32) and `RED TAMPERED` (C-36).
 - **C-25** Rows print in jail index order. There is no ranking and no sort.
 - **C-26** A `git apply` line prints for each passing patch, and only those.
 - **C-28** Each work jail's log is copied to `<out>/<index>.log`, and each verify
@@ -194,6 +197,28 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   intent. Choir does not detect them: a test command can be read off a marker
   file (C-35), but an artifact glob has no such marker, and one guessed wrong
   deletes the model's work from its patch with nothing on screen to say so.
+- **C-36** Under `--red`, every file the red patch created or modified must
+  appear byte-identical in the green patch. When one does not, the attempt is
+  skipped with the verdict `RED TAMPERED`, no `git apply` line is printed for
+  it, and it does not count as a pass. Without this the gate proves a test was
+  real once and then stops defending it: the green jail's tree is seeded with
+  that same red patch (C-33), so a jail that cannot make its own tests pass can
+  weaken or delete them, and the `TESTS` column reads `PASS` for a suite no gate
+  ever saw. This is necessary, not sufficient: a green wave that leaves every
+  approved file untouched and adds a new one that disables them is admitted,
+  because that file is not a red path. Both patches are
+  `git diff --cached --binary HEAD` against the same untouched base commit, so a
+  file's section of the diff is byte-identical in the two exactly when the
+  file's content is; the decision is therefore a byte equality over the sections
+  a `diff --git ` line opens, with no path parsing and no notion of what a test
+  is. Deleting an approved file is tampering and so is editing one; adding files
+  is not, because implementation is new files plus edits to files the red patch
+  never touched. An empty green patch is checked here rather than by C-19: after
+  a gate that admitted, it means every approved test is gone. Like C-32 this is
+  a `--red`-only skip and a mechanical fact — a byte comparison of two patches
+  Choir produced itself, never a judgement of what either contains. The decision
+  is `verdict::preserves_red`, in the pure core, so it is total and unit-tested
+  without a jail or a filesystem.
 
 ---
 

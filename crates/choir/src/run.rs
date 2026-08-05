@@ -93,7 +93,7 @@ pub fn execute(cfg: &Config) -> i32 {
     };
 
     work_wave(cfg, &paths, &reds);
-    let attempts = stage(cfg, &paths, &red_verdicts);
+    let attempts = stage(cfg, &paths, &reds, &red_verdicts);
     let baseline = verify_wave(cfg, &paths, &attempts);
 
     let rows = collect(&paths, &attempts);
@@ -670,7 +670,7 @@ fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8
 /// Extract every patch, then build the tree each surviving patch will be tested
 /// against. Applying host-side keeps "the patch does not apply" and "the tests
 /// failed" from collapsing into one nonzero exit code.
-fn stage(cfg: &Config, paths: &Paths, red_verdicts: &[Verdict]) -> Vec<Attempt> {
+fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]) -> Vec<Attempt> {
     cfg.plan()
         .into_iter()
         .map(|(index, provider)| {
@@ -683,6 +683,20 @@ fn stage(cfg: &Config, paths: &Paths, red_verdicts: &[Verdict]) -> Vec<Attempt> 
                     provider,
                     patch,
                     staged: Staged::Skipped(Verdict::RedGate),
+                };
+            }
+            // C-36, and before the empty check: an empty patch here is every
+            // approved test deleted, which is tampering rather than absence.
+            // The red patch is the same bytes the gate watched fail, and the
+            // green one diffs the same base, so this is a byte comparison of
+            // two files Choir wrote itself.
+            let red = reds.get(index).map_or([].as_slice(), Vec::as_slice);
+            if cfg.red && !verdict::preserves_red(red, &patch) {
+                return Attempt {
+                    index,
+                    provider,
+                    patch,
+                    staged: Staged::Skipped(Verdict::RedTampered),
                 };
             }
             if patch.is_empty() {
@@ -822,8 +836,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        collect, detach_gitfile, exclude_out_from_base, exclude_user_globs, extract,
-        gitignore_escape, prepare, strip_host_config, Attempt, Paths, Staged,
+        collect, detach_gitfile, exclude_out_from_base, exclude_user_globs, extract, extract_slot,
+        gitignore_escape, prepare, stage, strip_host_config, Attempt, Paths, Staged,
     };
     use crate::sys;
     use choir_core::config::{Config, Provider};
@@ -1697,6 +1711,93 @@ mod tests {
         assert!(
             diff.contains("inner/payload.txt"),
             "the model's change inside a nested repository never reached the patch: {diff:?}"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// C-36: a green wave that drops the tests its own red wave wrote is not a
+    /// pass, and one that only adds implementation beside them still is.
+    ///
+    /// The core decides this over two patches (`verdict::preserves_red`); what
+    /// this pins is the wiring — that the patches compared are the red patch the
+    /// gate approved and the green patch of the *same* jail, and that a tampered
+    /// attempt never reaches a verify jail whose `PASS` would be the lie.
+    #[test]
+    fn c36_a_green_wave_cannot_delete_the_tests_the_gate_approved() {
+        let dir = scratch("tamper");
+        let src = dir.path().join("proj");
+        fs::create_dir_all(&src).expect("proj");
+        fs::write(src.join("calc.py"), "def add(a, b):\n    raise\n").expect("calc");
+        let cfg = Config {
+            repo: src.to_str().expect("utf-8").to_owned(),
+            out: format!("{}/out", dir.str()),
+            n: 1,
+            red: true,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+
+        // The red wave: one new test file, extracted exactly as `red_wave` does.
+        // `cp -a src dst` needs dst's parent; the real flow gets both slot
+        // directories from `prep_slot` creating `<slot>/tmp` first.
+        fs::create_dir_all(paths.slot("r", 0)).expect("red slot");
+        fs::create_dir_all(paths.slot("w", 0)).expect("green slot");
+        let red_repo = format!("{}/repo", paths.slot("r", 0));
+        sys::copy_tree(&paths.base_repo(), &red_repo);
+        fs::write(
+            format!("{red_repo}/test_calc.py"),
+            "def test_add():\n    assert add(1, 2) == 3\n",
+        )
+        .expect("test");
+        let reds = vec![extract_slot(&paths, "r", 0, "0.red")];
+        assert!(!reds.first().expect("red patch").is_empty());
+
+        // The green wave, seeded with that red patch as `work_wave` seeds it.
+        let green_repo = format!("{}/repo", paths.slot("w", 0));
+        let seed = |work: &dyn Fn()| {
+            sys::remove_tree(&green_repo);
+            sys::copy_tree(&paths.base_repo(), &green_repo);
+            let red = format!("{}/patches/0.red.patch", paths.dir);
+            let (code, _) = sys::git(&["-C", &green_repo, "apply", &red]);
+            assert_eq!(code, 0, "the red patch must seed the green tree");
+            work();
+        };
+
+        // Honest: implementation only, the approved test left alone.
+        seed(&|| {
+            fs::write(
+                format!("{green_repo}/calc.py"),
+                "def add(a, b):\n    return a + b\n",
+            )
+            .expect("impl");
+        });
+        let honest = stage(&cfg, &paths, &reds, &[Verdict::Fail(1)]);
+        assert!(
+            matches!(honest.first().map(|a| &a.staged), Some(Staged::Ready(_))),
+            "an untouched red file must still earn its verify jail"
+        );
+
+        // Tampering: the test the gate watched fail is gone, and `--test` would
+        // pass against what is left.
+        seed(&|| {
+            fs::remove_file(format!("{green_repo}/test_calc.py")).expect("delete test");
+            fs::write(
+                format!("{green_repo}/calc.py"),
+                "def add(a, b):\n    return 0\n",
+            )
+            .expect("impl");
+        });
+        let tampered = stage(&cfg, &paths, &reds, &[Verdict::Fail(1)]);
+        let staged = tampered.first().map(|a| &a.staged);
+        assert!(
+            matches!(staged, Some(&Staged::Skipped(Verdict::RedTampered))),
+            "a deleted red test must not reach a verify jail"
+        );
+        assert!(
+            !fs::read(format!("{}/0.patch", paths.out))
+                .unwrap_or_default()
+                .is_empty(),
+            "the jail's work is still written out; only the row is refused"
         );
         sys::remove_tree(&paths.dir);
     }
