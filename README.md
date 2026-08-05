@@ -90,7 +90,7 @@ it started, and the patch it extracted, never from what the provider printed.
 ## Development
 
 ```sh
-cargo test --workspace                                  # 102 tests
+cargo test --workspace                                  # 108 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo kani -p choir-core                                # 3 proofs
 ```
