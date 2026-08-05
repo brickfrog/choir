@@ -12,6 +12,8 @@ fn row_of(index: usize, provider: Provider, bytes: usize, v: Verdict, last: &str
         provider,
         bytes,
         exit: Some(0),
+        elapsed: Some(41),
+        timeout: 1200,
         verdict: v,
         last_line: last.to_owned(),
     })
@@ -140,19 +142,19 @@ fn e10_size_label_at_the_limit() {
 fn c23_row_layout() {
     assert_eq!(
         row_of(0, Provider::Claude, 4198, Verdict::Pass, "did it"),
-        "0    claude    4.0 KB   0     PASS          did it"
+        "0    claude    4.0 KB   0     PASS          41s                  did it"
     );
     assert_eq!(
         row_of(1, Provider::Codex, 0, Verdict::NoPatch, "rate limited"),
-        "1    codex     0 B      0     -             rate limited"
+        "1    codex     0 B      0     -             41s   wrote nothing  rate limited"
     );
     assert_eq!(
         row_of(2, Provider::Codex, 512, Verdict::ApplyFailed, ""),
-        "2    codex     512 B    0     APPLY FAILED"
+        "2    codex     512 B    0     APPLY FAILED  41s   apply rejected"
     );
     assert_eq!(
         row_of(3, Provider::Claude, 2048, Verdict::Fail(1), "x"),
-        "3    claude    2.0 KB   0     FAIL(1)       x"
+        "3    claude    2.0 KB   0     FAIL(1)       41s                  x"
     );
 }
 
@@ -180,6 +182,8 @@ fn c26_apply_lines() {
             provider: Provider::Claude,
             bytes: 10,
             exit: Some(0),
+            elapsed: Some(41),
+            timeout: 1200,
             verdict: Verdict::Pass,
             last_line: String::new(),
         },
@@ -188,6 +192,8 @@ fn c26_apply_lines() {
             provider: Provider::Codex,
             bytes: 0,
             exit: Some(0),
+            elapsed: Some(41),
+            timeout: 1200,
             verdict: Verdict::NoPatch,
             last_line: String::new(),
         },
@@ -196,6 +202,8 @@ fn c26_apply_lines() {
             provider: Provider::Claude,
             bytes: 20,
             exit: Some(0),
+            elapsed: Some(41),
+            timeout: 1200,
             verdict: Verdict::Fail(1),
             last_line: String::new(),
         },
@@ -204,6 +212,8 @@ fn c26_apply_lines() {
             provider: Provider::Codex,
             bytes: 30,
             exit: Some(0),
+            elapsed: Some(41),
+            timeout: 1200,
             verdict: Verdict::Pass,
             last_line: String::new(),
         },
@@ -271,6 +281,77 @@ fn audit_heading_disclaims() {
     assert!(h.starts_with("audit (codex"));
     assert!(h.contains("unverified"));
     assert!(h.contains("no effect on the table"));
+}
+
+/// C-37: every row that produced no usable patch says why, in a column that
+/// lines up with its header, and a jail killed by Choir's own deadline is never
+/// reported as `FAIL(137)`.
+///
+/// The four outcomes the table used to collapse into one exit code and a log,
+/// rendered as the user reads them.
+#[test]
+fn c36_a_barren_row_names_its_reason() {
+    let barren = |exit, elapsed, verdict, bytes| {
+        report::row(&Row {
+            index: 0,
+            provider: Provider::Claude,
+            bytes,
+            exit,
+            elapsed,
+            timeout: 1200,
+            verdict,
+            last_line: "tail".to_owned(),
+        })
+    };
+
+    // Killed by Choir's own --timeout: stated as the deadline, never as 137.
+    let killed = barren(Some(137), Some(1200), Verdict::NoPatch, 0);
+    assert!(killed.contains("timeout 1200s"), "{killed}");
+    assert!(!killed.contains("FAIL"), "{killed}");
+    // Failed on its own, carrying the real code.
+    assert!(barren(Some(1), Some(12), Verdict::NoPatch, 0).contains("exit 1"));
+    // The same 137 well inside the budget stays the jail's own code.
+    assert!(barren(Some(137), Some(12), Verdict::NoPatch, 0).contains("exit 137"));
+    // Ran clean and wrote nothing: the model declining.
+    let declined = barren(Some(0), Some(3), Verdict::NoPatch, 0);
+    assert!(declined.contains("wrote nothing"), "{declined}");
+    // A patch git apply rejected.
+    assert!(barren(Some(0), Some(3), Verdict::ApplyFailed, 512).contains("apply rejected"));
+    // A jail that never reported is not a jail that exited 0.
+    assert!(barren(None, None, Verdict::NoPatch, 0).contains("no exit code"));
+
+    // A row whose patch survived explains itself in TESTS and adds nothing.
+    let produced = barren(Some(0), Some(41), Verdict::Fail(1), 4096);
+    for said in ["timeout", "exit 0", "wrote nothing", "apply rejected"] {
+        assert!(!produced.contains(said), "{produced} should not say {said}");
+    }
+
+    // A verify jail killed by the deadline: TESTS carries the deadline too.
+    let timed_out = barren(Some(0), Some(41), Verdict::Timeout(1200), 4096);
+    assert!(timed_out.contains("TIMEOUT(1200s)"), "{timed_out}");
+    assert!(!timed_out.contains("FAIL(137)"), "{timed_out}");
+
+    // Wall time is on every row, and absent rather than zero when unmeasured.
+    assert_eq!(report::elapsed_label(Some(0)), "0s");
+    assert_eq!(report::elapsed_label(Some(1200)), "1200s");
+    assert_eq!(
+        report::elapsed_label(None),
+        "?",
+        "unmeasured is not instant"
+    );
+
+    // Both new columns sit under their own headings.
+    assert_eq!(
+        declined.find("3s"),
+        report::HEADER.find("TIME"),
+        "{declined}"
+    );
+    assert_eq!(
+        declined.find("wrote nothing"),
+        report::HEADER.find("WHY"),
+        "{declined}"
+    );
+    assert!(declined.ends_with("tail"), "{declined}");
 }
 
 /// C-29: the exit column tells a clean-but-empty provider from a killed one.

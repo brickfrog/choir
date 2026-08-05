@@ -7,10 +7,11 @@
 //! "smallest diff" rewards deleting the failing test.
 
 use crate::config::Provider;
-use crate::verdict::Verdict;
+use crate::verdict::{self, Verdict};
 
 /// Column header for the results table.
-pub const HEADER: &str = "JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER";
+pub const HEADER: &str =
+    "JAIL PROVIDER  PATCH    EXIT  TESTS         TIME  WHY            LAST LINE FROM PROVIDER";
 
 /// Render the unpatched tree's test verdict immediately above the table (C-30).
 ///
@@ -91,6 +92,8 @@ const COL_PROVIDER: usize = 10;
 const COL_PATCH: usize = 9;
 const COL_EXIT: usize = 6;
 const COL_TESTS: usize = 14;
+const COL_TIME: usize = 6;
+const COL_WHY: usize = 15;
 
 /// One finished attempt, ready to render.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +108,14 @@ pub struct Row {
     /// Distinguishes a provider that ran and produced nothing from one that was
     /// killed (C-29).
     pub exit: Option<i32>,
+    /// Whole seconds the work jail ran, or `None` when it never reported (C-37).
+    /// Measured from the wave's own clock, so it is a fact Choir holds rather
+    /// than anything the provider said.
+    pub elapsed: Option<u64>,
+    /// The deadline every jail in this run was given, from `--timeout` (C-37).
+    /// Carried on the row because the reason a jail died is only readable
+    /// against the budget it had.
+    pub timeout: u32,
     /// The verdict.
     pub verdict: Verdict,
     /// Last non-blank line of the jail's log.
@@ -161,19 +172,44 @@ pub fn pad(text: &str, width: usize) -> String {
     out
 }
 
-/// Render one table row (C-23).
+/// Render one table row (C-23, C-37).
+///
+/// The `WHY` column is computed here from the row's own facts rather than
+/// handed in, so no caller can put a reason beside a verdict that disagrees
+/// with it.
 #[must_use]
 pub fn row(entry: &Row) -> String {
     let line = format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}",
         pad(&entry.index.to_string(), COL_JAIL),
         pad(entry.provider.name(), COL_PROVIDER),
         pad(&size_label(entry.bytes), COL_PATCH),
         pad(&exit_label(entry.exit), COL_EXIT),
         pad(&entry.verdict.label(), COL_TESTS),
+        pad(&elapsed_label(entry.elapsed), COL_TIME),
+        pad(
+            &verdict::reason(
+                entry.verdict,
+                entry.exit,
+                entry.bytes,
+                entry.elapsed,
+                entry.timeout,
+            ),
+            COL_WHY
+        ),
         entry.last_line
     );
     line.trim_end().to_owned()
+}
+
+/// Render a jail's wall time for the `TIME` column (C-37).
+///
+/// `?` means Choir never measured this jail, which is the same absence the
+/// `EXIT` column reports with `?`: a jail that wrote no `.rc` finished at no
+/// time Choir can name.
+#[must_use]
+pub fn elapsed_label(secs: Option<u64>) -> String {
+    secs.map_or_else(|| "?".to_owned(), |s| format!("{s}s"))
 }
 
 /// Render a work jail's exit code for the `EXIT` column (C-29).

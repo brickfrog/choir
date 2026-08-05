@@ -225,8 +225,10 @@ write-temp-then-rename, `mkdir`, symlink. There is no copy-in and no copy-out, a
 is never trusted to produce a patch. Rejected: asking the model for a diff.
 
 **`--time_limit` is the deadline, and there is no poll loop.** nsjail blocks for the life of
-the jail and returns the child's exit code exactly, so completion needs no sentinel file, no
-status query, and no clock in Choir. Verified accurate to 8 ms against a process tree that
+the jail and returns the child's exit code exactly, so completion needs no sentinel file and
+no status query. The clock Choir does read is not one: two `SystemTime` reads per wave and a
+`stat` of the `.rc` the wave already writes, all of it after the fact and none of it deciding
+when anything runs (C-36). Verified accurate to 8 ms against a process tree that
 traps and ignores TERM, INT and HUP. Rejected: `--daemon`, which returns 0 immediately and
 discards the child's exit code. Rejected: backgrounding nsjail and polling — roughly 2.3× the
 code, it drags the poll-count deadline back, and a detached jail is reparented to the systemd
@@ -239,10 +241,14 @@ collects, so there is nothing to spawn. `std::process` plus `/bin/sh` is the ent
 concurrency story, and it is measured above at 4.01 s for three jails whose serial sum
 is 10 s.
 
-**A failure is an exit code and the jail's log, and nothing interprets either.** 137 is
-`FAIL(137)`; a deadline kill and a test that exits 137 by itself are the same code and both
-are failures, so `TIMEOUT` is not a table value. Rejected: a sentinel file, an `--log` parse,
-or a fifth column to disambiguate — that is the machinery this design exists to delete.
+**A failure is an exit code, a duration, and the jail's log, and nothing interprets the log.**
+Choir set the deadline and read the clock before the wave fanned out, so whether `--timeout`
+fired is a fact it holds rather than a reading of 137: a deadline kill is `TIMEOUT(<secs>s)`
+and `FAIL(137)` is what is left, the OOM killer or a suite that exits 137 by itself (C-36).
+The `WHY` column separates that from a non-zero exit, a clean refusal and a rejected patch,
+from those same facts and the patch Choir extracted itself. Still rejected: a sentinel file,
+an `--log` parse, a probe, or anything that asks the provider what happened — the four cases
+are told apart by two `SystemTime` reads and one `stat` of the `.rc` the wave already wrote.
 `-q` rather than `-Q` because it is silent on success and still prints nsjail's own reason
 for a setup failure into the jail's log. Codes stay distinguishable because Choir always
 execs `/usr/bin/sh`: a bad user command inside `sh -c` returns 127 with the shell's message,

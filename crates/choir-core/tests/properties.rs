@@ -22,6 +22,7 @@ fn any_verdict() -> impl Strategy<Value = Verdict> {
     prop_oneof![
         Just(Verdict::Pass),
         any::<i32>().prop_map(Verdict::Fail),
+        any::<u32>().prop_map(Verdict::Timeout),
         Just(Verdict::ApplyFailed),
         Just(Verdict::NoPatch),
     ]
@@ -153,12 +154,14 @@ proptest! {
         bytes in any::<usize>(),
         v in any_verdict(),
         exit in proptest::option::of(any::<i32>()),
+        elapsed in proptest::option::of(any::<u64>()),
+        timeout in any::<u32>(),
         last in "[a-zA-Z0-9 ]{1,30}",
     ) {
         let trimmed = last.trim_end().to_owned();
         prop_assume!(!trimmed.is_empty());
         let line = report::row(&Row {
-            index, provider, bytes, exit, verdict: v, last_line: last,
+            index, provider, bytes, exit, elapsed, timeout, verdict: v, last_line: last,
         });
         prop_assert!(line.ends_with(&trimmed), "{line:?} should end with {trimmed:?}");
         prop_assert!(line.starts_with(&index.to_string()));
@@ -178,6 +181,8 @@ proptest! {
                 provider: Provider::Claude,
                 bytes: 1,
                 exit: Some(0),
+                elapsed: None,
+                timeout: 1200,
                 verdict: *v,
                 last_line: String::new(),
             })

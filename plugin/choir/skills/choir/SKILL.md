@@ -44,9 +44,13 @@ choir - --test '<cmd>' < instruction.md     # instruction from stdin, for long b
 ## Reading the table
 
 - `PATCH` is a byte count. `0 B` means that jail produced no diff.
-- `EXIT` is the provider's own exit code. `0 B` beside `0` is a provider that ran cleanly and
-  declined; beside `137` it is one the deadline killed; beside `1` it errored — read the log.
+- `EXIT` is the provider's own exit code, and `TIME` how long that jail ran.
+- `WHY` says why a row produced no usable patch: `wrote nothing` is a provider that ran
+  cleanly and declined, `timeout <secs>s` one Choir's own deadline killed, `exit <code>` one
+  that failed on its own, `apply rejected` a patch that would not apply. Blank means a patch
+  survived and `TESTS` speaks for it. Read the log for what an exit code does not say.
 - `TESTS` is the exit code of `--test`, and nothing else. No provider self-report is trusted.
+  `TIMEOUT(<secs>s)` there is the verify jail hitting the same deadline.
 - The line under the rows says how many patches were byte-distinct. Fewer than `n` means the
   extra jails bought nothing, and this kind of task wants a smaller `n`.
 - `<out>/<i>.log` and `<out>/<i>.verify.log` hold what the table only summarises.

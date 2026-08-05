@@ -8,6 +8,7 @@
 //! order things happen in and the syscalls that make them happen.
 
 use std::path::Path;
+use std::time::SystemTime;
 
 use choir_core::config::{unquotable, Config, Provider};
 use choir_core::report::{self, Row};
@@ -92,11 +93,11 @@ pub fn execute(cfg: &Config) -> i32 {
         Vec::new()
     };
 
-    work_wave(cfg, &paths, &reds);
+    let work_started = work_wave(cfg, &paths, &reds);
     let attempts = stage(cfg, &paths, &reds, &red_verdicts);
-    let baseline = verify_wave(cfg, &paths, &attempts);
+    let (baseline, verify_started) = verify_wave(cfg, &paths, &attempts);
 
-    let rows = collect(&paths, &attempts);
+    let rows = collect(cfg, &paths, &attempts, work_started, verify_started);
     let patches: Vec<(usize, &[u8])> = attempts
         .iter()
         .map(|a| (a.index, a.patch.as_slice()))
@@ -469,6 +470,19 @@ fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
     sys::resolve_binary(provider.name())
 }
 
+/// Run one wave, and return the instant it started (C-37).
+///
+/// One clock for the whole wave, read immediately before the shell fans out:
+/// the jails all background on the same line, so this is each of their starts
+/// to within the milliseconds `sh` takes to spawn them. Nothing polls and
+/// nothing is scheduled — `sh` still blocks on `wait`, and the wave still ends
+/// when its longest jail does.
+fn run_wave(jails: &[Jail]) -> SystemTime {
+    let started = sys::clock();
+    let _ = sys::sh(&wave::script(jails));
+    started
+}
+
 /// Wave 0, `--red` only: N provider jails that may write tests and nothing else.
 ///
 /// Returns each jail's red patch, which is exactly the tests it added.
@@ -488,7 +502,7 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
         .collect();
 
     println!("[red]    {} jails started", jails.len());
-    let _ = sys::sh(&wave::script(&jails));
+    run_wave(&jails);
     shred_credentials(&jails);
 
     cfg.plan()
@@ -529,7 +543,7 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
     }
 
     println!("[red]    {} gate jails started", jails.len());
-    let _ = sys::sh(&wave::script(&jails));
+    run_wave(&jails);
 
     slots
         .into_iter()
@@ -548,7 +562,10 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
 /// watched fail. The patch extracted afterwards still diffs against the
 /// untouched base `HEAD`, so it carries the tests and the implementation
 /// together and the verify wave measures the pair.
-fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) {
+///
+/// Returns the instant the wave started, which is what makes each work jail's
+/// wall time and the reason it produced nothing readable off the clock (C-37).
+fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
     let prompt = if cfg.red {
         choir_core::green_prompt(&cfg.instruction)
     } else {
@@ -573,8 +590,9 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) {
         .collect();
 
     println!("[work]   {} jails started", jails.len());
-    let _ = sys::sh(&wave::script(&jails));
+    let started = run_wave(&jails);
     shred_credentials(&jails);
+    started
 }
 
 /// Unlink each jail's credential copy the moment its wave returns.
@@ -685,7 +703,7 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
                     staged: Staged::Skipped(Verdict::RedGate),
                 };
             }
-            // C-36, and before the empty check: an empty patch here is every
+            // C-37, and before the empty check: an empty patch here is every
             // approved test deleted, which is tampering rather than absence.
             // The red patch is the same bytes the gate watched fail, and the
             // green one diffs the same base, so this is a byte comparison of
@@ -732,7 +750,12 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
 }
 
 /// Wave 2: the unpatched base and one sealed jail per applicable patch.
-fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> Verdict {
+///
+/// Returns the baseline verdict and the instant the wave started. The baseline
+/// is classified against the clock like every other jail (C-37): a `--test`
+/// command that cannot finish inside `--timeout` reads `TIMEOUT`, not a `137`
+/// the reader has to guess at.
+fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, SystemTime) {
     let baseline = paths.slot("b", 0);
     prep_slot(&baseline, &cfg.test_cmd);
     sys::copy_tree(&paths.base_repo(), &format!("{baseline}/repo"));
@@ -744,8 +767,13 @@ fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> Verdict {
     }));
 
     println!("[verify] {} jails started", jails.len());
-    let _ = sys::sh(&wave::script(&jails));
-    verdict::from_rc(&sys::read_text(Path::new(&format!("{baseline}.rc"))))
+    let started = run_wave(&jails);
+    let rc = format!("{baseline}.rc");
+    let elapsed = sys::elapsed_to(started, Path::new(&rc));
+    (
+        verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, cfg.timeout),
+        started,
+    )
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -755,7 +783,18 @@ fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> Verdict {
 /// and the scratch tree holding both is removed before `execute` returns. For a
 /// run that produced no patch that left nothing to read afterwards: the evidence
 /// of a paid run died with the run. These are copies, not new information.
-fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
+///
+/// Each wave's start instant comes in with it, so a row carries the wall time
+/// of its own work jail and a verdict that knows whether the verify jail was
+/// killed by Choir's deadline rather than by anything else that exits 137
+/// (C-37). Both clocks are Choir's own; neither reads a provider's output.
+fn collect(
+    cfg: &Config,
+    paths: &Paths,
+    attempts: &[Attempt],
+    work_started: SystemTime,
+    verify_started: SystemTime,
+) -> Vec<Row> {
     attempts
         .iter()
         .map(|a| {
@@ -766,7 +805,12 @@ fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
                         Path::new(&format!("{}/{}.verify.log", paths.out, a.index)),
                         log.as_bytes(),
                     );
-                    verdict::from_rc(&sys::read_text(Path::new(&format!("{slot}.rc"))))
+                    let rc = format!("{slot}.rc");
+                    verdict::from_run(
+                        &sys::read_text(Path::new(&rc)),
+                        sys::elapsed_to(verify_started, Path::new(&rc)),
+                        cfg.timeout,
+                    )
                 }
                 Staged::Skipped(v) => *v,
             };
@@ -776,11 +820,14 @@ fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
                 Path::new(&format!("{}/{}.log", paths.out, a.index)),
                 log.as_bytes(),
             );
+            let rc = format!("{slot}.rc");
             Row {
                 index: a.index,
                 provider: a.provider,
                 bytes: a.patch.len(),
-                exit: verdict::code_from_rc(&sys::read_text(Path::new(&format!("{slot}.rc")))),
+                exit: verdict::code_from_rc(&sys::read_text(Path::new(&rc))),
+                elapsed: sys::elapsed_to(work_started, Path::new(&rc)),
+                timeout: cfg.timeout,
                 verdict,
                 last_line: report::last_line(&log),
             }
@@ -819,7 +866,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     let mount = format!("-R {}/repo:/repo", paths.dir);
     let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
     let jails = [Jail::new(command, slot.clone())];
-    let _ = sys::sh(&wave::script(&jails));
+    run_wave(&jails);
     shred_credentials(&jails);
 
     let heading = report::audit_heading(provider);
@@ -1384,12 +1431,14 @@ mod tests {
         };
         fs::create_dir_all(&paths.out).expect("out");
 
+        let started = sys::clock();
         fs::write(format!("{dir_s}/w0.log"), "model said this\n").expect("w log");
         fs::write(format!("{dir_s}/w0.rc"), "0\n").expect("w rc");
         fs::write(format!("{dir_s}/v0.log"), "assertion failed\n").expect("v log");
         fs::write(format!("{dir_s}/v0.rc"), "1\n").expect("v rc");
 
         let rows = collect(
+            &Config::default(),
             &paths,
             &[Attempt {
                 index: 0,
@@ -1397,10 +1446,20 @@ mod tests {
                 patch: b"a patch\n".to_vec(),
                 staged: Staged::Ready(format!("{dir_s}/v0")),
             }],
+            started,
+            started,
         );
 
         let row = rows.first().expect("one row");
         assert_eq!(row.verdict, Verdict::Fail(1));
+        // C-37: the work jail's own wall time, off Choir's clock, and a row
+        // that produced a patch has nothing to explain.
+        assert!(
+            row.elapsed.unwrap_or(u64::MAX) < 5,
+            "elapsed came from somewhere other than this wave: {:?}",
+            row.elapsed
+        );
+        assert_eq!(row.timeout, Config::default().timeout);
         assert_eq!(
             row.exit,
             Some(0),
@@ -1429,6 +1488,7 @@ mod tests {
         fs::create_dir_all(&paths.out).expect("out");
 
         let rows = collect(
+            &Config::default(),
             &paths,
             &[Attempt {
                 index: 0,
@@ -1436,9 +1496,19 @@ mod tests {
                 patch: Vec::new(),
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
+            sys::clock(),
+            sys::clock(),
         );
 
-        assert_eq!(rows.first().expect("one row").exit, None);
+        let row = rows.first().expect("one row");
+        assert_eq!(row.exit, None);
+        // C-37: a jail with no `.rc` was never timed either, and the row says
+        // exactly that rather than reporting a zero-second run.
+        assert_eq!(row.elapsed, None);
+        assert_eq!(
+            choir_core::verdict::reason(row.verdict, row.exit, row.bytes, row.elapsed, row.timeout),
+            "no exit code"
+        );
     }
 
     /// E-27: an untracked file in the user's tree must not make every patch

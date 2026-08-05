@@ -15,6 +15,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::process::Command;
+use std::time::SystemTime;
 
 /// Run a program with an argv, returning its exit code and stdout.
 ///
@@ -162,6 +163,32 @@ pub fn read_stdin() -> String {
     String::from_utf8_lossy(&buf).trim().to_owned()
 }
 
+/// The wall clock, read once immediately before a wave starts (C-37).
+///
+/// A wave backgrounds every jail in one line of shell and then blocks on
+/// `wait`, so this instant is every jail in that wave's start: the fan-out is
+/// the shell's, and it costs the same milliseconds whether there is one jail or
+/// eight. Nothing here polls, waits, or reschedules — the clock is read twice
+/// per wave and only ever reported.
+pub fn clock() -> SystemTime {
+    SystemTime::now()
+}
+
+/// Whole seconds from `start` to the last write of `path` (C-37).
+///
+/// The jail's `.rc` is written by the wave the instant the jail returns, so its
+/// mtime is when that jail finished. `None` only when there is no readable
+/// `.rc` at all — the same absence the `EXIT` column reports as `?`.
+///
+/// A finish time at or before the clock reads as zero seconds rather than as
+/// unmeasured: Linux stamps a file from a coarse clock that can sit a tick
+/// behind the reading taken just before the write, so `duration_since` fails
+/// for a jail that finished instantly, which is a duration and not an absence.
+pub fn elapsed_to(start: SystemTime, path: &Path) -> Option<u64> {
+    let finished = fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    Some(finished.duration_since(start).unwrap_or_default().as_secs())
+}
+
 /// The user's home directory, from `$HOME`.
 pub fn home() -> String {
     std::env::var("HOME").unwrap_or_default()
@@ -258,6 +285,29 @@ mod tests {
         let names = super::dir_names(env!("CARGO_MANIFEST_DIR"));
         assert!(names.contains(&"Cargo.toml".to_owned()), "{names:?}");
         assert!(super::dir_names("/nonexistent/directory").is_empty());
+    }
+
+    /// C-37: a jail's wall time is measured from the wave's clock to its `.rc`,
+    /// and is absent rather than wrong when there is nothing to measure.
+    #[test]
+    fn elapsed_is_measured_from_the_wave_clock() {
+        let started = super::clock();
+        let rc = std::env::temp_dir().join(format!("choir-elapsed-{}.rc", std::process::id()));
+        super::write_text(&rc, "0\n");
+
+        let secs = super::elapsed_to(started, &rc);
+        assert!(
+            secs.unwrap_or(u64::MAX) < 5,
+            "a jail that just finished cannot have run for {secs:?}"
+        );
+        // A clock started after the fact never invents a duration; a jail that
+        // finished instantly is zero seconds, not an absence.
+        assert_eq!(super::elapsed_to(super::clock(), &rc), Some(0));
+        assert_eq!(
+            super::elapsed_to(started, Path::new("/nonexistent/w0.rc")),
+            None
+        );
+        super::remove_tree(&rc.to_string_lossy());
     }
 
     /// A missing file reads as empty rather than panicking (E-7, E-8).

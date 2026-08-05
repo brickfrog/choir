@@ -133,10 +133,12 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 
 - **C-22** Sizes render as `<n> B` below 1024, else one decimal place of KiB.
 - **C-23** A row is jail index, provider, size, work-jail exit code, verdict
-  label, and the last non-blank line of the jail log, in fixed columns, with
-  trailing space trimmed.
-- **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `APPLY FAILED`, `-`,
-  and under `--red` also `RED FAILED` (C-32) and `RED TAMPERED` (C-36).
+  label, the work jail's wall time, the reason it produced no usable patch
+  (both C-37), and the last non-blank line of the jail log, in fixed columns,
+  with trailing space trimmed.
+- **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)` (C-37),
+  `APPLY FAILED`, `-`, and under `--red` also `RED FAILED` (C-32) and
+  `RED TAMPERED` (C-36).
 - **C-25** Rows print in jail index order. There is no ranking and no sort.
 - **C-26** A `git apply` line prints for each passing patch, and only those.
 - **C-28** Each work jail's log is copied to `<out>/<index>.log`, and each verify
@@ -219,6 +221,32 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   Choir produced itself, never a judgement of what either contains. The decision
   is `verdict::preserves_red`, in the pure core, so it is total and unit-tested
   without a jail or a filesystem.
+- **C-37** Every row carries the wall-clock seconds its work jail ran, in a
+  `TIME` column, and — when it produced no usable patch — why, in a `WHY`
+  column between the verdict and the provider's last line. Both come from facts
+  Choir already holds: it set the deadline, it read the clock immediately before
+  the wave fanned out, and it extracted the patch itself. Nothing here reads a
+  provider's output. A jail's time runs from its wave's clock to the last write
+  of its own `.rc`; a jail that left no `.rc` was never timed and prints `?`,
+  the same absence `EXIT` reports (C-29). `verdict::reason` is total over the
+  collected facts — verdict, work-jail exit code, patch length, measured time,
+  deadline — and yields exactly one of six labels, in this order: `apply
+  rejected` for a patch `git apply` refused; nothing at all for a row whose
+  patch survived, which the `TESTS` column already speaks for; `wrote nothing`
+  for a jail that exited 0 and produced no bytes, which is the model declining;
+  `timeout <secs>s` when the jail ran at least as long as its budget; `exit
+  <code>` for a jail that failed on its own; and `no exit code` when it never
+  reported one. The order is what makes it a function: the combinations that
+  cannot occur map to a label like every other, because a total function has no
+  unreachable arm to argue about later. A jail killed by the deadline is never
+  reported as `FAIL(137)` — `verdict::from_run` gives it the verdict
+  `TIMEOUT(<secs>s)`, which is why the deadline is consulted only for a jail
+  that did not exit 0: a suite that finished in the last moment of its budget
+  is a result, and the clock is truncated to whole seconds. What 137 still
+  cannot separate is the OOM killer from a suite that exits 137 by itself, and
+  Choir holds no fact about either. Nothing here gates: every jail still runs,
+  every patch is still written and offered, and no verdict changes except a
+  `FAIL` that was the deadline all along.
 
 ---
 

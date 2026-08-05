@@ -41,34 +41,39 @@ them. Uncommitted and untracked files are included in the base.
 
 ```
 $ choir "the auth test is flaky under load — find and fix the real race" \
-    --repo ~/proj --test 'pytest -q' -n 3
+    --repo ~/proj --test 'pytest -q' -n 4
 
-3 work jails: 0=claude 1=codex 2=claude; audit=codex; timeout 1200s
+4 work jails: 0=claude 1=codex 2=claude 3=codex; audit=claude; timeout 1200s
 
 baseline (--test on the unpatched tree, same sealed jail): FAIL(1)
-JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER
-0    claude    4.1 KB   0     PASS          Replaced the double-checked flag with a lock in session.py.
-1    codex     0 B      1     -             stream error: rate limit reached; resets 14:05
-2    claude    6.8 KB   0     FAIL(1)       Rewrote the fixture to drive a fake clock.
+JAIL PROVIDER  PATCH    EXIT  TESTS         TIME  WHY            LAST LINE FROM PROVIDER
+0    claude    4.1 KB   0     PASS          318s                 Replaced the double-checked flag with a lock in session.py.
+1    codex     0 B      1     -             44s   exit 1         stream error: rate limit reached; resets 14:05
+2    claude    6.8 KB   0     FAIL(1)       502s                 Rewrote the fixture to drive a fake clock.
+3    codex     0 B      137   -             1200s timeout 1200s  Editing tests/test_session.py
 
 2 of 2 non-empty patches are byte-distinct
 
   git apply /home/justin/proj/choir-out/0.patch
 ```
 
-Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `APPLY FAILED`, or `-`.
+Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)`, `APPLY FAILED`, or
+`-`. `TIME` is the work jail's wall clock, `?` if it never reported. `WHY` names the reason a row
+produced no usable patch, and is blank when one survived — from the deadline Choir set, the clock
+it started, and the patch it extracted, never from what the provider printed.
 
-| `baseline` | `PATCH` | `EXIT` | |
+| `baseline` | `PATCH` | `WHY` | |
 | --- | --- | --- | --- |
-| `PASS` | `0 B` | `0` | Already done; the model declined. |
 | `PASS` | any | any | Anything passing below proves nothing. |
-| `FAIL` | `0 B` | `0` | Ran clean, wrote nothing. See `<n>.log`. |
-| `FAIL` | `0 B` | `137` | Timeout mid-edit. |
-| `FAIL` | `0 B` | `1` | Rate limit, auth, or crash. |
-| `FAIL` | non-empty | all `FAIL` | Your `--test`, not the patches — usually a missing `--cache`. |
-| `FAIL` | non-empty | mixed | Normal. |
+| `FAIL` | `0 B` | `wrote nothing` | Ran clean and declined. See `<n>.log`. |
+| `FAIL` | `0 B` | `timeout 1200s` | Choir's own deadline killed it mid-edit. |
+| `FAIL` | `0 B` | `exit 1` | Rate limit, auth, or crash — the code is the jail's own. |
+| `FAIL` | `0 B` | `no exit code` | The jail never wrote one. |
+| `FAIL` | non-empty | `apply rejected` | The patch does not apply to the tree it was made from. |
+| `FAIL` | non-empty | blank | Tested; read `TESTS`. All `FAIL` is usually your `--test`, not the patches — often a missing `--cache`. |
 
-`FAIL(137)` is ambiguous: `--timeout`, the OOM killer, and a suite exiting 137 look identical.
+`FAIL(137)` is now only the OOM killer or a suite that exits 137 by itself: a deadline kill is
+`TIMEOUT(<secs>s)`, decided from the clock rather than from the code.
 
 ## Limits
 
@@ -79,7 +84,8 @@ Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `APPLY FAILED`, or `-
 - No retries, resume, state, quota accounting, or config file.
 - Toolchain is the host's `/usr`, so no pyenv shim and no `~/.cargo/bin`.
 - No git identity in a jail: a provider that commits anyway returns an empty patch.
-- A failed jail is an exit code and a log. Rate-limited, refused, and wedged look the same.
+- `WHY` separates the deadline, a non-zero exit, a clean refusal and a rejected patch; which
+  of rate limit, auth or crash produced that exit code is still only in `<n>.log`.
 
 ## Development
 
