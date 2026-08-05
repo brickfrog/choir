@@ -18,14 +18,44 @@ pub mod wave;
 #[cfg(kani)]
 mod proofs;
 
-/// The only string Choir itself sends to a model.
+/// The strings Choir itself sends to a model.
 ///
-/// One fixed sentence with no interpolation. The user's instruction is the
-/// other string, and it passes through verbatim. There is no prompt library,
-/// no template, and no system prompt — a third string is the seed of every
-/// "just one more instruction to the model" fix.
+/// `AUDIT_PROMPT` is one fixed sentence with no interpolation. The user's
+/// instruction is the other string, and under the default single-wave run it
+/// passes through verbatim: there is no prompt library and no system prompt.
+///
+/// `--red` is the one exception, and it is a deliberate one. VSDD Phase 2
+/// requires the Builder to be *constrained* into TDD -- "Without this
+/// constraint, AI models will naturally try to write implementation and tests
+/// simultaneously." A red wave that merely passed the instruction through
+/// would get an implementation, and the gate would measure nothing. So the
+/// instruction is wrapped, twice, by these two fixed frames and nothing else.
 pub const AUDIT_PROMPT: &str =
     "Read the repository at /repo and the patches at /patches. Say what is wrong with each one.";
+
+/// Wave 0 under `--red`: tests only, no implementation (VSDD Phase 2a).
+#[must_use]
+pub fn red_prompt(instruction: &str) -> String {
+    format!(
+        "You are operating under strict TDD. Write tests ONLY. Do NOT write \
+         implementation code, and do NOT modify any existing test so that it \
+         passes. Add tests that FAIL against the repository as it stands now, \
+         and that will pass once this is done:\n\n{instruction}"
+    )
+}
+
+/// Wave 1 under `--red`: the minimum implementation (VSDD Phase 2b).
+///
+/// The jail's tree already carries its own red patch, so the tests it must
+/// satisfy are the ones it just wrote and Choir just watched fail.
+#[must_use]
+pub fn green_prompt(instruction: &str) -> String {
+    format!(
+        "The failing tests are already written and present in this repository. \
+         Write the MINIMUM implementation that makes them pass. Do NOT weaken, \
+         delete, or rewrite any test. The task the tests describe:\n\n{instruction}"
+    )
+}
 
 pub use config::{parse, Config, Invocation, ParseError, Provider, Providers};
 pub use jail::Jail;

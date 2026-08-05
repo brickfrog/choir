@@ -81,8 +81,19 @@ pub fn execute(cfg: &Config) -> i32 {
     println!("run {}", paths.dir);
     println!("{}", cfg.banner());
 
-    work_wave(cfg, &paths);
-    let attempts = stage(cfg, &paths);
+    let reds = if cfg.red {
+        red_wave(cfg, &paths)
+    } else {
+        Vec::new()
+    };
+    let red_verdicts = if cfg.red {
+        red_gate(cfg, &paths, &reds)
+    } else {
+        Vec::new()
+    };
+
+    work_wave(cfg, &paths, &reds);
+    let attempts = stage(cfg, &paths, &red_verdicts);
     let baseline = verify_wave(cfg, &paths, &attempts);
 
     let rows = collect(&paths, &attempts);
@@ -429,15 +440,103 @@ fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
     sys::resolve_binary(provider.name())
 }
 
+/// Wave 0, `--red` only: N provider jails that may write tests and nothing else.
+///
+/// Returns each jail's red patch, which is exactly the tests it added.
+fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
+    let prompt = choir_core::red_prompt(&cfg.instruction);
+    let jails: Vec<Jail> = cfg
+        .plan()
+        .into_iter()
+        .map(|(index, provider)| {
+            let slot = paths.slot("r", index);
+            let binary = prep_provider_slot(&slot, &prompt, provider);
+            sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+            let mount = format!("-B {slot}/repo:/repo");
+            let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
+            Jail::new(command, slot)
+        })
+        .collect();
+
+    println!("[red]    {} jails started", jails.len());
+    let _ = sys::sh(&wave::script(&jails));
+    shred_credentials(&jails);
+
+    cfg.plan()
+        .into_iter()
+        .map(|(index, _)| extract_slot(paths, "r", index, &format!("{index}.red")))
+        .collect()
+}
+
+/// The Red Gate (VSDD Phase 2a): each jail's new tests must FAIL on the
+/// unpatched tree, in the same sealed jail the green run will use.
+///
+/// The gate is satisfied by `Fail`, not by `Pass`. A test that passes with no
+/// implementation present demanded nothing, so the implementation that follows
+/// it cannot be said to have been driven by it -- "If a test passes without
+/// implementation, the test is suspect." An empty red patch is the same
+/// finding with less effort: the jail wrote no test at all.
+fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
+    let mut jails = Vec::new();
+    let mut slots: Vec<Option<String>> = Vec::with_capacity(reds.len());
+
+    for (index, patch) in reds.iter().enumerate() {
+        if patch.is_empty() {
+            slots.push(None);
+            continue;
+        }
+        let slot = paths.slot("g", index);
+        prep_slot(&slot, &cfg.test_cmd);
+        sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+        let repo = format!("{slot}/repo");
+        let red = format!("{}/patches/{index}.red.patch", paths.dir);
+        let (code, _) = sys::git(&["-C", &repo, "apply", &red]);
+        if code == 0 {
+            jails.push(Jail::new(jail::verify(cfg, &slot), slot.clone()));
+            slots.push(Some(slot));
+        } else {
+            slots.push(None);
+        }
+    }
+
+    println!("[red]    {} gate jails started", jails.len());
+    let _ = sys::sh(&wave::script(&jails));
+
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.map_or(Verdict::NoPatch, |s| {
+                verdict::from_rc(&sys::read_text(Path::new(&format!("{s}.rc"))))
+            })
+        })
+        .collect()
+}
+
 /// Wave 1: N provider jails, each with its own writable copy of the repository.
-fn work_wave(cfg: &Config, paths: &Paths) {
+///
+/// Under `--red` each copy is seeded with that jail's own red patch first, so
+/// the tests the model must satisfy are the ones it wrote and Choir just
+/// watched fail. The patch extracted afterwards still diffs against the
+/// untouched base `HEAD`, so it carries the tests and the implementation
+/// together and the verify wave measures the pair.
+fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) {
+    let prompt = if cfg.red {
+        choir_core::green_prompt(&cfg.instruction)
+    } else {
+        cfg.instruction.clone()
+    };
     let jails: Vec<Jail> = cfg
         .plan()
         .into_iter()
         .map(|(index, provider)| {
             let slot = paths.slot("w", index);
-            let binary = prep_provider_slot(&slot, &cfg.instruction, provider);
+            let binary = prep_provider_slot(&slot, &prompt, provider);
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+            if reds.get(index).is_some_and(|p| !p.is_empty()) {
+                let repo = format!("{slot}/repo");
+                let red = format!("{}/patches/{index}.red.patch", paths.dir);
+                let _ = sys::git(&["-C", &repo, "apply", &red]);
+            }
             let mount = format!("-B {slot}/repo:/repo");
             let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
             Jail::new(command, slot)
@@ -493,7 +592,18 @@ fn shred_credentials(jails: &[Jail]) {
 /// every patch path containing a `.git` component, so it could never have
 /// reached a patch anyway.
 fn extract(paths: &Paths, index: usize) -> Vec<u8> {
-    let repo = format!("{}/repo", paths.slot("w", index));
+    extract_slot(paths, "w", index, &index.to_string())
+}
+
+/// Extract one jail's work as a patch against the base tree's `HEAD`.
+///
+/// `prefix` selects the wave's slot ("r" for red, "w" for green or the default
+/// single wave) and `name` is the patch's filename stem. A red jail's tree
+/// carries only its new tests, so its patch is exactly those tests; a green
+/// jail's tree was seeded with that red patch, so its patch is tests plus
+/// implementation, and both diff against the same untouched base `HEAD`.
+fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8> {
+    let repo = format!("{}/repo", paths.slot(prefix, index));
     // Unlock before removing (E-22): a model that runs `chmod 0500` on its own
     // `.git`, or on the repository root above it, makes a plain `rm -rf` fail —
     // and the swallowed failure leaves its hostile git config in place to
@@ -520,19 +630,32 @@ fn extract(paths: &Paths, index: usize) -> Vec<u8> {
     // bad patch rather than a diff Choir could not express.
     let (_, patch) = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
 
-    sys::write_bytes(Path::new(&format!("{}/{index}.patch", paths.out)), &patch);
-    sys::write_bytes(Path::new(&paths.patch(index)), &patch);
+    sys::write_bytes(Path::new(&format!("{}/{name}.patch", paths.out)), &patch);
+    sys::write_bytes(
+        Path::new(&format!("{}/patches/{name}.patch", paths.dir)),
+        &patch,
+    );
     patch
 }
 
 /// Extract every patch, then build the tree each surviving patch will be tested
 /// against. Applying host-side keeps "the patch does not apply" and "the tests
 /// failed" from collapsing into one nonzero exit code.
-fn stage(cfg: &Config, paths: &Paths) -> Vec<Attempt> {
+fn stage(cfg: &Config, paths: &Paths, red_verdicts: &[Verdict]) -> Vec<Attempt> {
     cfg.plan()
         .into_iter()
         .map(|(index, provider)| {
             let patch = extract(paths, index);
+            // The Red Gate decides before the patch is even looked at: without
+            // a test that failed first, a PASS below would measure the test.
+            if cfg.red && !Verdict::admits_green(red_verdicts.get(index).copied()) {
+                return Attempt {
+                    index,
+                    provider,
+                    patch,
+                    staged: Staged::Skipped(Verdict::RedGate),
+                };
+            }
             if patch.is_empty() {
                 return Attempt {
                     index,

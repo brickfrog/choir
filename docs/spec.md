@@ -147,6 +147,25 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   of that kind of task should use a smaller `n`. Like the byte count it is a
   fact — it ranks nothing, sorts nothing, reorders nothing, skips no jail, and no
   patch's bytes or verdict depend on it.
+- **C-32** `--red` runs VSDD's Red Gate. Choir adds a wave before the work wave
+  in which each jail is asked, by a fixed frame around the user's instruction,
+  to write tests and no implementation. Each jail's red patch is applied to a
+  clean copy of the base and `--test` runs against it in the same sealed verify
+  jail the green run will use. The gate is satisfied only by a **failing** red
+  run. A red run that passes means the tests demanded nothing, which VSDD calls
+  suspect; an empty red patch means no test was written; a red patch that does
+  not apply never reached a tree. All three skip the jail's green row with the
+  verdict `RED FAILED`, and no `git apply` line is printed for it. The decision
+  itself is `Verdict::admits_green`, in the pure core, so it is total and
+  testable without a jail.
+- **C-33** Under `--red` each green jail's tree is seeded with that same jail's
+  red patch before the provider runs, and its prompt states the tests already
+  exist and must not be weakened. The extracted patch still diffs against the
+  untouched base `HEAD`, so it carries the tests and the implementation
+  together and the verify wave measures the pair. A run therefore proves the
+  transition rather than the endpoint: the identical tests failed on the base
+  and pass with the patch. Without the gate a jail can make `--test` pass by
+  editing the tests, and nothing in the table would show it.
 
 ---
 

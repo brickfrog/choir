@@ -24,6 +24,13 @@ pub enum Verdict {
     ApplyFailed,
     /// The jail produced a zero-byte patch, so there was nothing to apply.
     NoPatch,
+    /// `--red` only: the jail's tests did not fail on the unpatched tree, so
+    /// nothing demanded the implementation that followed (VSDD Phase 2a).
+    ///
+    /// Either the jail wrote no test, or it wrote one that passes with no
+    /// implementation at all. VSDD calls such a test suspect, and Choir stops
+    /// there: a green row below it would be measuring the test, not the code.
+    RedGate,
 }
 
 impl Verdict {
@@ -35,7 +42,19 @@ impl Verdict {
             Self::Fail(code) => format!("FAIL({code})"),
             Self::ApplyFailed => "APPLY FAILED".to_owned(),
             Self::NoPatch => "-".to_owned(),
+            Self::RedGate => "RED FAILED".to_owned(),
         }
+    }
+
+    /// The Red Gate's decision (C-32): may a green run be admitted?
+    ///
+    /// Only a red run that FAILED. `Pass` means the tests passed with no
+    /// implementation present, so they demanded nothing and VSDD calls them
+    /// suspect. `NoPatch` means no test was written. `ApplyFailed` means the
+    /// tests never reached a tree. None of the three earns an implementation.
+    #[must_use]
+    pub const fn admits_green(red: Option<Self>) -> bool {
+        matches!(red, Some(Self::Fail(_)))
     }
 
     /// Whether this attempt earns a `git apply` line (C-26).
@@ -73,4 +92,32 @@ pub fn from_rc(raw: &str) -> Verdict {
 #[must_use]
 pub fn code_from_rc(raw: &str) -> Option<i32> {
     raw.trim().parse::<i32>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Verdict;
+
+    /// C-32: only a red run that failed admits the green run behind it.
+    ///
+    /// The three rejected cases are the ones that make a later `PASS`
+    /// meaningless: tests that passed with no implementation present, no test
+    /// at all, and tests that never reached a tree.
+    #[test]
+    fn red_gate_admits_only_a_failing_red_run() {
+        assert!(Verdict::admits_green(Some(Verdict::Fail(1))));
+        assert!(Verdict::admits_green(Some(Verdict::Fail(101))));
+
+        assert!(!Verdict::admits_green(Some(Verdict::Pass)));
+        assert!(!Verdict::admits_green(Some(Verdict::NoPatch)));
+        assert!(!Verdict::admits_green(Some(Verdict::ApplyFailed)));
+        assert!(!Verdict::admits_green(None));
+    }
+
+    /// A rejected red run is never a passing row, so it earns no `git apply`.
+    #[test]
+    fn red_gate_failure_is_not_a_pass() {
+        assert!(!Verdict::RedGate.passed());
+        assert_eq!(Verdict::RedGate.label(), "RED FAILED");
+    }
 }

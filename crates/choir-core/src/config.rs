@@ -183,6 +183,9 @@ pub struct Config {
     pub out: String,
     /// Read-only host paths mounted into every jail, at their own path (C-27).
     pub cache: Vec<String>,
+    /// Enforce VSDD's Red Gate: a wave that writes only tests, which must fail
+    /// on the unpatched tree before any implementation is written (C-32).
+    pub red: bool,
 }
 
 impl Default for Config {
@@ -196,6 +199,7 @@ impl Default for Config {
             timeout: 1200,
             out: "./choir-out".to_owned(),
             cache: Vec::new(),
+            red: false,
         }
     }
 }
@@ -349,6 +353,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
                 }
                 cfg.cache.push(path);
             }
+            "--red" => cfg.red = true,
             other if instruction.is_none() => instruction = Some(other.to_owned()),
             other => return Err(ParseError::UnexpectedArgument(other.to_owned())),
         }
@@ -407,6 +412,9 @@ pub fn help_text() -> String {
     s.push_str("  --cache <path>      read-only mount into every jail, at its own path.\n");
     s.push_str("                      Repeat it; verify jails have no network, so a\n");
     s.push_str("                      dependency cache can only arrive this way.\n");
+    s.push_str("  --red               TDD mode. An extra wave writes tests only; they must\n");
+    s.push_str("                      FAIL on the unpatched tree before the implementation\n");
+    s.push_str("                      wave runs. Costs 2n+1 provider calls instead of n+1.\n");
     s.push_str("  -h, --help          print this and exit.\n\n");
     s.push_str("EXIT\n");
     s.push_str("  0 if at least one patch passed your test command, 1 otherwise.\n\n");
