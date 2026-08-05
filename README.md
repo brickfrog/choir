@@ -1,34 +1,37 @@
 # Choir
 
 Choir runs one coding task N times in parallel. Each attempt gets its own throwaway
-nsjail sandbox with its own copy of your repository, and runs a provider CLI — Claude
-Code or Codex, on your own paid subscription — inside it. Each jail returns a patch.
-Choir first runs your test command on the unpatched base, then applies each patch to a
-fresh copy of the repo and runs the command again
-against it in a jail with no network namespace at all, and prints a table of which
-patches passed. One more jail reads the repo and the patches and prints commentary.
-Choir never modifies or deletes anything in your checkout: it writes one new directory
-of patches and prints `git apply` lines for you to run yourself.
+nsjail sandbox with its own copy of your repository. Inside that sandbox Choir runs a
+provider CLI: Claude Code or Codex, on your own paid subscription. Each jail returns a
+patch.
 
-One command. No daemon, no config file, no state between runs.
+Choir then tests those patches. First it runs your test command on the unpatched base
+copy. Then it applies each patch to a fresh copy and runs the command again. Both tests
+run in a jail with no network namespace at all. Choir prints a table of which patches
+passed. One more jail reads the repository and the patches and prints commentary.
+
+Choir never changes or removes anything in your checkout. It writes one new directory of
+patches. It prints `git apply` lines for you to run yourself.
+
+One command. No daemon, no configuration file, no state between runs.
 
 ## Why
 
-I have a Claude subscription and a Codex subscription. Both bill by a rolling
-five-hour window, and the windows are independent — time spent on one does not
-consume the other. Running one agent at a time on my laptop uses half of what I pay
-for, and it uses it in the least safe way available: the agent has my whole home
-directory, every repository on the machine, my SSH keys, and both credentials.
+I have a Claude subscription and a Codex subscription. Both bill by a rolling five-hour
+window. The windows are independent, so time spent on one does not consume the other.
 
-Choir spends both subscriptions at once, and puts each agent in a jail that contains
-one copy of one repository, one provider binary, one credential file, and the
-read-only `/usr` your own commands already run from. Three attempts at the same bug
-from two different models, tested against your own suite, in the time one attempt
-would take.
+One agent at a time on my laptop uses half of what I pay for. It also uses it in the
+least safe way available. That agent has my whole home directory, every repository on
+the machine, my SSH keys, and both credentials.
+
+Choir spends both subscriptions at once. It puts each agent in a jail. That jail holds one
+copy of one repository, one provider binary, one credential file, and the read-only
+`/usr` your own commands already run from. You get three attempts at the same bug from
+two different models, tested against your own suite, in the time one attempt takes.
 
 ## Install
 
-Three things.
+You need three things.
 
 **1. nsjail and passt.** Both are distro packages. On Arch and derivatives both are in
 `extra`:
@@ -37,36 +40,41 @@ Three things.
 pacman -S nsjail passt
 ```
 
-Verified against nsjail 3.6 and passt 2026_07_28. `passt` supplies `pasta`, which gives
-a provider jail its own network namespace; without it a jail that needs the network has
-to run in your host's namespace, which exposes your loopback services and your X server
-to the model. You also need unprivileged user namespaces enabled
-(`kernel.unprivileged_userns_clone=1`, which is the default on most desktop distros).
-That is the entire requirement: nsjail is a single executable with no daemon, no image,
-no kernel virtualisation and no state directory. It starts a jail in about 10 ms and
+Choir is measured against nsjail 3.6 and passt 2026_07_28. `passt` supplies `pasta`, and
+`pasta` gives a provider jail its own network namespace. Without `pasta`, a jail that
+needs the network must run in your host's namespace. That exposes your loopback services
+and your X server to the model.
+
+You also need unprivileged user namespaces. Most desktop distros enable them by default
+(`kernel.unprivileged_userns_clone=1`).
+
+That is the entire requirement. nsjail is a single executable with no daemon, no image,
+no kernel virtualization, and no state directory. It starts a jail in about 10 ms and
 leaves nothing on disk when it exits.
 
-There is nothing to configure, because the jail's toolchain is your toolchain: Choir
-read-only bind-mounts the host's own `/usr`, so whatever runs your tests on the host
-runs them in the jail. This is also the honest cost — see *The jail is not
-reproducible* under Limits.
+Nothing needs configuration, because the jail's toolchain is your toolchain. Choir
+bind-mounts the host's own `/usr` read-only, so whatever runs your tests on the host runs
+them in the jail. This is also the honest cost. Read *The jail is not reproducible* under
+Limits.
 
-**2. A provider CLI, logged in.** `claude` and/or `codex`, authenticated the way you
-normally use them — `claude auth status`, `codex login status`. Choir read-only mounts
-the resolved binary and copies one credential file into each jail; it does not install
-anything. If you drive `claude` through a shell function that injects a token, note
-that Choir invokes the resolved binary directly and authenticates from the credential
-file alone.
+**2. A provider CLI, logged in.** You need `claude`, or `codex`, or both. Authenticate
+them the way you normally do (`claude auth status`, `codex login status`). Choir mounts
+the resolved binary read-only and copies one credential file into each jail. It installs
+nothing.
 
-**3. Choir itself.** Rust 1.85 or newer:
+NOTE: Choir runs the resolved binary directly and authenticates from the credential file
+alone. A shell function that injects a token does not run.
+
+**3. Choir itself.** You need Rust 1.85 or newer:
 
 ```sh
 cargo build --release && install -m755 target/release/choir ~/.local/bin/choir
 ```
 
-That is one 377 KB executable linking nothing but `libc` and `libgcc_s`. Choir adds
-**no runtime dependency at all** to a host that already has nsjail, passt and a
-provider CLI — no VM, no interpreter, no shared library you do not already have.
+The result is one 387 KB executable that links `libc` and `libgcc_s` and nothing else.
+Choir adds **no runtime dependency at all** to a host that already has nsjail, passt, and
+a provider CLI. There is no VM, no interpreter, and no shared library you do not already
+have.
 
 `choir --help` prints the flag table below.
 
@@ -80,43 +88,67 @@ EOF
 choir --help
 ```
 
-Run it from inside the repository you want worked on; `--repo` defaults to `.`. An
+Run Choir from inside the repository you want worked on. `--repo` defaults to `.`. An
 instruction of `-` is read from stdin, because a paragraph does not belong in a shell
-argument. Nothing else is read from stdin, so `choir` never blocks waiting for input.
+argument. Choir reads nothing else from stdin, so it never blocks and waits for input.
 
-If you always pass the same `--test` for a project, that is what a shell alias is for —
-`alias ct='choir --test "pytest -q"'`. Choir has no config file and will not grow one.
+If you always pass the same `--test` for a project, use a shell alias:
+`alias ct='choir --test "pytest -q"'`. Choir has no configuration file and will not grow
+one.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | *(positional)* | — | The instruction. Exactly one, passed verbatim to every work jail. |
-| `--test '<cmd>'` | required | Your repository's own test command. Run inside a jail against the unpatched base and each patch. |
-| `--repo <path>` | `.` | Repository to copy. Read only; Choir never writes inside it. |
+| `--test '<cmd>'` | required | Your repository's own test command. Choir runs it inside a jail against the unpatched base and against each patch. |
+| `--repo <path>` | `.` | Repository to copy. Read only. Choir never writes inside it. |
 | `-n <count>` | `2` | Work jails. Providers alternate, so the default is one of each. |
-| `--providers <list>` | `claude,codex` | Comma-separated. The only accepted words are `claude` and `codex`; anything else is an error. `--providers claude` gives an all-Claude run. The audit jail takes the next index in the same rotation, which is why the example below audits with `codex`. |
+| `--providers <list>` | `claude,codex` | Comma-separated. The only accepted words are `claude` and `codex`. Anything else is an error. `--providers claude` gives an all-Claude run. The audit jail takes the next index in the same rotation, which is why the example below audits with `codex`. |
 | `--timeout <secs>` | `1200` | Per jail, passed straight to `nsjail --time_limit`. The kernel enforces it. |
-| `--out <dir>` | `./choir-out` | Where patches are written, as `<index>.patch`, beside each jail's log: `<index>.log` from the work jail and `<index>.verify.log` from the sealed one. The only thing Choir leaves on disk, and the only record of a run once the scratch tree is removed. Relative to your current directory, so running from inside the repo puts it in your working tree. |
-| `--cache <path>` | none | Repeatable. Mounts a host path read-only into every jail, at the same path it has on the host, so a test command finds it where it already expects it. Verify jails have no network at all, so this is the only way a dependency cache reaches one: without it `cargo test` cannot resolve crates.io and every patch is reported as failing whatever it contains. Read-only, never a writable bind, and it brings no network with it. |
+| `--out <dir>` | `./choir-out` | Where Choir writes patches, as `<index>.patch`, beside each jail's log: `<index>.log` from the work jail and `<index>.verify.log` from the sealed one. This is the only thing Choir leaves on disk, and the only record of a run once the scratch tree is removed. The path is relative to your current directory, so running from inside the repository puts it in your working tree. |
+| `--cache <path>` | none | Repeatable. Mounts a host path read-only into every jail, at the same path it has on the host, so a test command finds it where it already expects it. Verify jails have no network at all, so this is the only way a dependency cache reaches one. Without it, `cargo test` cannot resolve crates.io and Choir reports every patch as failing whatever it contains. The mount is read-only, never writable, and it brings no network with it. |
 
-Exit code is 0 if at least one patch passed your test command, 1 otherwise.
+Choir resolves each `--cache` path before it uses it, and stops on two conditions. If the
+resolved path does not exist, Choir prints `choir: --cache path does not exist: {path}`.
+If the resolved path holds a `'` or a `:`, Choir prints `choir: --cache {raw}
+resolves to {path}, which may not contain ' or :`. Those two characters have meaning
+in the mount syntax and in the shell.
+
+Exit code is 0 if at least one patch passed your test command. Otherwise it is 1.
 
 Your working tree does not need to be committed. Choir copies `--repo` as it stands and
-commits that copy inside its own scratch directory, so the tree the jails receive — your
-uncommitted edits and your untracked files included — is the baseline every patch is a
-diff against. A patch therefore contains what the model changed and nothing else. Your
-own repository is never written to, and nothing is ever committed in it.
+commits that copy inside its own scratch directory. The tree the jails receive is
+therefore the baseline every patch is a diff against, including your uncommitted edits
+and your untracked files. A patch holds what the model changed and nothing else. Choir
+never writes to your own repository and never commits in it.
 
-Choir copies your repository `1 + 2n` times per run — once as the base, once per work
-jail, once per verify jail — into the scratch directory `mktemp -d` chooses, and all of
-them exist at once. On a roomy machine that is usually nothing to think about: a 392 MB
-checkout at the default `-n 2` is five copies, about 2 GB.
+Choir then makes that copy a repository in its own right. Three shapes of `--repo` need
+this, and all three are silent faults without it:
 
-It starts to matter when `(1 + 2n) × <repo size>` approaches the size of whatever `TMPDIR`
-lives on — a capped `tmpfs /tmp` is the common case, and a multi-gigabyte checkout at
-`-n 4` clears it easily. **A copy that runs out of room fails silently**, and the jail runs
-against a partial tree, so the symptom is a strange result rather than an error.
+- **A symlink.** Choir copies the tree it points at. A copied link makes every jail's
+  work land in your real checkout.
+- **A directory that is not a git repository.** Choir initializes the copy. Otherwise
+  host `git` searches upward out of the scratch tree and can commit into an enclosing
+  repository.
+- **A repository nested inside `--repo`.** Choir removes the nested `.git`. Otherwise
+  `git add -A` stages that subtree as a gitlink, and a model's edits inside it never
+  reach the patch.
 
-Pointing `TMPDIR` at the *same filesystem* as `--repo` removes the question: a
+None of this needs your history. Every patch is a diff against the tree the jail started
+from.
+
+Choir copies your repository `1 + 2n` times per run: once as the base, once per work
+jail, and once per verify jail. All of them exist at once. On a roomy machine this is
+usually nothing to think about. A 392 MB checkout at the default `-n 2` is five copies,
+about 2 GB.
+
+It starts to matter when `(1 + 2n) × <repo size>` approaches the size of whatever
+`TMPDIR` lives on. A capped `tmpfs /tmp` is the common case, and a multi-gigabyte
+checkout at `-n 4` clears it easily.
+
+CAUTION: A copy that runs out of room fails silently. The jail then runs against a
+partial tree, so the symptom is a strange result rather than an error.
+
+Point `TMPDIR` at the *same filesystem* as `--repo` to remove the question. A
 copy-on-write filesystem then shares extents instead of copying bytes. Measured on this
 392 MB checkout:
 
@@ -125,9 +157,9 @@ $ TMPDIR=/mnt/data/tmp     0.22 s per copy, 0 bytes of new space (reflinked)
 $ TMPDIR=/tmp   (tmpfs)    0.35 s per copy, 392 MB each
 ```
 
-The same *kind* of filesystem is not enough — two separate btrfs volumes cannot share
-extents and `cp` falls back to a full copy. Choir detects none of this; it never inspects
-the host.
+The same *kind* of filesystem is not enough. Two separate btrfs volumes cannot share
+extents, and `cp` falls back to a full copy. Choir detects none of this, because it never
+inspects the host.
 
 ### Example
 
@@ -158,70 +190,77 @@ test timing rather than the code under test, which is why it fails.
 
 Rows are in jail order. Choir does not rank them, does not sort them, and does not pick
 one. `PATCH` is a byte count and exists for one reason: to tell `0 B` from not-`0 B`.
-Before the table, the `baseline` line reports the same command against the unpatched base
-copy in the same sealed verify jail. It is context only: Choir does not use it to rank,
+
+The `baseline` line above the table prints the same command against the unpatched
+base copy, in the same sealed verify jail. It is context only. Choir does not use it to rank,
 gate, skip, or alter any patch or verdict.
-`0 B` means that jail produced no diff — it may have been rate-limited, refused, hung,
-or simply not solved the problem, and Choir does not know which. `TESTS` is `PASS`,
-`FAIL(<code>)`, `APPLY FAILED` if the patch would not apply to a clean tree, or `-` if
-there was no patch to test. Two conditions skip a verify jail and there are no others:
-a `0 B` patch, because there is nothing to apply, and a patch that `git apply` rejects,
-because the tree it would be tested against was never built. Both are mechanical facts
-about the patch, not judgements about it.
+
+`0 B` means that jail produced no diff. That jail was rate-limited, or refused, or hung, or it did not solve the
+problem. Choir does not know which. `TESTS` holds one of four values:
+
+- `PASS`.
+- `FAIL(<code>)`.
+- `APPLY FAILED`, when the patch does not apply to a clean tree.
+- `-`, when there was no patch to test.
+
+Two conditions skip a verify jail and there are no others. A `0 B` patch, because there
+is nothing to apply. A patch that `git apply` rejects, because Choir never built the
+tree to test it against. Both are mechanical facts about the patch, not judgments
+about it.
 
 The line under the rows is the one thing that says whether you got what you paid for.
-Choir's whole premise is that N independent attempts are worth buying, and N jails can
-easily return the same patch N times — when they do, the run bought one attempt repeated
-and the next task of that kind wants a smaller `-n`. Choir compares the patch bytes
-directly, so identical means identical, and names the repeats:
+Choir's whole premise is that N independent attempts are worth buying. N jails can easily
+return the same patch N times. When they do, the run bought one attempt repeated, and the
+next task of that kind wants a smaller `-n`. Choir compares the patch bytes directly, so
+identical means identical, and names the repeats:
 
 ```
 1 of 3 non-empty patches are byte-distinct (jail 2 is identical to jail 0)
 ```
 
-Zero-byte patches are not attempts, so they are neither counted nor named — `0 B` in the
-table already reports them. The line is absent when the run produced fewer than two
+Zero-byte patches are not attempts, so Choir neither counts nor names them. `0 B` in the
+table already names them. The line is absent when the run produced fewer than two
 non-empty patches, because then there is nothing to compare. Like `PATCH`, it is a fact
-about the run: it does not rank, sort, reorder, skip a jail, or change any patch or
+about the run. It does not rank, sort, reorder, skip a jail, or change any patch or
 verdict.
 
-The three columns compose, and the combinations are worth learning because most of them
-are diagnoses of *your* setup rather than of the models:
+The three columns compose. The combinations are worth learning, because most of them
+diagnose *your* setup rather than the models:
 
 | `baseline` | `PATCH` | `EXIT` | What it means |
 | --- | --- | --- | --- |
 | `PASS` | `0 B` | `0` | The task was already done. The model looked and correctly declined. |
-| `PASS` | any | any | Whatever passes below proves nothing: the tests passed before the patch too. |
+| `PASS` | any | any | Whatever passes below proves nothing. The tests passed before the patch too. |
 | `FAIL` | `0 B` | `0` | The provider ran cleanly and chose to write nothing. Read `<n>.log`. |
 | `FAIL` | `0 B` | `137` | The deadline killed it mid-edit. Raise `--timeout`. |
-| `FAIL` | `0 B` | `1` | The provider itself errored — rate limit, auth, a crash. `<n>.log` says which. |
-| `FAIL` | non-empty | all `FAIL` | **Suspect your `--test`, not the patches.** A command that cannot run sealed fails every patch identically. Compare against the baseline row: if that failed the same way, the harness is what is broken. |
+| `FAIL` | `0 B` | `1` | The provider itself errored: a rate limit, an auth error, or a crash. `<n>.log` says which. |
+| `FAIL` | non-empty | all `FAIL` | **Suspect your `--test`, not the patches.** A command that cannot run sealed fails every patch identically. Compare against the baseline row. If that row failed the same way, the harness is what is broken. |
 | `FAIL` | non-empty | mixed | The normal case. The table is telling you what it looks like it is telling you. |
 
-That second-from-last row is the expensive one. Before `--cache` existed, every patch in
-this repository was reported `FAIL` because cargo could not reach crates.io from a verify
-jail, and nothing on screen distinguished that from ten bad patches. The baseline row
-exists so that failure states its own cause.
+That second-from-last row is the expensive one. Before `--cache` existed, this repository
+printed `FAIL` for every patch, because cargo did not reach crates.io from a verify
+jail. Nothing on screen distinguished that from ten bad patches. The baseline row exists
+so that a failure states its own cause.
 
-`FAIL(137)` is the one ambiguous code. A jail killed by its `--timeout` exits 137, and
-so does a test process the kernel's OOM killer picked, and so does a test suite that
-exits 137 by itself. All three are failures and Choir does not claim to know which one
-you got. It will not grow a mechanism to tell them apart.
+`FAIL(137)` is the one ambiguous code. A jail killed by its `--timeout` exits 137. So
+does a test process the kernel's OOM killer picked. So does a test suite that exits 137
+by itself. All three are failures, and Choir does not claim to know which one you got. It
+will not grow a mechanism to tell them apart.
 
-Choir does not report progress inside a wave. A wave is one blocking call, so you get
-one line when it starts and the finished rows when it ends. There is no elapsed-time
-display and no progress bar; run it under `time` if you want one.
+Choir does not print progress inside a wave. A wave is one blocking call, so you get one
+line when it starts and the finished rows when it ends. There is no elapsed-time counter
+and no progress bar. Run Choir under `time` if you want one.
 
-Every patch is written to `--out` before any test runs, so nothing Choir does can
+Choir writes every patch to `--out` before any test runs, so nothing Choir does can
 discard work a provider actually produced.
 
 ## Patterns
 
-Nothing here is a feature. They are consequences of the design that are not obvious from
-the flag table.
+Nothing here is a feature. These are consequences of the design that the flag table does
+not make obvious.
 
 **The patch does not have to be code.** Choir looks patch-shaped, so review work looks
-like failure — a reviewer writes no diff, the row reads `0 B`, and the finding survives
+like failure. A reviewer writes no diff, the row reads `0 B`, and the finding survives
 only as a log. Make the finding a file instead:
 
 ```
@@ -231,24 +270,27 @@ observable consequence. Do not change any other file." \
     --test 'cargo test --workspace' -n 3
 ```
 
-Now the review *is* the patch: non-empty, diffable, three of them side by side, and
-`--test` still proves the reviewer did not break the build while writing it. Each jail is
-a genuine context reset — no shared history, no chance to anchor on a sibling's answer.
+Now the review *is* the patch. It is non-empty and diffable, and you get three of them
+side by side. `--test` still proves that the reviewer did not break the build. Each jail is a genuine context reset, with no shared history and no chance to
+anchor on a sibling's answer.
 
-**Divergence measures your instruction, not the models.** When independent attempts at one
-instruction come back structurally different and all passing, the usual reading is that
-one model is better. Usually the instruction was ambiguous, and the diff between the
-patches localises the clause that was underspecified. Convergent patches mean the task was
-unambiguous — and that `-n 3` bought you one attempt three times. Read the spread before
-you read the winner; the distinct-patch line under the table reports the extreme case of
-that spread, where two attempts came back byte-identical.
+**Divergence measures your instruction, not the models.** Independent attempts at one
+instruction can come back structurally different and all passing. The usual reading is
+that one model is better. Usually the instruction was ambiguous, and the diff between the
+patches localizes the clause that was underspecified. Convergent patches mean the task
+was unambiguous, and that `-n 3` bought you one attempt three times.
+
+Read the spread before you read the winner. The distinct-patch line under the table prints the extreme
+case of that spread, where two attempts came back byte-identical.
 
 **Convergence is a workflow, not a feature.** Choir keeps no state between runs, so it
-cannot tell you that an adversary has stopped finding things. You can: run the review
+cannot tell you that an adversary has stopped finding things. You can. Run the review
 above three times and compare the three `FINDINGS.md`. Findings that recur across
-independent runs are real; findings that appear once are usually noise; a run that finds
-nothing new is the signal to stop. The comparison material survives because every jail's
-log is copied to `--out`. Git and your own eyes hold that state, and nothing in Choir
+independent runs are real.
+
+Findings that appear once are usually noise. A run that finds
+nothing new is the signal to stop. The comparison material survives because Choir copies
+every jail's log to `--out`. Git and your own eyes hold that state, and nothing in Choir
 needs to.
 
 ## Safety
@@ -257,157 +299,178 @@ needs to.
 
 **A jail is not a virtual machine.** It is Linux namespaces plus rlimits plus
 `no_new_privs`, on *your* kernel. There is no guest kernel and no hypervisor. The uid
-mapping is identity, so a process in the jail runs as you: files it writes are owned by
-you on the host. A kernel privilege-escalation bug or a namespace escape from inside a
+mapping is identity, so a process in the jail runs as you, and files it writes are owned
+by you on the host. A kernel privilege-escalation bug or a namespace escape from inside a
 jail lands on your whole account. Everything below is true, and none of it is a
 hypervisor boundary.
 
 **What the jail does protect.** There is no `--chroot`. The jail's root is an empty
-16 MB tmpfs and only the mounts Choir names exist inside it. Verified on this machine
-from inside a work jail: `/` contains exactly `bin cmd cred dev etc lib64 patches proc
-prov repo tmp usr`; `/home`, `/mnt`, `/root`, `/var`, `/run` and `/home/<you>/.ssh` all
-return *No such file or directory*; the only `/etc` entries are `passwd`, `group`,
-`hosts`, `resolv.conf`, `ssl` and `ca-certificates`, so `/etc/shadow` does not exist
-inside the jail; no other repository on the machine is reachable; `/proc` shows only
-the jail's own handful of PIDs, so no host process is visible; `/usr` and `/etc` are
-read-only and `mount -o remount,rw` fails with *must be superuser*; `NoNewPrivs` is 1
-and `CapEff` is `0000000000000000`, so the setuid `sudo` visible in the read-only
-`/usr` is inert. The scratch directory the jails write through is deleted before Choir
-exits.
+16 MB tmpfs, and only the mounts Choir names exist inside it. Measured on this machine
+from inside a work jail:
+
+- `/` holds exactly `bin cmd cred dev etc lib64 patches proc prov repo tmp usr`.
+- `/home`, `/mnt`, `/root`, `/var`, `/run` and `/home/<you>/.ssh` all return *No such
+  file or directory*.
+- The only `/etc` entries are `passwd`, `group`, `hosts`, `resolv.conf`, `ssl` and
+  `ca-certificates`, so `/etc/shadow` does not exist inside the jail.
+- No other repository on the machine is reachable.
+- `/proc` holds only the jail's own handful of PIDs, so no host process is visible.
+- `/usr` and `/etc` are read-only, and `mount -o remount,rw` fails with *must be
+  superuser*.
+- `NoNewPrivs` is 1 and `CapEff` is `0000000000000000`, so the setuid `sudo` visible in
+  the read-only `/usr` is inert.
+
+Choir removes the scratch directory the jails write through before it exits.
 
 **`--cache` is a deliberate hole in that inventory.** Each path you cache reappears
-inside *every* jail at its host path, so `--cache ~/.cargo` puts a `/home/<you>/.cargo`
-back into a tree that otherwise has no `/home` at all. Read-only, so a jail cannot
-corrupt what it shares — but a work jail has network, so treat anything you cache as
-readable by the model and by any code the model runs. Cache dependency caches, not
-directories that happen to sit beside credentials: `~/.npmrc`, `~/.m2/settings.xml` and
-`~/.docker/config.json` routinely hold registry tokens, and `~/.cargo/credentials.toml`
-exists the moment you run `cargo login`. The verify jail keeps its empty network
-namespace either way, so a cache reaches it without carrying a route out.
+inside *every* jail at its host path. `--cache ~/.cargo` puts a `/home/<you>/.cargo` back
+into a tree that otherwise has no `/home` at all. The mount is read-only, so a jail
+cannot corrupt what it shares. A work jail has network, so treat anything you cache as
+readable by the model and by any code the model runs.
+
+CAUTION: Cache dependency caches only. Do not cache a directory that sits beside
+credentials. `~/.npmrc`, `~/.m2/settings.xml` and `~/.docker/config.json` routinely hold
+registry tokens, and `~/.cargo/credentials.toml` exists the moment you run `cargo login`.
+
+The verify jail keeps its empty network namespace either way, so a cache reaches it
+without carrying a route out.
 
 **The verify jail is genuinely sealed.** It gets no network flag at all, which means
-nsjail's default: its own empty network namespace. Verified, and now asserted by a test
-that runs on every `cargo test`: exactly one interface and it is `lo`, an empty routing
-table, no `/cred`, no `/prov`, no `/patches`, no `/etc/resolv.conf`, no `/sys`. A service
-bound to the host's own `127.0.0.1` is unreachable, it sees no host abstract unix sockets,
-and it cannot open your X display. That is the jail your untrusted patch runs in.
+nsjail's default: its own empty network namespace. A test asserts this on every `cargo
+test`. It has exactly one interface and that interface is `lo`, an empty routing table,
+no `/cred`, no `/prov`, no `/patches`, no `/etc/resolv.conf`, and no `/sys`. A service bound to the host's own `127.0.0.1` is unreachable.
+
+The jail sees no host abstract unix sockets, and it cannot open your X display. That is the jail your untrusted patch runs
+in.
 
 **What the verify jail does not bound is resources.** It shares the common prefix, so it
-inherits `--disable_rlimits`, and no cgroup cap replaces it. Inside its `--timeout` window
-an untrusted patch can fork-bomb, exhaust memory, or fill the filesystem — and its log is
-redirected by the *host* shell, so log growth is not jailed at all. The deadline is the
-only bound. Lower `--timeout` if you are testing patches you have not read.
+inherits `--disable_rlimits`, and no cgroup cap replaces it. Inside its `--timeout`
+window an untrusted patch can fork-bomb, exhaust memory, or fill the filesystem. Its log
+is redirected by the *host* shell, so log growth is not jailed at all. The deadline is
+the only bound.
 
-**The work and audit jails reach the whole internet, with no allowlist.** A
-subscription CLI has to reach its vendor, so those jails get networking through
-`--use_pasta`: their own network namespace with user-mode outbound NAT. nsjail has no
-egress filter, and pasta does not add one. A model in a work jail can reach any host on
-the internet and send it anything it can read, which includes the contents of the
-repository you handed it and the credential you handed it.
+CAUTION: Lower `--timeout` when you test patches you have not read.
 
-**What pasta does close**, both verified from the exact work-jail command line on this
-machine:
+**The work and audit jails reach the whole internet, with no allowlist.** A subscription
+CLI has to reach its vendor, so those jails get networking through `--use_pasta`: their
+own network namespace with user-mode outbound NAT. nsjail has no egress filter, and pasta
+does not add one. A model in a work jail can reach any host on the internet and send it
+anything it can read. That includes the contents of the repository you handed it and the
+credential you handed it.
 
-- Your host's `127.0.0.1`. A host listener that a `-N` jail reached — it printed
-  `HOST-LOOPBACK-REACHED` — is `Connection refused` under pasta. Local databases, local
+**What pasta does close.** Both are measured from the exact work-jail command line on
+this machine:
+
+- Your host's `127.0.0.1`. A host listener that a `-N` jail reached, printing
+  `HOST-LOOPBACK-REACHED`, is `Connection refused` under pasta. Local databases, local
   model servers, and anything else bound to loopback are out of reach.
-- Every **abstract unix socket** on the host, which are scoped by network namespace
-  rather than by the filesystem. On a desktop that includes your X server. Under `-N`,
-  `xdpyinfo` opened display `:0` and `xwininfo -root -children` enumerated host windows
-  by title, with `xdotool`, `import` and `scrot` all present in the read-only `/usr`
-  Choir mounts — screenshots and keystroke injection. Under pasta the same command
-  gives *unable to open display ":0"*.
+- Every **abstract unix socket** on the host. The network namespace scopes these, not the
+  filesystem. On a desktop that includes your X server. Under `-N`, `xdpyinfo` opened display `:0`. Then
+  `xwininfo -root -children` listed host windows by title. `xdotool`, `import` and
+  `scrot` are all present in the read-only `/usr` Choir mounts. That
+  is screenshots and keystroke injection. Under pasta the same command gives *unable to
+  open display ":0"*.
 
 The cost is DNS. The host's `/etc/resolv.conf` names `127.0.0.53`, which inside a pasta
-namespace is the jail's own empty loopback, so Choir writes a one-line `resolv.conf`
-naming pasta's gateway and mounts that instead. That is enough for `curl` and for
-anything using Node's resolver, which covers both provider CLIs, but it is not enough
-for glibc's NSS path — `/etc/nsswitch.conf` is not mounted, so `getent` fails in the
-jail regardless of which nameserver you name. A tool that resolves through pure NSS will
-not work in a Choir jail until that file is mounted.
+namespace is the jail's own empty loopback. Choir therefore writes a one-line
+`resolv.conf` naming pasta's gateway and mounts that instead. That is enough for `curl` and for anything that uses Node's resolver, which covers
+both provider CLIs.
 
-Reachability is otherwise identical — `api.anthropic.com` and `api.openai.com` return
-the same status codes under pasta as under `-N` — and there is no startup race: twelve
-consecutive jails connected successfully with no delay before the first request.
+It is not enough for glibc's NSS path. `/etc/nsswitch.conf` is not mounted, so `getent` fails in
+the jail whichever nameserver you name. A tool that resolves through pure NSS will not
+work in a Choir jail until that file is mounted.
+
+Reachability is otherwise identical. `api.anthropic.com` and `api.openai.com` return the
+same status codes under pasta as under `-N`. There is no startup race: twelve consecutive
+jails connected with no delay before the first request.
 
 Do not read the remaining hole as "so the jail is pointless". A work jail still cannot
-see your home directory, your SSH keys, your host loopback, your X server, or any
-repository other than the one you named. But egress is unrestricted and that is the one
+see your home directory, your SSH keys, your host loopback, or your X server. It
+cannot see any repository other than the one you named. Egress is unrestricted, and that is the one
 deliberate hole left in this design.
 
-**`--macvlan` is the only other network facility and it needs root**, failing with
+**`--macvlan` is the only other network facility and it needs root.** It fails with
 *Operation not permitted* unprivileged. Nothing available here filters egress by host.
 
 **The credential.** What you hand a jail is a full-account OAuth token with a refresh
 token and no scoping, because neither vendor mints anything narrower. Anything in that
 jail can read it. Choir copies it into a per-jail directory that dies with the scratch
-directory, so a token the CLI refreshes inside a jail never lands in your real
-`~/.claude` or `~/.codex`. What is **not** known: whether a refresh inside a jail
-invalidates the copy on your host. OAuth refresh tokens commonly rotate, and Claude's
-access token expires roughly every five hours, so a long run — or N jails refreshing at
-once — could plausibly log you out on the host. Testing that means letting a jail
-refresh against the vendor with a real credential, and nobody has done it.
+directory. A token the CLI refreshes inside a jail therefore never lands in your real
+`~/.claude` or `~/.codex`.
 
-**"Dies with the scratch directory" holds only if Choir exits.** Each wave unlinks its jails' credential
-copies as soon as it returns, and the scratch directory goes at the end of `execute` — but
-a Choir killed mid-wave does neither, and by design it never sweeps on a later run. What is
-left behind is a full-account OAuth token, readable by anything running as you, until you
-delete it. That is why the run directory is printed on line 1: `rm -rf` it yourself. Delete
-it, do not *trash* it — a file manager or a "safe delete" wrapper moves the directory to
-`~/.local/share/Trash` or `/tmp/.Trash-$UID` and preserves the token there indefinitely.
-Measured: a scratch directory trashed rather than removed still held a byte-identical copy
-of a live `~/.codex/auth.json` sixteen hours later.
+What is **not** known: whether a refresh inside a jail invalidates the copy on your host.
+OAuth refresh tokens commonly rotate, and Claude's access token expires roughly every
+five hours. A long run, or N jails refreshing at once, can therefore log you out on the
+host. Testing that means letting a jail refresh against the vendor with a real
+credential, and nobody has done it.
 
-**If you Ctrl-C Choir, the jails keep running.** Not for the reason you might guess:
-POSIX requires a non-interactive shell to set SIGINT and SIGQUIT to *ignored* for any
-command it starts asynchronously, and Choir starts every jail as `( nsjail … ) &` inside
-one `sh -c`. nsjail inherits that disposition, so a terminal's Ctrl-C reaches Choir and
-not the jails. Measured on this machine: a command backgrounded inside `sh -c` carries
-`SigIgn: 0000000001000006` — bits 0x2 and 0x4, SIGINT and SIGQUIT.
+**"Dies with the scratch directory" holds only if Choir exits.** Each wave unlinks its
+jails' credential copies as soon as it returns, and the scratch directory goes at the end
+of `execute`. A Choir killed mid-wave does neither, and by design it never sweeps on a
+later run. What is left behind is a full-account OAuth token, readable by anything
+running as you, until you remove it. That is why Choir prints the run directory on line
+1.
 
-What saves you is `--timeout`: every jail carries `nsjail --time_limit`, the kernel
-enforces it, and an abandoned jail kills itself and its entire process tree when it
-expires. Verified against a process tree that traps and ignores TERM, INT and HUP: dead
-on schedule, zero survivors, and nsjail leaves 0 bytes on disk. So there is nothing to
-clean up after the jails — but there *is* something to wait for, up to `--timeout`, which
-defaults to 20 minutes. Lower it if that window bothers you.
+WARNING: Remove that directory with `rm -rf`. Do not *trash* it. A file manager or a
+"safe delete" wrapper moves the directory to `~/.local/share/Trash` or `/tmp/.Trash-$UID`
+and preserves the token there indefinitely. Measured: a scratch directory trashed rather
+than removed still held a byte-identical copy of a live `~/.codex/auth.json` sixteen
+hours later.
 
-**Choir's own cleanup does not survive Ctrl-C, though.** The scratch directory is removed
-on the last line of a normal run, so killing Choir mid-run leaves it behind — holding one
-copy of the OAuth credential per jail still in flight. Choir now unlinks each jail's
-credential the moment its wave returns, which shrinks that window to the time a jail is
-actually using the token, but a Ctrl-C during a wave still strands the copies belonging to
-that wave. They are mode 0600 inside a `mktemp -d` that is 0700, so this is persistence,
-not disclosure. `rm -rf` the run directory that Choir printed on its first line.
+**If you Ctrl-C Choir, the jails keep running.** The reason is not the obvious one. POSIX requires a non-interactive shell to set SIGINT and SIGQUIT to *ignored* for
+any command it starts asynchronously. Choir starts every jail as `( nsjail … ) &`
+inside one `sh -c`. nsjail inherits that disposition, so a terminal's Ctrl-C reaches
+Choir and not the jails. Measured on this machine: a command backgrounded inside `sh -c`
+carries `SigIgn: 0000000001000006`, which is bits 0x2 and 0x4, SIGINT and SIGQUIT.
+
+What saves you is `--timeout`. Every jail carries `nsjail --time_limit`, the kernel
+enforces it, and an abandoned jail kills itself and its entire process tree when the
+deadline expires. Measured against a process tree that traps and ignores TERM, INT and
+HUP: dead on schedule, zero survivors, and nsjail leaves 0 bytes on disk. So there is
+nothing to clean up after the jails. There *is* something to wait for, up to `--timeout`,
+which defaults to 20 minutes. If that window bothers you, lower it.
+
+**Choir's own cleanup does not survive Ctrl-C, though.** Choir removes the scratch
+directory on the last line of a normal run. A Choir killed mid-run therefore leaves
+it behind. It holds one copy of the OAuth credential for each jail still in flight.
+
+ Choir unlinks each jail's credential the moment its wave returns. That shrinks the
+window to the time a jail actually uses the token. A Ctrl-C during a wave still strands the copies that belong
+to that wave.
+
+They are mode 0600 inside a `mktemp -d` that is 0700, so this is persistence, not
+disclosure. Remove the run directory that Choir printed on its first
+line.
 
 **The provider runs with its own permission prompts disabled**
-(`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`),
-because a provider blocked on a prompt burns your quota and returns nothing. These are
-not optional here: a provider's own sandbox cannot nest inside an nsjail, because
-`/proc` is read-only in the jail and writing `uid_map` fails. The model has full
-control of the jail by design.
+(`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`), because
+a provider blocked on a prompt burns your quota and returns nothing. These flags are not
+optional here. A provider's own sandbox cannot nest inside an nsjail, because `/proc` is
+read-only in the jail and writing `uid_map` fails. The model has full control of the jail
+by design.
 
 **Not verified end to end:** that a real billed provider session can do useful work
-inside these jails. Both CLIs start inside the exact command lines below and report a
+inside these jails. Both CLIs start inside the exact command lines below and print a
 live subscription (`{"loggedIn": true, "subscriptionType": "max"}`, `Logged in using
-ChatGPT`), but no paid coding session has been run. If your jails come back empty, that
+ChatGPT`), but nobody has run a paid coding session. If your jails come back empty, that
 is the first thing to suspect.
 
-Patches are untrusted code from a language model. Read them before `git apply`. Choir
-runs your test command against them inside the sealed verify jail precisely so that
-executing them does not require trusting them.
+WARNING: Patches are untrusted code from a language model. Read them before you run `git
+apply`. Choir runs your test command against them inside the sealed verify jail precisely
+so that running them does not require trusting them.
 
 The audit jail is one more language model, with the same network access as a work jail.
-Its commentary is prose printed after the results, it has no verdict, and it is not a
-security review. Note also that it reads `/patches` — text written by the work-jail
-models — so a work jail can address the audit model directly through its own patch. The
-audit jail holds the same token and the same egress the work jails already have, so this
-grants nothing new; it is a channel between models that the isolation story otherwise
-would not mention.
+Its commentary is prose printed after the results. It has no verdict, and it is not a security review.
+
+It also reads `/patches`, which is text written by the work-jail models. A work jail
+can therefore address the audit model directly through its own patch. The audit jail
+holds the same token and the same egress the work jails already have, so this grants
+nothing new. It is a channel between models that the isolation story otherwise does not
+mention.
 
 **Against the status quo:** today that same token runs on your host, beside every
-repository you own and your SSH keys. Choir shrinks the worst case to one token plus
-the one repository you already handed to the model. That is the whole claim.
+repository you own and your SSH keys. Choir shrinks the worst case to one token plus the
+one repository you already handed to the model. That is the whole claim.
 
 ## Limits
 
@@ -415,49 +478,53 @@ Deliberate, permanent, and not a roadmap:
 
 - **One instruction per run.** If you want two things done, run Choir twice.
 - **The jail is not reproducible.** Its toolchain is your host's `/usr`, bind-mounted
-  read-only. That is what deletes the image requirement, and it means two machines will
+  read-only. That is what removes the image requirement, and it means two machines will
   not produce the same jail. A `--test` command that needs a pyenv shim, `~/.cargo/bin`,
   or anything else outside `/usr` will not find it.
-- **Your `--test` string is run by `sh`,** so the verdict is the exit status of its last
-  command. `pytest -q; echo done` reports `PASS` unconditionally. Use `&&`, or a script.
+- **`sh` runs your `--test` string,** so the verdict is the exit status of its last
+  command. `pytest -q; echo done` prints `PASS` unconditionally. Use `&&`, or a script.
 - **Choir never picks a winner.** Your test command is a filter, not a ranking. Every
-  ordering available to Choir is wrong somewhere obvious — "smallest diff" rewards
-  deleting the failing test.
+  ordering available to Choir is wrong somewhere obvious. "Smallest diff" rewards
+  removing the failing test.
 - **Choir never applies a patch.** There is no `--apply` flag and no code path that
   writes inside `--repo`. You run the printed `git apply` line.
 - **Choir does not know your build system.** `--test` is a required flag with no
   detection and no default. This is the single decision that keeps Choir from being a
   tool that only works on Choir.
 - **Two providers, named in the source.** `claude` and `codex` are two literal command
-  lines. There is no provider interface and no way to register a third; adding one is an
+  lines. There is no provider interface and no way to register a third. Adding one is an
   edit to those two lines by someone who has run the new CLI.
 - **Choir writes one prompt.** The instruction is yours and goes through verbatim. The
   only text Choir itself sends to a model is the fixed sentence that asks the audit jail
   to comment. There is no prompt library, no template, and no system prompt.
 - **No retries, no resume, no failover.** A jail that produced nothing is a row in the
-  table. The provider signals that would be needed to route a retry are not reliable:
-  Claude Code exits 0 reporting success when it did nothing and asked a question.
+  table. A retry needs provider signals that are not reliable. Claude Code exits 0 and
+  prints success when it did nothing and asked a question.
 - **No quota accounting.** Codex exposes no headless rate-limit signal at all. Choir
-  launches what you asked for and reports what came back.
+  starts what you asked for and prints what came back.
 - **No state between runs.** No database, no cache, no session resume, no manifest.
-  Re-running is a fresh run — and re-running with the same `--out` overwrites the previous
-  run's `N.patch`. Choir does not version, timestamp, or refuse. Pass a different `--out`.
-- **Patches are not composed.** Every jail starts from the same `HEAD`. Two patches
-  touching the same file may conflict, and git will tell you when you apply the second.
-- **The repository is copied once, plus once per work jail and once per patch tested.**
+  Re-running is a fresh run. Before the work starts, Choir removes the files this run
+  will write: `0.patch` to `<n-1>.patch`, and their logs. A run that writes nothing
+  therefore leaves absence rather than the previous run's bytes. Files from a wider
+  earlier `-n` stay, so `-n 5` followed by `-n 2` leaves `2.patch`, `3.patch` and
+  `4.patch` in place. When that matters, pass a different `--out`.
+- **Patches are not composed.** Every jail starts from the same `HEAD`. Two patches that
+  touch the same file can conflict, and git will tell you when you apply the second.
+- **Choir copies the repository once, plus once per work jail and once per patch tested.**
   The audit jail gets the base copy read-only, so it costs nothing. Measured: 9.3 s per
-  copy of a 4.9 GB checkout on btrfs/NVMe — five copies, about a minute, at `-n 2`.
+  copy of a 4.9 GB checkout on btrfs/NVMe, so five copies take about a minute at `-n 2`.
   `cp -a --reflink=auto` measured no faster and is not used.
 - **There is no git identity inside a jail.** Your `~/.gitconfig` is not mounted, so a
   provider that tries to `git commit` is refused with *unable to auto-detect email
-  address* and leaves the tree dirty — exactly what patch extraction wants. If a provider
-  configures an identity and commits anyway, `HEAD` moves and its patch comes back empty.
-- **Choir cannot tell you why a jail failed.** Rate-limited, logged out, refused,
-  wedged, and "did not solve it" all look the same from outside: no patch. You get the
-  exit code and the provider's last line of output.
-- **No streaming.** Output is captured per jail and reported at the end of the wave.
-- **No daemon, no server, no MCP, no TUI, no subcommands, no config file.** Everything
-  happens between your Enter key and the exit code.
+  address* and leaves the tree dirty. That is exactly what patch extraction wants. If a
+  provider configures an identity and commits anyway, `HEAD` moves and its patch comes
+  back empty.
+- **Choir cannot tell you why a jail failed.** Rate-limited, logged out, refused, wedged,
+  and "did not solve it" all look the same from outside: no patch. You get the exit code
+  and the provider's last line of output.
+- **No streaming.** Choir captures output per jail and prints it at the end of the wave.
+- **No daemon, no server, no MCP, no TUI, no subcommands, no configuration file.**
+  Everything happens between your Enter key and the exit code.
 
 ## Building and verifying
 
@@ -471,30 +538,29 @@ crates/choir        the effectful shell. Every syscall in the program lives
                     in sys.rs; run.rs is the three waves in order.
 ```
 
-The dependency runs one way. The core cannot perform I/O because it cannot name
-it, which is what makes the whole decision surface of the program testable
-without a jail, a provider, or a network — and formally provable in the places
-where Rust's fixed-width integers can bite.
+The dependency runs one way. The core cannot perform I/O because it cannot name it. That
+is what makes the whole decision surface of the program testable without a jail, a
+provider, or a network. It is also what makes the program provable in the places where
+Rust's fixed-width integers can bite.
 
 ```sh
-cargo test --workspace                              # 83 tests
+cargo test --workspace                              # 90 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo kani -p choir-core                            # 3 proof harnesses
 ```
 
-`docs/spec.md` is the contract. Every test names the requirement it defends —
-`C-*` behavioural, `E-*` edge case, `P-*` proved property, `N-*` non-functional
-— so you can read a failure back to the sentence it broke.
+`docs/spec.md` is the contract. Every test names the requirement it defends: `C-*`
+behavioral, `E-*` edge case, `P-*` proved property, `N-*` non-functional. You can read a
+failure back to the sentence it broke.
 
-Three properties are **proved** rather than tested, because they are the places
-where porting arithmetic from a language with arbitrary-precision integers into
-one with wrapping `usize` silently introduces bugs: the provider rotation index
-is always in range, the KiB split never overflows, and column padding never
-underflows. Kani explores the entire `usize` domain for each.
+Three properties are **proved** rather than tested. They are the places where porting
+arithmetic from a language with arbitrary-precision integers into one with wrapping
+`usize` silently introduces faults. The provider rotation index is always in range, the
+KiB split never overflows, and column padding never underflows. Kani explores the entire
+`usize` domain for each.
 
-The isolation claims in *Safety* are nsjail's, not Choir's, so they are
-exercised rather than proved: `crates/choir/tests/sealed_jail.rs` runs a real
-verify jail and asserts that `/home`, `/root`, `/mnt`, `/var` and `/etc/shadow`
-are unreachable, that `NoNewPrivs` is 1 and `CapEff` is empty, and that three
-two-second jails finish in under four seconds rather than six. Those skip with a
-notice if nsjail is absent.
+The isolation claims in *Safety* are nsjail's, not Choir's, so tests exercise them rather
+than prove them. `crates/choir/tests/sealed_jail.rs` runs a real verify jail. It asserts
+that `/home`, `/root`, `/mnt`, `/var` and `/etc/shadow` are unreachable. It asserts
+that `NoNewPrivs` is 1 and `CapEff` is empty. It also asserts that three two-second
+jails finish in under four seconds rather than six. Those tests skip with a notice when nsjail is absent.
