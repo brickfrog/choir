@@ -166,6 +166,16 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   transition rather than the endpoint: the identical tests failed on the base
   and pass with the patch. Without the gate a jail can make `--test` pass by
   editing the tests, and nothing in the table would show it.
+- **C-34** `--ignore <glob>` is repeatable and appends to `.git/info/exclude`
+  in Choir's scratch copy, never the user's tree. A jail runs the repository's
+  own tests and a test run writes artifacts; in a repository whose `.gitignore`
+  does not name them they are untracked, `git add -A` stages them, and they
+  ride into the patch as binary hunks. Under `--red` the red patch then carries
+  them into the green jail's tree as well. Measured: a one-file Python repo
+  produced a 4.1 KB patch of which all but 561 B was `__pycache__`. The globs
+  are written unescaped, unlike `--out` (E-17), because here a glob is the
+  intent. Choir does not detect them, for the same reason `--test` has no
+  default: it does not know your build system.
 
 ---
 

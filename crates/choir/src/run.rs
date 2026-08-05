@@ -159,6 +159,7 @@ fn prepare(cfg: &Config) -> Option<Paths> {
 
     let out = sys::absolute(&cfg.out);
     exclude_out_from_base(&dir, &repo, &out, cfg.n);
+    exclude_user_globs(&dir, &cfg.ignore);
     commit_base(&dir);
 
     Some(Paths { dir, out, cache })
@@ -387,6 +388,32 @@ fn exclude_out_from_base(dir: &str, repo_abs: &str, out_abs: &str, n: usize) {
     }
 
     let existing = sys::read_text(Path::new(&exclude));
+    sys::write_text(Path::new(&exclude), &format!("{existing}\n{rules}"));
+}
+
+/// Append the user's `--ignore` globs to the scratch copy's exclude file (C-34).
+///
+/// A jail runs the repository's own tests, and a test run writes artifacts:
+/// `__pycache__`, `target/`, `.pytest_cache`. Those are untracked and, in a
+/// repository whose `.gitignore` does not name them, `git add -A` stages them
+/// and they ride into the patch as binary hunks. Under `--red` the red patch
+/// then carries them into the green jail's tree as well.
+///
+/// Choir cannot know which paths those are without knowing the build system,
+/// and it refuses to: `--test` is required for the same reason. So the globs
+/// come from the user, and unlike `--out` they are written unescaped, because
+/// here a glob is the point rather than an accident.
+fn exclude_user_globs(dir: &str, globs: &[String]) {
+    if globs.is_empty() {
+        return;
+    }
+    let exclude = format!("{dir}/repo/.git/info/exclude");
+    let existing = sys::read_text(Path::new(&exclude));
+    let mut rules = String::new();
+    for glob in globs {
+        rules.push_str(glob);
+        rules.push('\n');
+    }
     sys::write_text(Path::new(&exclude), &format!("{existing}\n{rules}"));
 }
 
@@ -793,7 +820,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::{
-        collect, detach_gitfile, exclude_out_from_base, extract, gitignore_escape, prepare,
+        collect, detach_gitfile, exclude_out_from_base, exclude_user_globs, extract,
+        gitignore_escape, prepare,
         strip_host_config, Attempt, Paths, Staged,
     };
     use crate::sys;
@@ -1183,6 +1211,49 @@ mod tests {
         assert!(
             !fs::exists(format!("{out}/.gitignore")).unwrap_or(false),
             "Choir wrote into the user's output directory"
+        );
+    }
+
+    /// C-34: an artifact a jail's own test run writes stays out of the patch.
+    ///
+    /// Reproduced before the fix: a `--red` jail ran pytest to confirm its new
+    /// tests failed, and the `__pycache__` it left rode into the red patch as
+    /// binary hunks -- then into the green jail's tree when that patch was
+    /// applied. The test file itself must still stage: this excludes the
+    /// byproduct of running code, not new code.
+    #[test]
+    fn ignore_globs_keep_test_run_artifacts_out_of_the_patch() {
+        let scratch = scratch("ignore-globs");
+        let root_s = scratch.str();
+        let user_repo = format!("{root_s}/user");
+        fs::create_dir_all(&user_repo).expect("repo");
+        git(&user_repo, &["init", "-q"]);
+        git(&user_repo, &["config", "user.email", "t@t"]);
+        git(&user_repo, &["config", "user.name", "t"]);
+        fs::write(format!("{user_repo}/m.py"), "def f():\n    return 1\n").expect("src");
+        git(&user_repo, &["add", "-A"]);
+        git(&user_repo, &["commit", "-qm", "init"]);
+
+        let base = format!("{root_s}/repo");
+        sys::copy_tree(&user_repo, &base);
+        exclude_user_globs(&root_s, &["__pycache__/".to_owned()]);
+
+        // The jail writes a test, then runs it, which leaves bytecode behind.
+        fs::write(format!("{base}/test_m.py"), "def test_f():\n    assert 0\n").expect("test");
+        fs::create_dir_all(format!("{base}/__pycache__")).expect("cache");
+        fs::write(format!("{base}/__pycache__/m.pyc"), [0u8, 1, 2, 3]).expect("pyc");
+
+        git(&base, &["add", "-A"]);
+        let (_, staged) = sys::run("git", &["-C", &base, "diff", "--cached", "--name-only"]);
+        let staged = String::from_utf8_lossy(&staged);
+
+        assert!(
+            staged.contains("test_m.py"),
+            "the model's new test must still stage: {staged:?}"
+        );
+        assert!(
+            !staged.contains("__pycache__"),
+            "a test run's artifacts leaked into the patch: {staged:?}"
         );
     }
 
