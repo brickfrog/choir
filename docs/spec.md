@@ -216,6 +216,19 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-33** A previous run's output is never presented as this run's. `--out` is
+  not scoped per run and writes are silent on failure, so a patch that failed to
+  write left the earlier run's file in place -- and the `git apply <out>/N.patch`
+  line the table prints then named bytes from a different run. The indices this
+  run will write are cleared before it starts; absence is honest, stale content
+  is not. Whatever else lives in that directory is the user's and is left alone.
+- **E-32** A repository nested inside `--repo` -> its contents reach the patch.
+  `git add -A` stages such a subtree as a gitlink, so a model's edits inside a
+  vendored checkout or submodule produced no diff: the run paid for a jail, threw
+  the work away, and printed `0 B` -- which the table teaches the reader to
+  interpret as the model correctly declining. The nested `.git` is removed from
+  the base copy, the same trade E-21 already makes. Reported by an adversarial
+  Choir run against this repository.
 - **E-31** `--repo` that is not a git repository -> the base copy is
   initialised as one, so host `git` never searches upward out of the scratch
   tree. Without a `.git` of its own, `git -C <run>/repo add -A` walks up, and

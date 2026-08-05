@@ -133,9 +133,11 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     let repo = sys::absolute(&cfg.repo);
     sys::copy_tree(&repo, &format!("{dir}/repo"));
     detach_gitfile(&dir);
+    flatten_nested_repos(&dir);
     strip_host_config(&dir);
     sys::mkdir_all(Path::new(&format!("{dir}/patches")));
     sys::mkdir_all(Path::new(&cfg.out));
+    clear_stale_output(&cfg.out, cfg.n);
 
     // The host's resolv.conf names 127.0.0.53, which inside a pasta namespace is
     // the jail's own empty loopback. One line naming pasta's gateway instead.
@@ -262,6 +264,62 @@ fn detach_gitfile(dir: &str) {
         "-qm",
         "base",
     ]);
+}
+
+/// Flatten repositories nested inside the base copy, so the model's work is
+/// actually in the patch (E-32).
+///
+/// `git add -A` stages a subtree holding its own `.git` as a *gitlink*: one
+/// commit hash, none of the contents. A model that edits a file inside a
+/// vendored checkout or a submodule therefore produces no diff at all — the run
+/// costs a jail, throws the work away, and prints `0 B`, which this project's
+/// own table teaches the reader to interpret as the model correctly declining.
+/// A row that lies is worse than a feature that is missing.
+///
+/// Removing the nested `.git` is the same trade [`detach_gitfile`] already
+/// makes: Choir never needs anyone's history, only the diff against the tree
+/// the jail started from. `-mindepth 2` spares the base copy's own `.git`, and
+/// catches `.git` as a file or a symlink at the same time.
+fn flatten_nested_repos(dir: &str) {
+    let repo = format!("{dir}/repo");
+    let (code, found) = sys::run(
+        "find",
+        &[&repo, "-mindepth", "2", "-name", ".git", "-print0"],
+    );
+    if code != 0 {
+        return;
+    }
+    for nested in String::from_utf8_lossy(&found).split('\0') {
+        if nested.is_empty() {
+            continue;
+        }
+        // A jail can lock its own tree; so can whatever the user copied in.
+        sys::unlock_tree(nested);
+        sys::remove_tree(nested);
+    }
+}
+
+/// Remove the files this run is about to write, before it writes them (E-33).
+///
+/// `--out` is not scoped per run, and [`sys::write_bytes`] is silent on failure
+/// by design. Together that means a patch which fails to write leaves the
+/// *previous* run's file untouched, and the `git apply <out>/N.patch` line the
+/// table prints then names bytes from a different run — the one kind of mistake
+/// no reader can catch, because the path is right and the contents are wrong.
+///
+/// Only this run's own indices are cleared. Whatever else the user keeps in that
+/// directory is theirs, and a run that writes nothing leaves absence behind:
+/// honest, and unmistakable for a result.
+fn clear_stale_output(out: &str, n: usize) {
+    for index in 0..n {
+        for name in [
+            format!("{index}.patch"),
+            format!("{index}.log"),
+            format!("{index}.verify.log"),
+        ] {
+            sys::remove_tree(&format!("{out}/{name}"));
+        }
+    }
 }
 
 /// Drop repository config that aims host git outside the copy (E-26).
@@ -1404,6 +1462,82 @@ mod tests {
             sys::absolute(&top),
             sys::absolute(&base),
             "host git resolved out of the base copy and into an enclosing repository"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// E-32: a nested repository's contents reach the patch. `git add -A` stages
+    /// a subtree holding its own `.git` as a gitlink, so a model's edits inside
+    /// it produce no diff at all: the work is discarded and the row reads `0 B`,
+    /// which this project's own table teaches you to read as "the model
+    /// correctly declined". A lying row is worse than a missing feature.
+    #[test]
+    fn e32_a_nested_repository_is_flattened_into_the_base_copy() {
+        let dir = scratch("nested");
+        let src = dir.path().join("src");
+        let inner = src.join("inner");
+        fs::create_dir_all(&inner).expect("inner");
+        fs::write(src.join("top.txt"), "top\n").expect("top");
+        fs::write(inner.join("payload.txt"), "before\n").expect("payload");
+        let src_s = src.to_str().expect("utf-8");
+        let _ = sys::git(&["-C", src_s, "init", "-q"]);
+        let inner_s = inner.to_str().expect("utf-8");
+        let _ = sys::git(&["-C", inner_s, "init", "-q"]);
+
+        let cfg = Config {
+            repo: src_s.to_owned(),
+            out: format!("{}/out", dir.str()),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+        let base = paths.base_repo();
+
+        // What a model changing a file inside the nested repository produces.
+        fs::write(format!("{base}/inner/payload.txt"), "after\n").expect("edit");
+        let _ = sys::git(&["-C", &base, "add", "-A"]);
+        let (_, diff) = sys::git(&["-C", &base, "diff", "--cached", "--name-only"]);
+        let diff = String::from_utf8_lossy(&diff);
+
+        assert!(
+            diff.contains("inner/payload.txt"),
+            "the model's change inside a nested repository never reached the patch: {diff:?}"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// E-33: a run never presents a previous run's bytes as its own. Writes are
+    /// silent on failure by design, so a patch that fails to write left the
+    /// earlier run's file in place -- and the `git apply <out>/N.patch` line the
+    /// table prints then names content from a different run. Absence is honest;
+    /// stale content is a lie.
+    #[test]
+    fn e33_a_previous_runs_output_is_not_presented_as_this_runs() {
+        let dir = scratch("staleout");
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        fs::write(repo.join("a.txt"), "a\n").expect("a");
+        let out = format!("{}/out", dir.str());
+        fs::create_dir_all(&out).expect("out");
+        // What a previous run of a wider `-n` left behind.
+        fs::write(format!("{out}/0.patch"), "STALE PATCH FROM AN EARLIER RUN").expect("stale");
+        fs::write(format!("{out}/0.log"), "stale log").expect("stale log");
+
+        let cfg = Config {
+            repo: repo.to_str().expect("utf-8").to_owned(),
+            out: out.clone(),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+
+        assert!(
+            !Path::new(&format!("{out}/0.patch")).exists(),
+            "a previous run's patch survived into this run's output directory"
+        );
+        assert!(
+            !Path::new(&format!("{out}/0.log")).exists(),
+            "a previous run's log survived into this run's output directory"
         );
         sys::remove_tree(&paths.dir);
     }
