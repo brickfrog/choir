@@ -1144,4 +1144,79 @@ mod tests {
         assert_eq!(code, 0, "patch must apply to the tree it was made from");
         sys::remove_tree(&paths.dir);
     }
+
+    /// E-28: `--cache` is validated before symlinks are resolved. E-23 rejects a
+    /// raw argument containing `'` or `:`, but `sys::absolute` then follows
+    /// symlinks, so a harmless-looking argument can resolve to a path that
+    /// breaks out of the single quotes `jail::prefix` splices it into.
+    /// Reproduced on the host: the resolved path
+    /// `a'; touch /tmp/CACHE_CANARY; #` executed the `touch`.
+    #[test]
+    fn e28_a_cache_path_resolving_to_a_quote_is_refused() {
+        let dir = scratch("cachequote");
+        let evil = dir.path().join("a'; touch CANARY; #");
+        fs::create_dir_all(&evil).expect("evil dir");
+        let link = dir.path().join("innocent");
+        std::os::unix::fs::symlink(&evil, &link).expect("symlink");
+
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo");
+        let repo_s = repo.to_str().expect("utf-8").to_owned();
+        git(&repo_s, &["init", "-q"]);
+
+        let cfg = Config {
+            repo: repo_s,
+            out: format!("{}/out", dir.str()),
+            n: 1,
+            cache: vec![link.to_str().expect("utf-8").to_owned()],
+            ..Config::default()
+        };
+        assert!(
+            prepare(&cfg).is_none(),
+            "a cache path resolving to a quote must never reach a wave script"
+        );
+    }
+
+    /// E-29: `--repo` given as a symlink. `cp -a` copies the *link*, so the base
+    /// copy points at the user's real repository and every host `git` -- and
+    /// every jail's rw bind mount -- lands there. Reproduced: `commit_base`
+    /// wrote a commit into the user's own history.
+    #[test]
+    fn e29_a_symlinked_repo_is_copied_not_followed() {
+        let dir = scratch("symrepo");
+        let real = dir.path().join("real");
+        fs::create_dir_all(&real).expect("real");
+        let real_s = real.to_str().expect("utf-8").to_owned();
+        git(&real_s, &["init", "-q"]);
+        git(&real_s, &["config", "user.email", "t@t"]);
+        git(&real_s, &["config", "user.name", "t"]);
+        fs::write(format!("{real_s}/a.txt"), "original\n").expect("a.txt");
+        git(&real_s, &["add", "-A"]);
+        git(&real_s, &["commit", "-qm", "base"]);
+        let (_, before) = sys::git(&["-C", &real_s, "rev-parse", "HEAD"]);
+
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let cfg = Config {
+            repo: link.to_str().expect("utf-8").to_owned(),
+            out: format!("{}/out", dir.str()),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+
+        let base = format!("{}/repo", paths.dir);
+        assert!(
+            !Path::new(&base).is_symlink(),
+            "the base copy must be a real directory, not a link to the user's repo"
+        );
+        let (_, after) = sys::git(&["-C", &real_s, "rev-parse", "HEAD"]);
+        assert_eq!(
+            String::from_utf8_lossy(&before),
+            String::from_utf8_lossy(&after),
+            "choir committed into the user's real repository"
+        );
+        sys::remove_tree(&paths.dir);
+    }
 }

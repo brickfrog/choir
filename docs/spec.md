@@ -216,6 +216,20 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-29** `--repo` given as a symlink, or a repository whose `.git` is a
+  symlink -> the base copy is a real directory holding real files. `cp -a`
+  copies a link as a link, so `<run>/repo` pointed at the user's own checkout
+  and every host `git` ran there: `commit_base` wrote a commit into their
+  history, and each jail's rw bind mount resolved to their working tree.
+  Found by an adversarial Choir run against this repository; two of the three
+  jails reported it independently, and it was reproduced on the host.
+- **E-28** A `--cache` path whose *resolved* target contains `'` or `:` ->
+  usage error. E-23 checks the raw argument, but the shell then resolves
+  symlinks with `readlink -f`, and the resolved value is what gets single-quoted
+  into the wave script. A link named innocently can resolve to
+  `a'; touch /tmp/CACHE_CANARY; #`, which closes the quote and runs on the host
+  as the user. Reproduced: the canary was created. The check has to be applied
+  to the path that reaches the script, not the one the user typed.
 - **E-27** An untracked file the run rewrites -> the base copy is committed
   before any jail starts, so it is tracked and the patch carries a modification
   rather than a `new file`. Patches are `git diff --cached HEAD` but are applied
