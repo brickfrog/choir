@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "choir",
-      "source": "./choir",
+      "source": "./plugin/choir",
       "description": "Run one coding task N times in parallel, each in its own nsjail sandbox with its own provider CLI, then test every patch in a sealed jail and compare.",
       "category": "Developer Tools"
     }

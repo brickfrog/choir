@@ -8,7 +8,7 @@
       "name": "choir",
       "source": {
         "source": "local",
-        "path": "./choir"
+        "path": "./plugin/choir"
       },
       "policy": {
         "installation": "AVAILABLE"
