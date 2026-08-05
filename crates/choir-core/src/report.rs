@@ -11,7 +11,7 @@ use crate::verdict::{self, Verdict};
 
 /// Column header for the results table.
 pub const HEADER: &str =
-    "JAIL PROVIDER  PATCH    EXIT  TESTS         TIME  WHY            LAST LINE FROM PROVIDER";
+    "JAIL PROVIDER  PATCH    EXIT  TESTS           TIME   WHY            LAST LINE FROM PROVIDER";
 
 /// Render the unpatched tree's test verdict immediately above the table (C-30).
 ///
@@ -91,8 +91,12 @@ const COL_JAIL: usize = 5;
 const COL_PROVIDER: usize = 10;
 const COL_PATCH: usize = 9;
 const COL_EXIT: usize = 6;
-const COL_TESTS: usize = 14;
-const COL_TIME: usize = 6;
+// Wide enough for `TIMEOUT(99999s)` -- 15 characters, over 27 hours of budget --
+// plus the separator. At 14 the default `--timeout 1200` rendered
+// `TIMEOUT(1200s)` flush against the `TIME` column that verdict introduced.
+const COL_TESTS: usize = 16;
+// `99999s` is six characters, so six left no separator before WHY.
+const COL_TIME: usize = 7;
 const COL_WHY: usize = 15;
 
 /// One finished attempt, ready to render.

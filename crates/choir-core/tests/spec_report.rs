@@ -142,19 +142,19 @@ fn e10_size_label_at_the_limit() {
 fn c23_row_layout() {
     assert_eq!(
         row_of(0, Provider::Claude, 4198, Verdict::Pass, "did it"),
-        "0    claude    4.0 KB   0     PASS          41s                  did it"
+        "0    claude    4.0 KB   0     PASS            41s                   did it"
     );
     assert_eq!(
         row_of(1, Provider::Codex, 0, Verdict::NoPatch, "rate limited"),
-        "1    codex     0 B      0     -             41s   wrote nothing  rate limited"
+        "1    codex     0 B      0     -               41s    wrote nothing  rate limited"
     );
     assert_eq!(
         row_of(2, Provider::Codex, 512, Verdict::ApplyFailed, ""),
-        "2    codex     512 B    0     APPLY FAILED  41s   apply rejected"
+        "2    codex     512 B    0     APPLY FAILED    41s    apply rejected"
     );
     assert_eq!(
         row_of(3, Provider::Claude, 2048, Verdict::Fail(1), "x"),
-        "3    claude    2.0 KB   0     FAIL(1)       41s                  x"
+        "3    claude    2.0 KB   0     FAIL(1)         41s                   x"
     );
 }
 
@@ -272,6 +272,32 @@ fn e15_audit_body_is_sanitised() {
 fn header_matches_columns() {
     assert!(report::HEADER.starts_with("JAIL PROVIDER  PATCH    EXIT  TESTS "));
     assert!(report::HEADER.ends_with("LAST LINE FROM PROVIDER"));
+    // A prefix and a suffix cannot see a column widening between them, which is
+    // how COL_TESTS and this literal drifted apart. Pin every heading's offset
+    // against a rendered row instead.
+    let rendered = report::row(&Row {
+        index: 0,
+        provider: Provider::Claude,
+        bytes: 4096,
+        exit: Some(0),
+        elapsed: Some(41),
+        timeout: 1200,
+        verdict: Verdict::Pass,
+        last_line: "did it".to_owned(),
+    });
+    for (heading, cell) in [
+        ("PROVIDER", "claude"),
+        ("EXIT", "0     "),
+        ("TESTS", "PASS"),
+        ("TIME", "41s"),
+    ] {
+        assert_eq!(
+            rendered.find(cell),
+            report::HEADER.find(heading),
+            "{heading} heading and cell disagree:\n{}\n{rendered}",
+            report::HEADER
+        );
+    }
 }
 
 /// The audit heading disclaims itself.
@@ -352,6 +378,39 @@ fn c36_a_barren_row_names_its_reason() {
         "{declined}"
     );
     assert!(declined.ends_with("tail"), "{declined}");
+}
+
+/// C-23: the columns still line up under the longest verdict label there is.
+///
+/// `TIMEOUT(1200s)` is 14 characters and the default `--timeout` produces it,
+/// so at `COL_TESTS = 14` every timed-out row shunted `TIME` and `WHY` one
+/// column right. The neighbouring alignment assertion never caught it because
+/// it renders `-`, which is one character. This one renders the worst case.
+#[test]
+fn c23_columns_align_under_the_longest_verdict() {
+    for (timeout, elapsed) in [(1200_u32, 1200_u64), (99_999, 99_999)] {
+        let row = report::row(&Row {
+            index: 0,
+            provider: Provider::Claude,
+            bytes: 0,
+            exit: Some(137),
+            elapsed: Some(elapsed),
+            timeout,
+            verdict: Verdict::Timeout(timeout),
+            last_line: "tail".to_owned(),
+        });
+        assert!(row.contains(&format!("TIMEOUT({timeout}s)")), "{row}");
+        assert_eq!(
+            row.find(&format!("{elapsed}s ")),
+            report::HEADER.find("TIME"),
+            "TIME moved under a {timeout}s deadline: {row}"
+        );
+        assert_eq!(
+            row.find("timeout "),
+            report::HEADER.find("WHY"),
+            "WHY moved under a {timeout}s deadline: {row}"
+        );
+    }
 }
 
 /// C-29: the exit column tells a clean-but-empty provider from a killed one.

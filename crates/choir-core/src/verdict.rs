@@ -249,7 +249,7 @@ pub fn reason(
 
 #[cfg(test)]
 mod tests {
-    use super::{preserves_red, reason, Verdict};
+    use super::{from_rc, from_run, preserves_red, reason, Verdict};
 
     /// The red patch every case below starts from: one new test file, exactly
     /// what a red wave produces. Written as real `git diff --cached --binary`
@@ -419,6 +419,28 @@ mod tests {
         assert!(!Verdict::admits_green(Some(Verdict::NoPatch)));
         assert!(!Verdict::admits_green(Some(Verdict::ApplyFailed)));
         assert!(!Verdict::admits_green(None));
+    }
+
+    /// C-37: a gate jail killed by the deadline must not admit the green wave.
+    ///
+    /// The composition is the whole point. `from_rc` reads a deadline kill as
+    /// `Fail(137)`, and `admits_green` admits every `Fail` -- so a red run that
+    /// never finished used to license the implementation behind it. This is the
+    /// one place the 137 ambiguity changed what the program did rather than what
+    /// the table said. `from_run` is what closes it, and `red_gate` must use it.
+    #[test]
+    fn a_gate_jail_killed_by_the_deadline_does_not_admit_green() {
+        // What the gate used to see, and wrongly allowed.
+        assert!(Verdict::admits_green(Some(from_rc("137"))));
+
+        // What it sees now: same `.rc`, same budget, opposite decision.
+        let timed_out = from_run("137", Some(1200), 1200);
+        assert_eq!(timed_out, Verdict::Timeout(1200));
+        assert!(!Verdict::admits_green(Some(timed_out)));
+
+        // A red run that failed well inside its budget still admits green:
+        // that is a real red, and the deadline had nothing to do with it.
+        assert!(Verdict::admits_green(Some(from_run("137", Some(12), 1200))));
     }
 
     /// A rejected red run is never a passing row, so it earns no `git apply`.

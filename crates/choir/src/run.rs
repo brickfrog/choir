@@ -543,13 +543,20 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
     }
 
     println!("[red]    {} gate jails started", jails.len());
-    run_wave(&jails);
+    let started = run_wave(&jails);
 
     slots
         .into_iter()
         .map(|slot| {
             slot.map_or(Verdict::NoPatch, |s| {
-                verdict::from_rc(&sys::read_text(Path::new(&format!("{s}.rc"))))
+                // C-37, and the one place the 137 ambiguity changed behaviour
+                // rather than just the table: a gate jail killed by the deadline
+                // wrote 137, `from_rc` read it as `Fail`, and `admits_green`
+                // admits any `Fail` -- so the green wave ran on the strength of
+                // a red run that never finished. `Timeout` is not a `Fail`.
+                let rc = format!("{s}.rc");
+                let elapsed = sys::elapsed_to(started, Path::new(&rc));
+                verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, cfg.timeout)
             })
         })
         .collect()
