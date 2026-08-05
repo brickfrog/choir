@@ -393,7 +393,15 @@ fn work_wave(cfg: &Config, paths: &Paths) {
 /// nothing and cannot skip work: the wave has already finished.
 fn shred_credentials(jails: &[Jail]) {
     for jail in jails {
-        sys::remove_tree(&format!("{}/cred", jail.slot));
+        let cred = format!("{}/cred", jail.slot);
+        // A jail owns its own slot, so it can `chmod 0500` the directory holding
+        // its credential, and `rm -rf` then fails silently for want of write and
+        // execute -- E-22, on the directory that holds the user's OAuth token
+        // rather than the one that holds `.git` (E-30). The scratch tree
+        // outlives an interrupted run, so a copy surviving this call survives
+        // on disk until someone removes it by hand.
+        sys::unlock_tree(&cred);
+        sys::remove_tree(&cred);
     }
 }
 
@@ -1330,5 +1338,30 @@ mod tests {
             "choir committed into the user's real git directory"
         );
         sys::remove_tree(&paths.dir);
+    }
+
+    /// E-30: a jail that makes its own `/cred` undeletable must not keep the
+    /// user's OAuth token on the host. Exactly the E-22 defect, on the directory
+    /// that holds the credential rather than the one that holds `.git`.
+    #[test]
+    fn e30_a_locked_cred_dir_is_still_shredded() {
+        let dir = scratch("credlock");
+        let slot = format!("{}/w0", dir.str());
+        let cred = format!("{slot}/cred");
+        fs::create_dir_all(&cred).expect("cred");
+        fs::write(
+            format!("{cred}/.credentials.json"),
+            "{\"access_token\":\"live\"}",
+        )
+        .expect("token");
+        // What a hostile model runs inside its own jail.
+        let _ = sys::run("chmod", &["0500", &cred]);
+
+        super::shred_credentials(&[choir_core::Jail::new(String::new(), slot)]);
+
+        assert!(
+            !Path::new(&cred).exists(),
+            "the user's credential copy survived the shred"
+        );
     }
 }

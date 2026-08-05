@@ -216,6 +216,13 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-30** A jail that `chmod 0500`s its own `/cred` -> the credential copy is
+  still shredded. `rm -rf` needs write and execute on a directory to unlink what
+  is inside it, so the bare removal left the user's live OAuth token on the host;
+  the wave now unlocks first with the same `unlock_tree` the `.git` restore uses
+  (E-22). The scratch tree outlives an interrupted run, so a token that survives
+  the shred survives until someone removes it by hand. Reported by an
+  adversarial Choir run against this repository.
 - **E-29** `--repo` given as a symlink, or a repository whose `.git` is a
   symlink -> the base copy is a real directory holding real files. `cp -a`
   copies a link as a link, so `<run>/repo` pointed at the user's own checkout
