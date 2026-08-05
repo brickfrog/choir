@@ -113,8 +113,8 @@ fn exit_status_becomes_a_verdict() {
 }
 
 /// C-13: the verify jail cannot see the host's home, other repositories, or
-/// `/etc/shadow`. This is the isolation claim the README makes, tested rather
-/// than asserted.
+/// `/etc/shadow`. `docs/architecture.md` claims this boundary; this tests it
+/// rather than asserting it.
 #[test]
 fn verify_jail_cannot_see_the_host() {
     if !nsjail_available() {
@@ -138,8 +138,8 @@ fn verify_jail_cannot_see_the_host() {
 /// C-13: the verify jail gets its own empty network namespace, and neither the
 /// credential nor the provider binary nor the patches are reachable from it.
 ///
-/// The README states this seal plainly, and it is the claim a reader leans on
-/// hardest, since it is the jail an untrusted patch runs in. Before this test
+/// This is the claim an untrusted patch leans on hardest, since the verify
+/// jail is where one runs. Before this test
 /// the only thing defending it was a string assertion that the template does
 /// not contain "pasta" — which would not notice nsjail changing its default,
 /// nor a refactor routing verify jails through the provider template. The probe
