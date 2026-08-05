@@ -821,8 +821,7 @@ mod tests {
 
     use super::{
         collect, detach_gitfile, exclude_out_from_base, exclude_user_globs, extract,
-        gitignore_escape, prepare,
-        strip_host_config, Attempt, Paths, Staged,
+        gitignore_escape, prepare, strip_host_config, Attempt, Paths, Staged,
     };
     use crate::sys;
     use choir_core::config::{Config, Provider};

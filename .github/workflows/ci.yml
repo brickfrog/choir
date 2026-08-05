@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Named `native` because that is the required status check on `main`. The
+  # v2 workflow that provided it was deleted with the MoonBit tree, leaving a
+  # rule no run could satisfy and every push needing an admin bypass.
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.85 --profile minimal --component clippy
+          rustup default 1.85
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+
+      # nsjail is absent on the runner, so the sealed-jail tests skip with a
+      # notice rather than failing. They are exercised on a machine that has
+      # it; what CI defends is everything that does not need a jail.
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Formatting
+        run: cargo fmt --all --check
