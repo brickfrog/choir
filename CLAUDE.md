@@ -129,6 +129,12 @@ check 5. Nothing else.
 ## The tree
 
 `crates/`, `docs/`, `Cargo.toml`, `Cargo.lock`, `README.md`, `CLAUDE.md`, `LICENSE`,
-`.gitignore`. Nothing else is tracked. v1 and v2 both accumulated a `.choir/` of settings, logs
-and prompts that outlived the code they configured; there is no such directory now and adding
-one is the first move of the thing this file exists to prevent.
+`.gitignore`, `plugin/`. Nothing else is tracked. v1 and v2 both accumulated a `.choir/` of
+settings, logs and prompts that outlived the code they configured; there is no such directory
+now and adding one is the first move of the thing this file exists to prevent.
+
+`plugin/` was added on the owner's instruction and is the one exception worth stating a bound
+for. It is a skill and two manifests — Markdown and JSON that three agent runtimes can load,
+describing how to drive the CLI. Nothing in it is read by Choir, nothing in it runs, and no
+code path here depends on it. If it ever grows a script, a config schema, or a second reason
+to exist, it has become the `.choir/` this section is about and should be deleted.

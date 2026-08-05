@@ -1,0 +1,19 @@
+{
+  "name": "choir",
+  "interface": {
+    "displayName": "Choir"
+  },
+  "plugins": [
+    {
+      "name": "choir",
+      "source": {
+        "source": "local",
+        "path": "./choir"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

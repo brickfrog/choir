@@ -1,0 +1,27 @@
+{
+  "name": "choir",
+  "version": "4.0.0",
+  "description": "Run one coding task N times in parallel, each in its own nsjail sandbox with its own provider CLI, then test every patch in a sealed jail and compare.",
+  "author": {
+    "name": "brickfrog",
+    "url": "https://github.com/brickfrog/choir"
+  },
+  "homepage": "https://github.com/brickfrog/choir",
+  "repository": "https://github.com/brickfrog/choir",
+  "license": "MIT",
+  "keywords": ["sandbox", "nsjail", "parallel", "review"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Choir",
+    "shortDescription": "N sandboxed attempts at one task, each tested in a sealed jail.",
+    "longDescription": "Choir runs one instruction in N throwaway nsjail sandboxes, each with its own copy of the repository and its own provider CLI. Every jail returns a patch, every patch is tested in a jail with no network, and the results are printed as a table. Choir never writes to your checkout and never picks a winner.",
+    "developerName": "brickfrog",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "websiteURL": "https://github.com/brickfrog/choir",
+    "defaultPrompt": [
+      "Run this task three ways with choir and show me the table"
+    ],
+    "screenshots": []
+  }
+}

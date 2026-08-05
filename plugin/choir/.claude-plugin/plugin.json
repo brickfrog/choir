@@ -1,0 +1,13 @@
+{
+  "name": "choir",
+  "version": "4.0.0",
+  "description": "Run one coding task N times in parallel, each in its own nsjail sandbox with its own provider CLI, then test every patch in a sealed jail and compare.",
+  "author": {
+    "name": "brickfrog"
+  },
+  "homepage": "https://github.com/brickfrog/choir",
+  "repository": "https://github.com/brickfrog/choir",
+  "license": "MIT",
+  "keywords": ["sandbox", "nsjail", "parallel", "review", "codex", "claude"],
+  "skills": "./skills/"
+}

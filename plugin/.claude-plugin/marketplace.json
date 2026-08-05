@@ -1,0 +1,16 @@
+{
+  "name": "choir",
+  "description": "Choir: N sandboxed attempts at one coding task, each tested in a sealed jail.",
+  "owner": {
+    "name": "brickfrog",
+    "url": "https://github.com/brickfrog/choir"
+  },
+  "plugins": [
+    {
+      "name": "choir",
+      "source": "./choir",
+      "description": "Run one coding task N times in parallel, each in its own nsjail sandbox with its own provider CLI, then test every patch in a sealed jail and compare.",
+      "category": "Developer Tools"
+    }
+  ]
+}
