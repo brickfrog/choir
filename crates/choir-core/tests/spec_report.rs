@@ -52,6 +52,67 @@ fn c30_baseline_verdict_line() {
     assert_ne!(pass, report::baseline(Verdict::Fail(1)));
 }
 
+/// C-31: the run says whether its N attempts were N attempts.
+///
+/// Byte-identical patches from two jails mean `n` bought one attempt repeated,
+/// which is the single most useful fact about such a run and was previously
+/// visible only to someone diffing the patch files by hand. Zero-byte patches
+/// are not attempts: the table already reports them as `0 B`, and naming two of
+/// them as identical to each other would be noise.
+#[test]
+fn c31_distinct_patch_count() {
+    let a: &[u8] = b"diff --git a/x b/x\n+one\n";
+    let b: &[u8] = b"diff --git a/y b/y\n+two\n";
+    let empty: &[u8] = b"";
+
+    // Nothing to compare below two non-empty patches.
+    assert_eq!(report::distinct_patches(&[]), None);
+    assert_eq!(report::distinct_patches(&[(0, a)]), None);
+    assert_eq!(report::distinct_patches(&[(0, a), (1, empty)]), None);
+    assert_eq!(
+        report::distinct_patches(&[(0, empty), (1, empty), (2, empty)]),
+        None,
+        "two empty patches are not two identical attempts"
+    );
+
+    // All different: a count and no names.
+    assert_eq!(
+        report::distinct_patches(&[(0, a), (1, b)]),
+        Some("2 of 2 non-empty patches are byte-distinct".to_owned())
+    );
+
+    // The case that motivated this: n paid for one attempt, repeated.
+    assert_eq!(
+        report::distinct_patches(&[(0, a), (1, a)]),
+        Some(
+            "1 of 2 non-empty patches are byte-distinct (jail 1 is identical to jail 0)".to_owned()
+        )
+    );
+
+    // A jail is always named against the lowest-numbered match, and an empty
+    // patch between two identical ones neither counts nor is named.
+    assert_eq!(
+        report::distinct_patches(&[(0, a), (1, empty), (2, a), (3, b), (4, a)]),
+        Some(
+            "2 of 4 non-empty patches are byte-distinct \
+             (jail 2 is identical to jail 0, jail 4 is identical to jail 0)"
+                .to_owned()
+        )
+    );
+
+    // Bytes, not lengths: same size, different content.
+    assert_eq!(
+        report::distinct_patches(&[(0, b"aaaa"), (1, b"bbbb")]),
+        Some("2 of 2 non-empty patches are byte-distinct".to_owned())
+    );
+
+    // Non-UTF-8 patch bytes compare like any others (E-7, E-19).
+    let bin: &[u8] = &[0, 1, 2, 255];
+    assert!(report::distinct_patches(&[(0, bin), (1, bin)])
+        .unwrap_or_default()
+        .contains("jail 1 is identical to jail 0"));
+}
+
 /// C-22, E-10: byte counts below 1 KiB are plain; above, one decimal of KiB.
 #[test]
 fn c22_size_label() {

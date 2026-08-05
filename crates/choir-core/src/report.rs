@@ -1,6 +1,6 @@
 //! Table rendering.
 //!
-//! Implements contract items C-22 … C-26 of `docs/spec.md`. This is the entire
+//! Implements contract items C-22 … C-31 of `docs/spec.md`. This is the entire
 //! user interface and the entire selection mechanism: Choir prints rows in jail
 //! order and a `git apply` line per passing patch, and does not rank, sort, or
 //! recommend. Every available total order is wrong somewhere obvious —
@@ -29,6 +29,61 @@ pub fn baseline(verdict: Verdict) -> String {
         "baseline (--test on the unpatched tree, same sealed jail): {}",
         verdict.label()
     )
+}
+
+/// How many of the run's patches are byte-distinct, and which repeat (C-31).
+///
+/// Choir's premise is that `n` independent attempts are worth paying for, and
+/// nothing else in the output says whether they were. Two jails returning
+/// byte-identical patches means `n` bought one attempt repeated and the next run
+/// of that kind of task should use a smaller `n` — the single most useful fact
+/// about such a run, and until now one only a reader diffing the patch files by
+/// hand could learn.
+///
+/// A direct comparison over the bytes Choir already wrote, never a hash: `n` is
+/// small, so this is total and exact, costs no dependency, and has no collision
+/// story to reason about. Zero-byte patches are not attempts, so they are
+/// neither counted nor named — the table already reports them as `0 B`, and
+/// calling two of them identical would be noise. `None` below two non-empty
+/// patches, where there is nothing to compare.
+///
+/// A fact, like the byte count. It ranks nothing, sorts nothing, reorders
+/// nothing, and no verdict or patch byte depends on it.
+#[must_use]
+pub fn distinct_patches(patches: &[(usize, &[u8])]) -> Option<String> {
+    let attempts: Vec<(usize, &[u8])> = patches
+        .iter()
+        .copied()
+        .filter(|(_, bytes)| !bytes.is_empty())
+        .collect();
+    if attempts.len() < 2 {
+        return None;
+    }
+
+    let mut distinct = 0usize;
+    let mut repeats: Vec<String> = Vec::new();
+    for (position, (index, patch)) in attempts.iter().enumerate() {
+        // Only earlier entries are searched, so the jail named is always the
+        // lower-numbered one: `plan` yields attempts in jail order.
+        match attempts
+            .iter()
+            .take(position)
+            .find(|(_, earlier)| earlier == patch)
+        {
+            Some((first, _)) => {
+                repeats.push(format!("jail {index} is identical to jail {first}"));
+            }
+            None => distinct += 1,
+        }
+    }
+
+    let total = attempts.len();
+    let count = format!("{distinct} of {total} non-empty patches are byte-distinct");
+    Some(if repeats.is_empty() {
+        count
+    } else {
+        format!("{count} ({})", repeats.join(", "))
+    })
 }
 
 const COL_JAIL: usize = 5;

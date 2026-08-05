@@ -145,6 +145,8 @@ JAIL PROVIDER  PATCH    EXIT  TESTS         LAST LINE FROM PROVIDER
 1    codex     0 B      1     -             stream error: rate limit reached; resets 14:05
 2    claude    6.8 KB   0     FAIL(1)       Rewrote the fixture to drive a fake clock.
 
+2 of 2 non-empty patches are byte-distinct
+
   git apply /home/justin/proj/choir-out/0.patch
 
 audit (codex — model commentary, unverified, no effect on the table above)
@@ -166,6 +168,22 @@ there was no patch to test. Two conditions skip a verify jail and there are no o
 a `0 B` patch, because there is nothing to apply, and a patch that `git apply` rejects,
 because the tree it would be tested against was never built. Both are mechanical facts
 about the patch, not judgements about it.
+
+The line under the rows is the one thing that says whether you got what you paid for.
+Choir's whole premise is that N independent attempts are worth buying, and N jails can
+easily return the same patch N times — when they do, the run bought one attempt repeated
+and the next task of that kind wants a smaller `-n`. Choir compares the patch bytes
+directly, so identical means identical, and names the repeats:
+
+```
+1 of 3 non-empty patches are byte-distinct (jail 2 is identical to jail 0)
+```
+
+Zero-byte patches are not attempts, so they are neither counted nor named — `0 B` in the
+table already reports them. The line is absent when the run produced fewer than two
+non-empty patches, because then there is nothing to compare. Like `PATCH`, it is a fact
+about the run: it does not rank, sort, reorder, skip a jail, or change any patch or
+verdict.
 
 The three columns compose, and the combinations are worth learning because most of them
 are diagnoses of *your* setup rather than of the models:
@@ -222,7 +240,8 @@ instruction come back structurally different and all passing, the usual reading 
 one model is better. Usually the instruction was ambiguous, and the diff between the
 patches localises the clause that was underspecified. Convergent patches mean the task was
 unambiguous — and that `-n 3` bought you one attempt three times. Read the spread before
-you read the winner.
+you read the winner; the distinct-patch line under the table reports the extreme case of
+that spread, where two attempts came back byte-identical.
 
 **Convergence is a workflow, not a feature.** Choir keeps no state between runs, so it
 cannot tell you that an adversary has stopped finding things. You can: run the review
@@ -458,7 +477,7 @@ without a jail, a provider, or a network — and formally provable in the places
 where Rust's fixed-width integers can bite.
 
 ```sh
-cargo test --workspace                              # 54 tests
+cargo test --workspace                              # 83 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo kani -p choir-core                            # 3 proof harnesses
 ```

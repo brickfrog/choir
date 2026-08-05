@@ -28,10 +28,14 @@ enum Staged {
 }
 
 /// One attempt as it moves through the waves.
+///
+/// The patch is kept rather than just its length: the distinct-patch line (C-31)
+/// compares the bytes directly, and these are the bytes `extract` already read
+/// on its way to writing them under `--out`.
 struct Attempt {
     index: usize,
     provider: Provider,
-    bytes: usize,
+    patch: Vec<u8>,
     staged: Staged,
 }
 
@@ -72,7 +76,11 @@ pub fn execute(cfg: &Config) -> i32 {
     let baseline = verify_wave(cfg, &paths, &attempts);
 
     let rows = collect(&paths, &attempts);
-    print_table(baseline, &rows, &paths.out);
+    let patches: Vec<(usize, &[u8])> = attempts
+        .iter()
+        .map(|a| (a.index, a.patch.as_slice()))
+        .collect();
+    print_table(baseline, &rows, &patches, &paths.out);
     let passed = rows.iter().filter(|r| r.verdict.passed()).count();
 
     audit_wave(cfg, &paths);
@@ -347,7 +355,7 @@ fn shred_credentials(jails: &[Jail]) {
 /// Nothing is lost by discarding the jail's git metadata: `git apply` refuses
 /// every patch path containing a `.git` component, so it could never have
 /// reached a patch anyway.
-fn extract(paths: &Paths, index: usize) -> usize {
+fn extract(paths: &Paths, index: usize) -> Vec<u8> {
     let repo = format!("{}/repo", paths.slot("w", index));
     // Unlock before removing (E-22): a model that runs `chmod 0500` on its own
     // `.git`, or on the repository root above it, makes a plain `rm -rf` fail —
@@ -377,7 +385,7 @@ fn extract(paths: &Paths, index: usize) -> usize {
 
     sys::write_bytes(Path::new(&format!("{}/{index}.patch", paths.out)), &patch);
     sys::write_bytes(Path::new(&paths.patch(index)), &patch);
-    patch.len()
+    patch
 }
 
 /// Extract every patch, then build the tree each surviving patch will be tested
@@ -387,12 +395,12 @@ fn stage(cfg: &Config, paths: &Paths) -> Vec<Attempt> {
     cfg.plan()
         .into_iter()
         .map(|(index, provider)| {
-            let bytes = extract(paths, index);
-            if bytes == 0 {
+            let patch = extract(paths, index);
+            if patch.is_empty() {
                 return Attempt {
                     index,
                     provider,
-                    bytes,
+                    patch,
                     staged: Staged::Skipped(Verdict::NoPatch),
                 };
             }
@@ -413,7 +421,7 @@ fn stage(cfg: &Config, paths: &Paths) -> Vec<Attempt> {
             Attempt {
                 index,
                 provider,
-                bytes,
+                patch,
                 staged,
             }
         })
@@ -468,7 +476,7 @@ fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
             Row {
                 index: a.index,
                 provider: a.provider,
-                bytes: a.bytes,
+                bytes: a.patch.len(),
                 exit: verdict::code_from_rc(&sys::read_text(Path::new(&format!("{slot}.rc")))),
                 verdict,
                 last_line: report::last_line(&log),
@@ -477,13 +485,19 @@ fn collect(paths: &Paths, attempts: &[Attempt]) -> Vec<Row> {
         .collect()
 }
 
-/// The entire user interface: rows in jail order, then a `git apply` line per
-/// passing patch. No ranking, no recommendation, no winner.
-fn print_table(baseline: Verdict, rows: &[Row], out_dir: &str) {
+/// The entire user interface: rows in jail order, the distinct-patch count, then
+/// a `git apply` line per passing patch. No ranking, no recommendation, no
+/// winner.
+fn print_table(baseline: Verdict, rows: &[Row], patches: &[(usize, &[u8])], out_dir: &str) {
     println!("\n{}", report::baseline(baseline));
     println!("{}", report::HEADER);
     for entry in rows {
         println!("{}", report::row(entry));
+    }
+    // C-31: whether the run's N attempts were N attempts. Absent below two
+    // non-empty patches, where there is nothing to compare.
+    if let Some(line) = report::distinct_patches(patches) {
+        println!("\n{line}");
     }
     println!();
     for line in report::apply_lines(rows, out_dir) {
@@ -578,7 +592,7 @@ mod tests {
             out: format!("{dir_s}/out"),
         };
         fs::create_dir_all(&paths.out).expect("out");
-        let bytes = extract(&paths, 0);
+        let bytes = extract(&paths, 0).len();
         (paths, bytes)
     }
 
@@ -1015,7 +1029,7 @@ mod tests {
             &[Attempt {
                 index: 0,
                 provider: Provider::Claude,
-                bytes: 12,
+                patch: b"a patch\n".to_vec(),
                 staged: Staged::Ready(format!("{dir_s}/v0")),
             }],
         );
@@ -1054,7 +1068,7 @@ mod tests {
             &[Attempt {
                 index: 0,
                 provider: Provider::Codex,
-                bytes: 0,
+                patch: Vec::new(),
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
         );
@@ -1097,7 +1111,7 @@ mod tests {
         fs::write(format!("{slot_repo}/cached.pyc"), "rebuilt\n").expect("rebuild");
 
         assert!(
-            extract(&paths, 0) > 0,
+            !extract(&paths, 0).is_empty(),
             "the model's edit must reach a patch"
         );
 

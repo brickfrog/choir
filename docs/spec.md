@@ -133,6 +133,20 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   trees. Immediately above the results table Choir prints `BASELINE TESTS`
   followed by that jail's existing verdict label. The baseline neither gates nor
   changes any patch jail or result.
+- **C-31** Below the table rows Choir prints one line stating how many of the
+  run's patches are byte-distinct, naming any jail whose patch is byte-identical
+  to a lower-numbered jail's. The comparison is over the patch bytes themselves —
+  no hash and no dependency: `n` is small, so a direct comparison is total,
+  exact, and has no collision story to reason about. Zero-byte patches are not
+  attempts and are neither counted nor named; the table's `0 B` already reports
+  them, and calling two of them identical would be noise. The line is printed
+  only when more than one non-empty patch exists, because with fewer there is
+  nothing to compare. Choir's premise is that `n` independent attempts are worth
+  paying for, and nothing else in the output says whether they were: two
+  byte-identical patches mean `n` bought one attempt repeated, and the next run
+  of that kind of task should use a smaller `n`. Like the byte count it is a
+  fact — it ranks nothing, sorts nothing, reorders nothing, skips no jail, and no
+  patch's bytes or verdict depend on it.
 
 ---
 
