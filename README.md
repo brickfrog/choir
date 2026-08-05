@@ -90,9 +90,9 @@ it started, and the patch it extracted, never from what the provider printed.
 ## Development
 
 ```sh
-cargo test --workspace                                  # 108 tests
+cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo kani -p choir-core                                # 3 proofs
+cargo kani -p choir-core
 ```
 
 `docs/spec.md` is the contract; `docs/architecture.md` covers the jail and its boundary.
