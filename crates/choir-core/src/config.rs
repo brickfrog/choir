@@ -292,6 +292,25 @@ pub enum Invocation {
     Run(Box<Config>),
 }
 
+/// Whether a path cannot be single-quoted into a mount spec (E-23, E-28).
+///
+/// `'` closes the quotes [`crate::jail::prefix`] wraps a `--cache` path in, so
+/// everything after it is shell the wave script runs on the host as the user;
+/// `:` is nsjail's own `-R src:dst` separator, so it moves the mount
+/// destination. Neither can be escaped inside a single-quoted string, which is
+/// why both are refused rather than rewritten.
+///
+/// One predicate, two callers, because a `--cache` path is decided twice on two
+/// different strings: [`parse`] rejects the raw argument, and the host asks
+/// again about the path `readlink -f` resolved it to — the string that actually
+/// reaches the script. A link named innocently can resolve to
+/// `a'; touch /tmp/CACHE_CANARY; #`; checking only what the user typed checks a
+/// string no jail ever sees.
+#[must_use]
+pub fn unquotable(path: &str) -> bool {
+    path.contains('\'') || path.contains(':')
+}
+
 /// Parse an argument vector (C-1 … C-8).
 ///
 /// Total: every input yields `Ok` or `Err`, never a panic (P-6).
@@ -325,7 +344,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
             "--cache" => {
                 let path = value(&mut rest, "--cache")?;
                 // Refused, not escaped (E-23); every other byte survives.
-                if path.contains('\'') || path.contains(':') {
+                if unquotable(&path) {
                     return Err(ParseError::UnsafePath(path));
                 }
                 cfg.cache.push(path);

@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use choir_core::config::{Config, Provider};
+use choir_core::config::{unquotable, Config, Provider};
 use choir_core::report::{self, Row};
 use choir_core::verdict::{self, Verdict};
 use choir_core::{jail, wave, Jail, AUDIT_PROMPT};
@@ -39,12 +39,17 @@ struct Attempt {
     staged: Staged,
 }
 
-/// Scratch paths for one run.
+/// The paths one run works from, each already resolved.
 struct Paths {
     /// The `mktemp -d`, deleted before we return.
     dir: String,
     /// Absolute `--out`, the only thing that survives.
     out: String,
+    /// The `--cache` mounts, as resolved and checked by [`resolve_cache`].
+    ///
+    /// Held here rather than read back off `cfg.cache`, because the string a
+    /// jail mounts has to be the same string that was checked (E-28).
+    cache: Vec<String>,
 }
 
 impl Paths {
@@ -64,8 +69,13 @@ impl Paths {
 /// Run the whole program. Returns the process exit status (0 if any patch passed).
 pub fn execute(cfg: &Config) -> i32 {
     let Some(paths) = prepare(cfg) else {
-        eprintln!("choir: cannot create a scratch directory (is $TMPDIR writable?)");
         return 1;
+    };
+    // From here on the cache is the resolved list: what `prepare` checked is
+    // what `jail::prefix` quotes into the wave script, byte for byte (E-28).
+    let cfg = &Config {
+        cache: paths.cache.clone(),
+        ..cfg.clone()
     };
 
     println!("run {}", paths.dir);
@@ -92,19 +102,36 @@ pub fn execute(cfg: &Config) -> i32 {
 /// Build the scratch tree: one repo copy every jail is cloned from, the shared
 /// patches directory, the output directory, and the resolv.conf pasta needs.
 ///
-/// Returns `None` when the OS refused a scratch directory (E-16). `mktemp -d`
-/// prints nothing on failure, and an empty run directory would silently retarget
-/// every path in the program at the filesystem root — copying the repository to
-/// `/repo` and the OAuth credential to `/w0/cred/`, with a cleanup of `rm -rf ''`
-/// that exits 0 having removed nothing. That is not a policy gate on the user's
-/// work; it is Choir noticing the OS refused it a workspace.
+/// Returns `None`, having said why on stderr, in the two cases where Choir was
+/// handed something it cannot run safely — both settled before any jail starts
+/// and before anything is written.
+///
+/// `mktemp -d` failing (E-16) prints nothing itself, and an empty run directory
+/// would silently retarget every path in the program at the filesystem root —
+/// copying the repository to `/repo` and the OAuth credential to `/w0/cred/`,
+/// with a cleanup of `rm -rf ''` that exits 0 having removed nothing. A
+/// `--cache` path that resolves to one no jail can mount (E-24, E-28) is the
+/// same shape. Neither is a policy gate on the user's work: one is the OS
+/// refusing Choir a workspace, the other is an argument that cannot become a
+/// mount.
 fn prepare(cfg: &Config) -> Option<Paths> {
+    // Before `mktemp -d`, so a refusal leaves nothing at all behind.
+    let cache = resolve_cache(&cfg.cache)?;
+
     let dir = sys::make_run_dir();
     if dir.is_empty() {
+        eprintln!("choir: cannot create a scratch directory (is $TMPDIR writable?)");
         return None;
     }
 
-    sys::copy_tree(&cfg.repo, &format!("{dir}/repo"));
+    // `--repo` is resolved before it is copied (E-29). `cp -a` copies a symlink
+    // as a symlink, so a symlinked `--repo` left `<run>/repo` pointing at the
+    // user's own checkout: every host `git` ran there — `commit_base` wrote a
+    // real commit into their history — and every jail's read-write bind mount
+    // resolved there too, which is the sandbox itself gone. The same
+    // `sys::absolute` the exclusion below already needed.
+    let repo = sys::absolute(&cfg.repo);
+    sys::copy_tree(&repo, &format!("{dir}/repo"));
     detach_gitfile(&dir);
     strip_host_config(&dir);
     sys::mkdir_all(Path::new(&format!("{dir}/patches")));
@@ -118,10 +145,42 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     );
 
     let out = sys::absolute(&cfg.out);
-    exclude_out_from_base(&dir, &sys::absolute(&cfg.repo), &out, cfg.n);
+    exclude_out_from_base(&dir, &repo, &out, cfg.n);
     commit_base(&dir);
 
-    Some(Paths { dir, out })
+    Some(Paths { dir, out, cache })
+}
+
+/// Resolve every `--cache` path once, and decide about the resolved string
+/// (E-24, E-28).
+///
+/// nsjail wants an absolute path and reports only "Failed to build mount tree",
+/// naming neither the flag nor the path, once per jail — so a path that is
+/// relative or absent is answered here instead.
+///
+/// The resolution is the defect E-28 is about. `readlink -f` follows symlinks,
+/// and the path it lands on is the one `jail::prefix` single-quotes into the
+/// wave script, so the parse-time check (E-23) was asking about a string no jail
+/// ever sees: a link named `innocent` resolving to `a'; touch CANARY; #` closes
+/// that quote and runs on the host as the user. Reproduced; the canary was
+/// created. So the same [`unquotable`] the parser uses is asked again here, and
+/// the answer covers the exact string the caller goes on to mount — resolved
+/// once, checked once, mounted once.
+fn resolve_cache(given: &[String]) -> Option<Vec<String>> {
+    let mut resolved = Vec::with_capacity(given.len());
+    for raw in given {
+        let path = sys::absolute(raw);
+        if !Path::new(&path).exists() {
+            eprintln!("choir: --cache path does not exist: {path}");
+            return None;
+        }
+        if unquotable(&path) {
+            eprintln!("choir: --cache {raw} resolves to {path}, which may not contain ' or :");
+            return None;
+        }
+        resolved.push(path);
+    }
+    Some(resolved)
 }
 
 /// Make the tree the jails actually received the baseline every patch diffs
@@ -162,22 +221,27 @@ fn commit_base(dir: &str) {
     ]);
 }
 
-/// Make the base copy a standalone repository when `--repo` is a git worktree
-/// or a submodule (E-21).
+/// Make the base copy a standalone repository whenever its `.git` is anything
+/// other than a real directory (E-21, E-29).
 ///
-/// `cp -a` copies such a `.git` verbatim, and it is a *file* reading
-/// `gitdir: /absolute/path/into/the/user's/real/repository`. Host-side
-/// extraction follows it straight back out of the scratch tree: measured,
-/// `git add -A` in a jail's copy staged the model's changes into the user's own
-/// index and left their worktree reading `MM a.txt`, with N jails racing on that
-/// one index. Re-initialising is enough because Choir never needs the user's
-/// history — it only ever diffs against the tree the jail started from.
+/// Two ways it is not. A git worktree or submodule has a `.git` *file* reading
+/// `gitdir: /absolute/path/into/the/user's/real/repository`, which `cp -a`
+/// copies verbatim; host-side extraction follows it straight back out of the
+/// scratch tree, and measured, `git add -A` in a jail's copy staged the model's
+/// changes into the user's own index and left their worktree reading `MM a.txt`,
+/// with N jails racing on that one index. A `.git` *symlink* is copied as a
+/// symlink for the same reason and lands in the same place, so it goes the same
+/// way — `rm -rf` on a symlink unlinks the link, never what it points at.
+///
+/// Re-initialising is enough because Choir never needs the user's history — it
+/// only ever diffs against the tree the jail started from.
 fn detach_gitfile(dir: &str) {
     let repo = format!("{dir}/repo");
-    if !Path::new(&format!("{repo}/.git")).is_file() {
+    let git = format!("{repo}/.git");
+    if !Path::new(&git).is_symlink() && !Path::new(&git).is_file() {
         return;
     }
-    sys::remove_tree(&format!("{repo}/.git"));
+    sys::remove_tree(&git);
     let _ = sys::git(&["-C", &repo, "init", "-q"]);
     let _ = sys::git(&["-C", &repo, "add", "-A"]);
     let _ = sys::git(&[
@@ -621,6 +685,7 @@ mod tests {
         let paths = Paths {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
+            cache: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
         let bytes = extract(&paths, 0).len();
@@ -1033,6 +1098,7 @@ mod tests {
         let paths = Paths {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
+            cache: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -1076,6 +1142,7 @@ mod tests {
         let paths = Paths {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
+            cache: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -1216,6 +1283,51 @@ mod tests {
             String::from_utf8_lossy(&before),
             String::from_utf8_lossy(&after),
             "choir committed into the user's real repository"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// E-29, the other half: a repository whose `.git` is a symlink. Resolving
+    /// `--repo` does not reach this one -- `cp -a` copies the inner link as a
+    /// link, so the base copy's git directory is still the user's, and
+    /// `commit_base` writes their history from inside Choir's scratch tree.
+    #[test]
+    fn e29_a_symlinked_git_dir_is_detached() {
+        let dir = scratch("symgit");
+        let dir_s = dir.str();
+        let proj = format!("{dir_s}/proj");
+        fs::create_dir_all(&proj).expect("proj");
+        git(&proj, &["init", "-q"]);
+        git(&proj, &["config", "user.email", "t@t"]);
+        git(&proj, &["config", "user.name", "t"]);
+        fs::write(format!("{proj}/a.txt"), "original\n").expect("a.txt");
+        git(&proj, &["add", "-A"]);
+        git(&proj, &["commit", "-qm", "base"]);
+
+        // The user keeps the git directory elsewhere and links to it.
+        let store = format!("{dir_s}/store.git");
+        fs::rename(format!("{proj}/.git"), &store).expect("move git dir");
+        std::os::unix::fs::symlink(&store, format!("{proj}/.git")).expect("symlink");
+        let (_, before) = sys::git(&["-C", &proj, "rev-parse", "HEAD"]);
+
+        let cfg = Config {
+            repo: proj.clone(),
+            out: format!("{dir_s}/out"),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+
+        let base_git = format!("{}/repo/.git", paths.dir);
+        assert!(
+            !Path::new(&base_git).is_symlink() && Path::new(&base_git).is_dir(),
+            "the base copy must own a real git directory"
+        );
+        let (_, after) = sys::git(&["-C", &proj, "rev-parse", "HEAD"]);
+        assert_eq!(
+            String::from_utf8_lossy(&before),
+            String::from_utf8_lossy(&after),
+            "choir committed into the user's real git directory"
         );
         sys::remove_tree(&paths.dir);
     }
