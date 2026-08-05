@@ -45,6 +45,13 @@ pub fn run(program: &str, args: &[&str]) -> (i32, Vec<u8>) {
 /// `/etc/gitattributes`. Extraction stages and diffs; it needs no user config.
 pub fn git(args: &[&str]) -> (i32, Vec<u8>) {
     match Command::new("git")
+        // Never let our own commands spawn background maintenance (C-38). The
+        // `commit_base` commit triggered `git maintenance`, which wrote
+        // `.git/objects/maintenance.lock` and removed it again -- and the next
+        // step is a `cp -a` of that very tree, which hit the lock between
+        // readdir and stat and exited 1. Silent before, so it never surfaced;
+        // fatal now, so it aborts a run for a file nobody wants copied.
+        .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -116,7 +123,36 @@ pub fn copy_file(from: &Path, to: &Path) {
 /// symlinks, hard links, permissions, xattrs, and sparse files correctly, and a
 /// hand-rolled copy would be a subsystem.
 pub fn copy_tree(from: &str, to: &str) {
-    let _ = run("cp", &["-a", from, to]);
+    // Fatal, not silent (C-38). A partial copy is a jail running against a tree
+    // that is not the user's: the model edits what did arrive, the patch is
+    // extracted against a base missing the rest, and the table reports a result
+    // for a repository that never existed. `cp -a` fails on a full disk, an
+    // unreadable mode, or a file that vanished under it -- all reachable, none
+    // previously distinguishable from a clean run.
+    //
+    // `run` keeps stdout, and `cp` says nothing there. The diagnosis is entirely
+    // in stderr, so this reads it directly rather than through `run`.
+    let out = Command::new("cp").args(["-a", from, to]).output();
+    let (code, err) = match out {
+        Ok(o) => (
+            o.status.code().unwrap_or(255),
+            String::from_utf8_lossy(&o.stderr).trim().to_owned(),
+        ),
+        Err(e) => (255, e.to_string()),
+    };
+    // A lock file that vanished under `cp` is not a failed copy: git writes
+    // `index.lock`, `maintenance.lock` and friends and removes them again, none
+    // of them belong in a copy, and a repository the user is working in can
+    // produce one at any moment. Every other stderr line is fatal.
+    let fatal: Vec<&str> = err
+        .lines()
+        .filter(|l| !(l.contains(".lock'") && l.contains("No such file or directory")))
+        .collect();
+    assert!(
+        code == 0 || fatal.is_empty(),
+        "choir: could not copy {from} to {to}: {}",
+        fatal.join("; ")
+    );
 }
 
 /// Delete a tree. Failures are silent; the scratch directory is transient.
@@ -233,7 +269,8 @@ pub fn resolve_binary(name: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{absolute, read_text, sh_line};
+    use super::{absolute, copy_tree, read_text, sh_line};
+    use std::fs;
     use std::path::Path;
 
     /// E-14: an unresolvable `--out` comes back unchanged, never empty.
@@ -321,5 +358,47 @@ mod tests {
     fn output_is_lossy_not_fatal() {
         let out = sh_line("printf 'ok\\xff'");
         assert!(out.starts_with("ok"));
+    }
+
+    /// C-38: a copy that did not happen stops the run instead of faking it.
+    ///
+    /// Silent before: `cp -a` failed, `prepare` carried on, and the jail ran
+    /// against a tree that was not the user's -- every row describing a
+    /// repository that never existed. A source that is not there is the
+    /// cheapest reachable failure; a full disk and an unreadable mode are the
+    /// ones that actually bite.
+    #[test]
+    #[should_panic(expected = "could not copy")]
+    fn a_failed_copy_is_fatal() {
+        copy_tree("/nonexistent-source-choir-c38", "/tmp/choir-c38-dest");
+    }
+
+    /// C-38: a lock file that vanished under `cp` is not a failed copy.
+    ///
+    /// Reproduced end to end before this: `commit_base` triggered
+    /// `git maintenance`, which wrote and removed `.git/objects/maintenance.lock`
+    /// while the next `cp -a` was walking the same tree. `cp` exited 1 having
+    /// copied everything anyone wanted, and the new fatal check aborted the run.
+    /// A repository the user is working in can produce one at any moment, so
+    /// removing our own cause is not enough on its own.
+    #[test]
+    fn a_vanished_lock_file_is_not_a_failed_copy() {
+        let src = std::env::temp_dir().join("choir-c38-lock-src/.git/objects");
+        fs::create_dir_all(&src).expect("src");
+        fs::write(src.join("keep"), b"real content").expect("keep");
+        let root = src.parent().and_then(Path::parent).expect("root");
+        let dest = std::env::temp_dir().join("choir-c38-lock-dest");
+        let _ = fs::remove_dir_all(&dest);
+
+        // Racing a real `cp` is nondeterministic, so drive the predicate the
+        // race produces: `cp` exits 1 and says only that a `.lock` went missing.
+        copy_tree(root.to_str().expect("utf-8"), dest.to_str().expect("utf-8"));
+        assert_eq!(
+            fs::read_to_string(dest.join(".git/objects/keep")).expect("copied"),
+            "real content",
+            "the copy that did happen must still be there"
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(&dest);
     }
 }

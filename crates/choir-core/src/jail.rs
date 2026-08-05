@@ -36,17 +36,56 @@ impl Jail {
     }
 }
 
+/// Files a dependency cache is known to keep credentials in (C-38).
+///
+/// A `--cache` path is mounted read-only at its own host path, so anything
+/// beside the dependencies is readable by an untrusted patch. `cargo login`
+/// writes `credentials.toml` into the same `~/.cargo` that holds the registry
+/// people actually want cached, so the useful mount and the secret are the same
+/// directory. Each of these is masked with `/dev/null` when it exists, which
+/// leaves the cache readable and the token empty.
+pub const CREDENTIAL_FILES: [&str; 6] = [
+    "credentials",
+    "credentials.toml",
+    ".npmrc",
+    ".git-credentials",
+    ".netrc",
+    "config.json",
+];
+
+/// Every path inside `cache` that would leak a credential if it existed (C-38).
+///
+/// Total over any path: the caller checks which of these are really there,
+/// because a bind mount onto a path that does not exist aborts the jail.
+#[must_use]
+pub fn credential_masks(cache: &str) -> Vec<String> {
+    let base = cache.strip_suffix('/').unwrap_or(cache);
+    CREDENTIAL_FILES
+        .iter()
+        .map(|name| format!("{base}/{name}"))
+        .collect()
+}
+
 /// The prefix every jail shares (C-11).
 ///
-/// `--disable_rlimits` is not a preference: nsjail defaults to a 1 MB file-size
-/// cap, which truncates a git index write and produces an empty patch with no
-/// distinguishable signal. `/dev/urandom` is required or Claude Code dies with a
-/// bare SIGSEGV. `-R /etc/passwd -R /etc/group` are required or nothing in the
-/// jail can name uid 1000.
+/// The limits are bounded rather than disabled (C-38). `--disable_rlimits` was
+/// a blunt answer to one real default: nsjail caps file size at 1 MB, which
+/// truncates a git index write and produces an empty patch with no
+/// distinguishable signal. Turning every limit off to fix that also handed an
+/// untrusted patch an unbounded fork bomb, an unbounded allocation and an
+/// unbounded write. Measured on this host: with the limits below, a 9 GB
+/// `truncate` fails with `File too large` and a 10 GB allocation raises
+/// `MemoryError`, while `cargo test --workspace` builds and runs unchanged.
+///
+/// `/dev/urandom` is required or Claude Code dies with a bare SIGSEGV.
+/// `-R /etc/passwd -R /etc/group` are required or nothing in the jail can name
+/// uid 1000.
 #[must_use]
 pub fn prefix(cfg: &Config, slot: &str) -> String {
     let mut s = format!(
-        "nsjail -Mo -q -t {} --disable_rlimits \
+        "nsjail -Mo -q -t {} \
+         --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
+         --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
          -R {slot}/cmd:/cmd -B {slot}/tmp:/tmp -D /repo \
@@ -58,6 +97,10 @@ pub fn prefix(cfg: &Config, slot: &str) -> String {
     // so single-quoting into the wave script is total.
     for path in &cfg.cache {
         let _ = write!(s, " -R '{path}':'{path}'");
+    }
+    // After the cache, so the mask lands on top of the mount it hides (C-38).
+    for path in &cfg.cache_masks {
+        let _ = write!(s, " -R /dev/null:'{path}'");
     }
     s
 }

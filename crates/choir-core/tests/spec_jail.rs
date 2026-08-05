@@ -16,12 +16,58 @@ fn c11_shared_prefix() {
     let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1");
     assert_eq!(
         p,
-        "nsjail -Mo -q -t 9 --disable_rlimits \
+        "nsjail -Mo -q -t 9 \
+         --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
+         --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
          -R /r/w1/cmd:/cmd -B /r/w1/tmp:/tmp -D /repo \
          -E PATH=/usr/local/bin:/usr/bin -E HOME=/tmp"
     );
+}
+
+/// C-38: the limits are bounded, and the file-size cap clears nsjail's 1 MB.
+///
+/// `--disable_rlimits` is what this replaces. It was reached for because
+/// nsjail's 1 MB `fsize` default truncates a git index write into an empty
+/// patch, and it took every other bound down with it.
+#[test]
+fn c38_resources_are_bounded_not_disabled() {
+    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1");
+    assert!(!p.contains("--disable_rlimits"), "{p}");
+    for limit in [
+        "--rlimit_as",
+        "--rlimit_fsize",
+        "--rlimit_nofile",
+        "--rlimit_nproc",
+        "--rlimit_stack",
+    ] {
+        assert!(p.contains(limit), "{limit} missing from {p}");
+    }
+    // The default that forced the blunt fix, cleared by three orders.
+    assert!(p.contains("--rlimit_fsize 8192"), "{p}");
+}
+
+/// C-38: a credential beside a cached dependency is masked, not mounted.
+#[test]
+fn c38_credentials_in_a_cache_are_masked() {
+    let names = jail::credential_masks("/home/u/.cargo");
+    assert!(names.contains(&"/home/u/.cargo/credentials.toml".to_owned()));
+    assert!(names.contains(&"/home/u/.cargo/credentials".to_owned()));
+    // A trailing slash is the same cache, not a different one.
+    assert_eq!(jail::credential_masks("/home/u/.cargo/"), names);
+
+    let mut cfg = jail_cfg(9, &["/home/u/.cargo"]);
+    cfg.cache_masks = vec!["/home/u/.cargo/credentials.toml".to_owned()];
+    let p = jail::prefix(&cfg, "/r/w1");
+    // The cache is still readable, and the mask lands after it so it wins.
+    let mount = p
+        .find("-R '/home/u/.cargo':'/home/u/.cargo'")
+        .expect("cache");
+    let mask = p
+        .find("-R /dev/null:'/home/u/.cargo/credentials.toml'")
+        .expect("mask");
+    assert!(mount < mask, "mask must follow the mount it hides: {p}");
 }
 
 /// C-12: a provider jail adds pasta, the networking mounts, /prov, /cred, /patches.

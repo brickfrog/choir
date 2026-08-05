@@ -154,7 +154,9 @@ with each one.*
 Every jail shares this prefix. It is one literal in the source and none of it is a flag:
 
 ```
-nsjail -Mo -q -t <timeout> --disable_rlimits
+nsjail -Mo -q -t <timeout>
+  --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096
+  --rlimit_nproc 2048 --rlimit_stack 64
   -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group
   -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random
   -R <slot>/cmd:/cmd -B <slot>/tmp:/tmp -D /repo
@@ -196,10 +198,14 @@ tmpfs root auto-creates every destination, including nested ones. `--symlink` fa
 for any top-level destination and buys nothing.
 
 **Four things in the flag literal that are not flags, because their defaults destroy work
-silently.** `--disable_rlimits`: nsjail defaults to 32 open files, a 1 MB file-size cap, 4 GB
-of address space and 600 s of CPU, so a 3 MB write is truncated to exactly 1048576 bytes and
+silently.** The rlimits: nsjail defaults to 32 open files, a 1 MB file-size cap, 4 GB of
+address space and 600 s of CPU, so a 3 MB write is truncated to exactly 1048576 bytes and
 git reports `index.lock write error: File too large` — v2's death (paid time burned, empty
-patch, no distinguishable signal) reproduced by a default. A bind-mounted `/tmp`: `-T /tmp`
+patch, no distinguishable signal) reproduced by a default. The answer was
+`--disable_rlimits`, which fixed that one default by removing every bound, including the
+ones holding back a fork bomb and an unbounded write. They are now raised, not removed
+(C-38): measured under the current values, `truncate -s 9G` fails with `File too large`,
+a 10 GB allocation raises `MemoryError`, and `cargo test --workspace` builds unchanged. A bind-mounted `/tmp`: `-T /tmp`
 gives a 4 MB tmpfs that reported success on a 200 MB `dd` and kept 4 MB.
 `-R /etc/passwd -R /etc/group`: without them nothing can name uid 1000, so `whoami` fails and
 `getpass.getuser()` raises *No username set in the environment*. `/dev/urandom`: without it

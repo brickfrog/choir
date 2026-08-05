@@ -183,6 +183,10 @@ pub struct Config {
     pub out: String,
     /// Read-only host paths mounted into every jail, at their own path (C-27).
     pub cache: Vec<String>,
+    /// Paths inside `cache` masked with `/dev/null` because they hold a
+    /// credential (C-38). Filled by `prepare`, which is the one place allowed
+    /// to ask the filesystem which of them exist.
+    pub cache_masks: Vec<String>,
     /// Extra `.git/info/exclude` globs for the scratch copy, so artifacts a
     /// jail's own test run creates stay out of its patch (C-34).
     pub ignore: Vec<String>,
@@ -202,6 +206,7 @@ impl Default for Config {
             timeout: 1200,
             out: "./choir-out".to_owned(),
             cache: Vec::new(),
+            cache_masks: Vec::new(),
             ignore: Vec::new(),
             red: false,
         }

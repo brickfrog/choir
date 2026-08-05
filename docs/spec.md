@@ -87,7 +87,7 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 ### Jail command lines (`choir_core::jail`)
 
 - **C-11** Every jail shares one prefix carrying the timeout, the slot path,
-  `--disable_rlimits`, the read-only `/usr`, `/lib64`, `/bin`, the four `/dev`
+  the bounded rlimits (C-38), the read-only `/usr`, `/lib64`, `/bin`, the four `/dev`
   nodes, `/etc/passwd`, `/etc/group`, `/cmd`, a bind-mounted `/tmp`, `-D /repo`,
   and a fixed `PATH`/`HOME`.
 - **C-12** A provider jail adds exactly: `--use_pasta`, four networking `/etc`
@@ -247,6 +247,31 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   Choir holds no fact about either. Nothing here gates: every jail still runs,
   every patch is still written and offered, and no verdict changes except a
   `FAIL` that was the deadline all along.
+
+- **C-38** A jail's resources are bounded, not disabled: `--rlimit_as 8192`,
+  `--rlimit_fsize 8192`, `--rlimit_nofile 4096`, `--rlimit_nproc 2048`,
+  `--rlimit_stack 64`. `--disable_rlimits` was reached for because nsjail caps
+  file size at 1 MB by default, which truncates a git index write and yields an
+  empty patch with no distinguishable signal; it took every other bound down
+  with it, so an untrusted patch had an unbounded fork bomb, allocation and
+  write. Measured under these limits: `truncate -s 9G` fails with `File too
+  large`, a 10 GB allocation raises `MemoryError`, and `cargo test --workspace`
+  builds and runs unchanged. A `--cache` path is mounted read-only at its own
+  host path, so every file beside the dependencies is readable too; each name in
+  `jail::CREDENTIAL_FILES` that exists inside a cache is bind-mounted from
+  `/dev/null` after the cache mount, which leaves the dependencies readable and
+  the credential empty. `cargo login` writes `credentials.toml` into the same
+  `~/.cargo` that holds the registry, so the useful mount and the secret are one
+  directory. `copy_tree` failure is fatal rather than silent: a partial copy is
+  a jail running against a tree that is not the user's, and every row it
+  produces describes a repository that never existed. One exception, found by
+  making it fatal: a `.lock` that vanished under `cp` is not a failed copy. Our
+  own `commit_base` commit spawned `git maintenance`, which wrote and removed
+  `.git/objects/maintenance.lock` while the following `cp -a` walked the same
+  tree, so `cp` exited 1 having copied everything anyone wanted. Choir's git
+  calls now carry `-c gc.auto=0 -c maintenance.auto=false`, which removes the
+  cause it creates, and a stderr naming only vanished `.lock` files is tolerated,
+  because a repository the user is working in can produce one at any moment.
 
 ---
 

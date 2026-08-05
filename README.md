@@ -29,7 +29,7 @@ choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 | `--providers <list>` | `claude,codex` | |
 | `--timeout <secs>` | `1200` | Per jail, enforced by the kernel. |
 | `--out <dir>` | `./choir-out` | `<index>.patch` beside `<index>.log`. |
-| `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. |
+| `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. Credential files inside it (`credentials.toml`, `.npmrc`, `.netrc`, …) are masked with `/dev/null`. |
 | `--ignore <glob>` | none | Repeatable. Excluded inside every jail copy — keeps artifacts a test run makes out of the patch. |
 | `--red` | off | TDD mode: an extra wave writes tests only, and they must FAIL on the unpatched tree before implementation runs. Every file that wave wrote must then come back byte-identical, or the row reads `RED TAMPERED` and is no pass. That stops a jail editing or deleting its own approved tests; it does not stop a *new* file — a `conftest.py`, a config exclusion — from neutering them. Costs `2n+1` calls. |
 

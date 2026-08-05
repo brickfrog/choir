@@ -51,6 +51,9 @@ struct Paths {
     /// Held here rather than read back off `cfg.cache`, because the string a
     /// jail mounts has to be the same string that was checked (E-28).
     cache: Vec<String>,
+    /// Credential files really present inside `cache`, to mask (C-38). Read
+    /// here because `prepare` is the one place that asks the filesystem.
+    cache_masks: Vec<String>,
 }
 
 impl Paths {
@@ -76,6 +79,7 @@ pub fn execute(cfg: &Config) -> i32 {
     // what `jail::prefix` quotes into the wave script, byte for byte (E-28).
     let cfg = &Config {
         cache: paths.cache.clone(),
+        cache_masks: paths.cache_masks.clone(),
         ..cfg.clone()
     };
 
@@ -163,7 +167,20 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     exclude_user_globs(&dir, &cfg.ignore);
     commit_base(&dir);
 
-    Some(Paths { dir, out, cache })
+    // A bind mount onto a path that is not there aborts the jail, so only the
+    // masks that exist are emitted (C-38).
+    let cache_masks = cache
+        .iter()
+        .flat_map(|c| jail::credential_masks(c))
+        .filter(|p| Path::new(p).exists())
+        .collect();
+
+    Some(Paths {
+        dir,
+        out,
+        cache,
+        cache_masks,
+    })
 }
 
 /// Resolve every `--cache` path once, and decide about the resolved string
@@ -979,6 +996,7 @@ mod tests {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
+            cache_masks: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
         let bytes = extract(&paths, 0).len();
@@ -1435,6 +1453,7 @@ mod tests {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
+            cache_masks: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -1491,6 +1510,7 @@ mod tests {
             dir: dir_s.clone(),
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
+            cache_masks: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
