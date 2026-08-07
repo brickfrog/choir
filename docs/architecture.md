@@ -312,12 +312,22 @@ Rejected: a startup sweep, an exit trap, a `--cleanup` subcommand, a PID file. E
 reconciler for state Choir does not have.
 
 What Choir *does* leave behind on that path is its own scratch directory, because
-`remove_tree` is the last line of `execute`. Each wave now unlinks its jails' credential
-copies as soon as it returns, so the exposure is bounded to the jails that were in flight.
-Bounded in count, not in time: those copies persist until the user removes the directory,
-and a full-account OAuth token is what they hold. Choir prints the run directory on its
-first line so there is always something to `rm -rf`. An exit trap is still the wrong fix --
-it cannot run when the process is killed with SIGKILL, which is the case that matters.
+`remove_tree` is the last line of `execute`. It no longer leaves a credential in it.
+
+The wave script owns every credential copy in its wave (C-40): `sweep` unlocks and removes
+each `<slot>/cred`, armed for `EXIT` and for `INT TERM HUP`. This reverses an earlier
+rejection recorded here, and the earlier reasoning was wrong in a specific way -- it argued
+an exit trap "cannot run when the process is killed with SIGKILL, which is the case that
+matters." The trap is not in Choir; it is in the wave's own shell. That shell outlives a
+`kill` aimed at Choir and sweeps when the wave drains, and it dies with Choir under a
+terminal Ctrl-C, where its signal trap fires. Neither is SIGKILL, and Ctrl-C is the case
+that actually happens: measured before the change, a real Ctrl-C through a PTY killed both
+jails and left two full-account OAuth tokens in the scratch tree. Naming the one
+uncoverable signal was not a reason to cover none of the others.
+
+What remains uncovered is SIGKILL to the wave shell itself, which no trap can reach, and
+the scratch directory's repository copies and logs -- data, not credentials. Choir prints
+the run directory on its first line so there is always something to `rm -rf`.
 
 ## Limits of the isolation boundary
 

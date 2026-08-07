@@ -508,3 +508,20 @@ fn c39_banner_names_every_wave_it_will_pay_for() {
     assert!(loud.banner().starts_with("red jails: 0=codex 1=codex;"));
     assert!(loud.banner().contains("work jails: 0=claude 1=claude"));
 }
+
+/// C-42: the audit asks for four fixed sections, so its output is skimmable
+/// rather than an essay, and it is still one string with no interpolation.
+#[test]
+fn c42_audit_prompt_is_four_fixed_sections() {
+    let p = choir_core::AUDIT_PROMPT;
+    for section in ["AGREEMENT:", "DIVERGENCE:", "UNDERSPECIFIED:", "SUSPECT:"] {
+        assert!(
+            p.lines().any(|l| l.starts_with(section)),
+            "{section} is not at the start of a line: {p}"
+        );
+    }
+    // No interpolation: the prompt is the same every run, for every user.
+    assert!(!p.contains('{') && !p.contains('}'));
+    // The hole the red lock cannot close, named where a reader will see it.
+    assert!(p.contains("test-runner config file"));
+}

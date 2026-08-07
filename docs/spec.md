@@ -248,6 +248,44 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   every patch is still written and offered, and no verdict changes except a
   `FAIL` that was the deadline all along.
 
+- **C-42** The audit asks for four fixed sections - `AGREEMENT`, `DIVERGENCE`,
+  `UNDERSPECIFIED`, `SUSPECT` - and not for an essay. It was one open sentence,
+  "say what is wrong with each one", which returns unbounded prose; prose nobody
+  is required to read is prose nobody reads, demonstrated on this repository when
+  an audit wave found three real defects in a patch that had already been merged
+  without reading it. The sections are the questions only this wave can answer:
+  Choir compares patches byte-wise, so it cannot see that two different diffs do
+  the same thing, nor that a third quietly made its own tests easier. `SUSPECT`
+  names the one hole `preserves_red` cannot close - that function has no notion
+  of what a test is, by design (C-33), so a patch that leaves every approved test
+  byte-identical and adds a `conftest.py` beside them passes the lock. Closing
+  that mechanically would mean a list of every test runner's implicit
+  configuration file, per language, forever incomplete, and a fifth condition
+  that skips a jail. It stays commentary and gates nothing.
+- **C-41** The deadline explains only a jail the deadline could have killed: one
+  that died by signal, which a shell reports as `128 + signum`, and nsjail's own
+  `-t` kill writes `137` - measured. `from_run` previously replaced any non-zero
+  verdict past the budget, so a suite that failed on its own near the end of its
+  time was reported `TIMEOUT` and its exit code was lost. C-18 says the verify
+  verdict is the test command's exit status and nothing else, and `elapsed` is
+  measured from before the jail started, so the startup skew alone could push a
+  genuine `FAIL(1)` over the line. An unreadable `.rc` is E-13's `Fail(255)`,
+  which clears the same bar: past the deadline with nothing written, the kill is
+  the explanation. The three call sites that made this choice are one function,
+  `timed_verdict`, because the choice was invisible to every test while it lived
+  inside jail-spawning routines - the red gate mutated back to a bare exit code
+  passed the entire suite.
+- **C-40** The wave script owns the lifetime of every credential copy in the
+  wave. `sweep` unlocks with `chmod -R u+rwX` and removes each `<slot>/cred`,
+  armed for both `EXIT` and `INT TERM HUP`, because a shell killed by a signal
+  never runs its `EXIT` trap. Shredding from the caller only ran when the caller
+  lived to return: measured, a real Ctrl-C killed the jails and left one
+  full-account OAuth token per jail in the scratch tree, and a `kill` aimed at
+  Choir alone left the wave running with the tokens still mounted. The script is
+  the only place that covers both, because it outlives Choir in the second case
+  and dies with it in the first. The unlock precedes the removal for the reason
+  E-22 gives: a jail owns its slot and can `chmod 0500` the directory holding its
+  own token.
 - **C-39** Each model-bearing wave takes its providers from `--role <wave>=<list>`,
   and from the `--providers` rotation when unset. The waves that can be named are
   `red`, `work` and `audit`; `verify` cannot, because it runs no model, and the

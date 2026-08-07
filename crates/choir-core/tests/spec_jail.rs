@@ -149,7 +149,8 @@ fn c15_commands_travel_as_files() {
     assert!(jail::verify(&jail_cfg(5, &[]), "/s").ends_with("/usr/bin/sh /cmd"));
 }
 
-/// C-16, C-17: the wave backgrounds each jail in a subshell, then waits.
+/// C-16, C-17, C-40: the wave arms the credential sweep, backgrounds each jail
+/// in a subshell, then waits.
 #[test]
 fn c16_wave_script() {
     let jails = vec![
@@ -158,7 +159,11 @@ fn c16_wave_script() {
     ];
     assert_eq!(
         wave::script(&jails),
-        "( nsjail a < /dev/null > /r/w0.log 2>&1 ; echo $? > /r/w0.rc ) &\n\
+        "sweep() { chmod -R u+rwX '/r/w0/cred' '/r/w1/cred' 2>/dev/null; \
+         rm -rf '/r/w0/cred' '/r/w1/cred'; }\n\
+         trap sweep EXIT\n\
+         trap 'sweep; exit 130' INT TERM HUP\n\
+         ( nsjail a < /dev/null > /r/w0.log 2>&1 ; echo $? > /r/w0.rc ) &\n\
          ( nsjail b < /dev/null > /r/w1.log 2>&1 ; echo $? > /r/w1.rc ) &\n\
          wait"
     );
@@ -176,7 +181,7 @@ fn c16_every_jail_is_parenthesised() {
     assert_eq!(script.matches(") &").count(), 4);
 }
 
-/// P-5 by example: `k` jails yield `k + 1` lines and the last is `wait`.
+/// P-5 by example: `k` jails yield `k + 4` lines and the last is `wait`.
 #[test]
 fn p5_wave_shape() {
     for k in 0_usize..8 {
@@ -184,15 +189,21 @@ fn p5_wave_shape() {
             .map(|i| Jail::new(format!("cmd{i}"), format!("/s{i}")))
             .collect();
         let script = wave::script(&jails);
-        assert_eq!(script.lines().count(), k + 1);
+        assert_eq!(script.lines().count(), k + 4);
         assert_eq!(script.lines().next_back(), Some("wait"));
     }
 }
 
-/// An empty wave is still a valid script that does nothing.
+/// An empty wave still arms the sweep and waits for nothing (C-40).
 #[test]
 fn empty_wave_is_just_wait() {
-    assert_eq!(wave::script(&[]), "wait");
+    assert_eq!(
+        wave::script(&[]),
+        "sweep() { chmod -R u+rwX 2>/dev/null; rm -rf; }\n\
+         trap sweep EXIT\n\
+         trap 'sweep; exit 130' INT TERM HUP\n\
+         wait"
+    );
 }
 
 /// C-27: a cache path is mounted read-only, at its own path, in *both* templates.

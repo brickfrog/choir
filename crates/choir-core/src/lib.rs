@@ -20,7 +20,7 @@ mod proofs;
 
 /// The strings Choir itself sends to a model.
 ///
-/// `AUDIT_PROMPT` is one fixed sentence with no interpolation. The user's
+/// `AUDIT_PROMPT` is one fixed string with no interpolation. The user's
 /// instruction is the other string, and under the default single-wave run it
 /// passes through verbatim: there is no prompt library and no system prompt.
 ///
@@ -30,8 +30,29 @@ mod proofs;
 /// simultaneously." A red wave that merely passed the instruction through
 /// would get an implementation, and the gate would measure nothing. So the
 /// instruction is wrapped, twice, by these two fixed frames and nothing else.
+///
+/// The audit asks for four fixed sections rather than an essay (C-42). It was
+/// "say what is wrong with each one", which returns unbounded prose, and prose
+/// nobody is required to read is prose nobody reads - demonstrated on this
+/// repository, where an audit wave found three real defects in a patch that had
+/// already been merged without reading it. The sections are the questions only
+/// this wave can answer: Choir compares patches byte-wise and cannot see that
+/// two different diffs do the same thing, nor that a third quietly made its own
+/// tests easier. `SUSPECT` is aimed at the one hole the red lock cannot close -
+/// `preserves_red` has no notion of what a test is, by design, so a patch that
+/// leaves every approved test byte-identical and adds a `conftest.py` beside
+/// them passes it. Naming that stays commentary; it gates nothing.
 pub const AUDIT_PROMPT: &str =
-    "Read the repository at /repo and the patches at /patches. Say what is wrong with each one.";
+    "Read the task in /instruction, the repository at /repo, and the patches at \
+     /patches. \
+     Reply with exactly these four sections and no preamble:\n\
+     AGREEMENT: one line - what every patch does the same way.\n\
+     DIVERGENCE: one line per material difference, naming the patch numbers.\n\
+     UNDERSPECIFIED: one line - the clause of the task the divergence shows was \
+     ambiguous, or the single word: clear.\n\
+     SUSPECT: one line per patch that makes its own tests easier to satisfy - a \
+     new test-runner config file, a weakened assertion, a deleted case - or the \
+     single word: none.";
 
 /// Wave 0 under `--red`: tests only, no implementation (VSDD Phase 2a).
 #[must_use]

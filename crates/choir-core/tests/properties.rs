@@ -79,8 +79,9 @@ proptest! {
         prop_assert_eq!(v == Verdict::Pass, code == 0);
     }
 
-    /// P-5: a wave of k jails is k+1 lines, the last exactly `wait`, and every
-    /// slot appears in both its log and its rc redirect.
+    /// P-5: a wave of k jails is k+4 lines - three arming the credential sweep,
+    /// k backgrounded jails, and `wait` last - and every slot appears in its
+    /// log redirect, its rc redirect, and the sweep (C-40).
     #[test]
     fn p5_wave_shape(slots in prop::collection::vec("[a-z0-9/]{1,12}", 0..10)) {
         let jails: Vec<Jail> = slots
@@ -90,13 +91,22 @@ proptest! {
             .collect();
         let script = wave::script(&jails);
 
-        prop_assert_eq!(script.lines().count(), jails.len() + 1);
+        prop_assert_eq!(script.lines().count(), jails.len() + 4);
         prop_assert_eq!(script.lines().next_back(), Some("wait"));
+        // The sweep is armed before the first jail can write a credential, and
+        // for the interrupt as well as the return.
+        prop_assert!(script.starts_with("sweep()"));
+        prop_assert!(script.contains("\ntrap sweep EXIT\n"));
+        prop_assert!(script.contains("\ntrap 'sweep; exit 130' INT TERM HUP\n"));
         for jail in &jails {
             let log = format!("> {}.log", jail.slot);
             let rc = format!("> {}.rc", jail.slot);
+            let cred = format!(" '{}/cred'", jail.slot);
             prop_assert!(script.contains(&log));
             prop_assert!(script.contains(&rc));
+            // Once to unlock, once to remove — slots need not be distinct.
+            let same = jails.iter().filter(|j| j.slot == jail.slot).count();
+            prop_assert_eq!(script.matches(&cred).count(), 2 * same);
         }
     }
 

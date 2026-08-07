@@ -487,6 +487,19 @@ fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
     sys::resolve_binary(provider.name())
 }
 
+/// Read a jail's exit code and judge it against the wave's clock (C-37, C-41).
+///
+/// The single place a timed jail becomes a verdict. It existed inline at three
+/// call sites, and the choice of `from_run` over `from_rc` was invisible to
+/// every test: mutating the red gate back to a bare exit code passed the whole
+/// suite, because no unit test can see which function a jail-spawning routine
+/// calls. One named function with one filesystem test closes that.
+fn timed_verdict(slot: &str, started: SystemTime, timeout: u32) -> Verdict {
+    let rc = format!("{slot}.rc");
+    let elapsed = sys::elapsed_to(started, Path::new(&rc));
+    verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, timeout)
+}
+
 /// Run one wave, and return the instant it started (C-37).
 ///
 /// One clock for the whole wave, read immediately before the shell fans out:
@@ -520,7 +533,6 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
 
     println!("[red]    {} jails started", jails.len());
     run_wave(&jails);
-    shred_credentials(&jails);
 
     cfg.plan()
         .into_iter()
@@ -571,9 +583,7 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
                 // wrote 137, `from_rc` read it as `Fail`, and `admits_green`
                 // admits any `Fail` -- so the green wave ran on the strength of
                 // a red run that never finished. `Timeout` is not a `Fail`.
-                let rc = format!("{s}.rc");
-                let elapsed = sys::elapsed_to(started, Path::new(&rc));
-                verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, cfg.timeout)
+                timed_verdict(&s, started, cfg.timeout)
             })
         })
         .collect()
@@ -614,30 +624,7 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
         .collect();
 
     println!("[work]   {} jails started", jails.len());
-    let started = run_wave(&jails);
-    shred_credentials(&jails);
-    started
-}
-
-/// Unlink each jail's credential copy the moment its wave returns.
-///
-/// The token is a full-account OAuth credential with a refresh token and no
-/// scoping, and the scratch tree is only removed on the last line of a normal
-/// run — so a Ctrl-C mid-run would otherwise strand one copy per jail. This
-/// shrinks the window to the time a jail is actually using it. It refuses
-/// nothing and cannot skip work: the wave has already finished.
-fn shred_credentials(jails: &[Jail]) {
-    for jail in jails {
-        let cred = format!("{}/cred", jail.slot);
-        // A jail owns its own slot, so it can `chmod 0500` the directory holding
-        // its credential, and `rm -rf` then fails silently for want of write and
-        // execute -- E-22, on the directory that holds the user's OAuth token
-        // rather than the one that holds `.git` (E-30). The scratch tree
-        // outlives an interrupted run, so a copy surviving this call survives
-        // on disk until someone removes it by hand.
-        sys::unlock_tree(&cred);
-        sys::remove_tree(&cred);
-    }
+    run_wave(&jails)
 }
 
 /// Extract one jail's patch host-side and write it before any verdict exists.
@@ -792,12 +779,7 @@ fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, S
 
     println!("[verify] {} jails started", jails.len());
     let started = run_wave(&jails);
-    let rc = format!("{baseline}.rc");
-    let elapsed = sys::elapsed_to(started, Path::new(&rc));
-    (
-        verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, cfg.timeout),
-        started,
-    )
+    (timed_verdict(&baseline, started, cfg.timeout), started)
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -829,12 +811,7 @@ fn collect(
                         Path::new(&format!("{}/{}.verify.log", paths.out, a.index)),
                         log.as_bytes(),
                     );
-                    let rc = format!("{slot}.rc");
-                    verdict::from_run(
-                        &sys::read_text(Path::new(&rc)),
-                        sys::elapsed_to(verify_started, Path::new(&rc)),
-                        cfg.timeout,
-                    )
+                    timed_verdict(slot, verify_started, cfg.timeout)
                 }
                 Staged::Skipped(v) => *v,
             };
@@ -887,11 +864,16 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     let provider = cfg.audit_provider();
     let slot = format!("{}/a", paths.dir);
     let binary = prep_provider_slot(&slot, AUDIT_PROMPT, provider);
-    let mount = format!("-R {}/repo:/repo", paths.dir);
+    // The audit is asked which clause of the task the patches disagree about,
+    // so it has to be able to read the task (C-42). Mounted at a fixed path
+    // rather than interpolated into the prompt, exactly as `/repo` and
+    // `/patches` are: `AUDIT_PROMPT` stays one string, identical every run.
+    let instruction = format!("{}/instruction", paths.dir);
+    sys::write_bytes(Path::new(&instruction), cfg.instruction.as_bytes());
+    let mount = format!("-R {}/repo:/repo -R {instruction}:/instruction", paths.dir);
     let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
     let jails = [Jail::new(command, slot.clone())];
     run_wave(&jails);
-    shred_credentials(&jails);
 
     let heading = report::audit_heading(provider);
     let rule = "-".repeat(heading.chars().count());
@@ -1714,6 +1696,9 @@ mod tests {
     /// E-30: a jail that makes its own `/cred` undeletable must not keep the
     /// user's OAuth token on the host. Exactly the E-22 defect, on the directory
     /// that holds the credential rather than the one that holds `.git`.
+    ///
+    /// The wave script owns this now (C-40), so the test runs the real script
+    /// rather than a Rust stand-in for it.
     #[test]
     fn e30_a_locked_cred_dir_is_still_shredded() {
         let dir = scratch("credlock");
@@ -1728,11 +1713,94 @@ mod tests {
         // What a hostile model runs inside its own jail.
         let _ = sys::run("chmod", &["0500", &cred]);
 
-        super::shred_credentials(&[choir_core::Jail::new(String::new(), slot)]);
+        let jail = choir_core::Jail::new("true".to_owned(), slot);
+        let _ = sys::sh(&choir_core::wave::script(&[jail]));
 
         assert!(
             !Path::new(&cred).exists(),
-            "the user's credential copy survived the shred"
+            "the user's credential copy survived the wave"
+        );
+    }
+
+    /// C-40: the sweep runs when the wave is interrupted, not only when it
+    /// returns. A real Ctrl-C kills the jails and strands the token otherwise.
+    #[test]
+    fn c40_an_interrupted_wave_still_sheds_its_credential() {
+        let dir = scratch("credint");
+        let slot = format!("{}/w0", dir.str());
+        let cred = format!("{slot}/cred");
+        fs::create_dir_all(&cred).expect("cred");
+        fs::write(format!("{cred}/.credentials.json"), "{\"t\":\"live\"}").expect("token");
+
+        // A jail that outlives the signal, exactly like a provider mid-call.
+        let jail = choir_core::Jail::new("sleep 30".to_owned(), slot);
+        let script = choir_core::wave::script(&[jail]);
+
+        // SIGTERM, not SIGINT: a background job of a non-interactive shell has
+        // SIGINT ignored on entry, and a `trap` cannot reinstate a signal the
+        // shell inherited as ignored. A terminal Ctrl-C does not go through
+        // that path - it signals the foreground group directly, verified by
+        // hand against a real run - and the trap covers INT TERM HUP alike.
+        // The script must run as its own shell so there is something to signal:
+        // appending `&` to a multi-line script backgrounds only its last line,
+        // which is the mistake C-16's parentheses exist to prevent. Written to
+        // a file because the script contains the single quotes its own trap
+        // needs, and re-quoting it into `sh -c` would change what is tested.
+        let path = format!("{}/wave.sh", dir.str());
+        fs::write(&path, &script).expect("script");
+        // Output goes to /dev/null, not to this process's pipe: the jail that
+        // survives the signal inherits whatever the wave shell had, and a
+        // captured pipe would keep `sys::sh` blocked for the sleep's full 30s
+        // whether the trap fired or not - which is exactly what made an earlier
+        // version of this test pass against a script with no signal trap.
+        let harness = format!(
+            "sh '{path}' >/dev/null 2>&1 & wavepid=$!\n\
+             sleep 1\nkill -TERM $wavepid\nwait $wavepid"
+        );
+        let _ = sys::sh(&harness);
+
+        let stranded = Path::new(&cred).exists();
+        // The jail outlives the signal by design; do not leak it into the suite.
+        let _ = sys::run("pkill", &["-f", "sleep 30"]);
+        assert!(
+            !stranded,
+            "an interrupted wave stranded the user's OAuth token on disk"
+        );
+    }
+
+    /// C-41: the one place a timed jail becomes a verdict, tested where a test
+    /// can actually reach it.
+    ///
+    /// `red_gate` mutated back to a bare `from_rc` passed all 122 tests before
+    /// this existed: the choice was made inside a jail-spawning routine that no
+    /// unit test can enter. `timed_verdict` reads a file and a clock, so a test
+    /// can hand it both.
+    #[test]
+    fn c41_timed_verdict_consults_the_clock_and_the_code() {
+        let dir = scratch("timedverdict");
+        let slot = format!("{}/w0", dir.str());
+        let long_ago = SystemTime::now() - std::time::Duration::from_secs(5000);
+
+        // Killed by signal, well past the deadline: the deadline explains it.
+        fs::write(format!("{slot}.rc"), "137\n").expect("rc");
+        assert_eq!(
+            super::timed_verdict(&slot, long_ago, 1200),
+            Verdict::Timeout(1200),
+            "a deadline kill must be named, not left as an ambiguous 137"
+        );
+
+        // Same file, a clock that has not run out: the code stands.
+        assert_eq!(
+            super::timed_verdict(&slot, SystemTime::now(), 1200),
+            Verdict::Fail(137)
+        );
+
+        // A suite that failed on its own, past the deadline: its code survives.
+        fs::write(format!("{slot}.rc"), "1\n").expect("rc");
+        assert_eq!(
+            super::timed_verdict(&slot, long_ago, 1200),
+            Verdict::Fail(1),
+            "the clock overwrote a failure the suite actually reported"
         );
     }
 

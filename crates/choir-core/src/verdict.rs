@@ -182,19 +182,27 @@ fn deadline_fired(elapsed: Option<u64>, timeout: u32) -> bool {
     matches!(elapsed, Some(secs) if secs >= u64::from(timeout))
 }
 
-/// Classify a jail Choir also timed (C-37).
+/// Classify a jail Choir also timed (C-37, C-41).
 ///
-/// The deadline is consulted only for a jail that did not exit 0. `elapsed` is
-/// measured from before the jail started and truncated to whole seconds, so a
-/// suite that passes in the last moment of its budget can report exactly the
-/// deadline — and a run that finished is a result, whatever the clock says.
+/// The deadline is consulted only for a jail the deadline could have killed:
+/// one that died by signal, which a shell reports as `128 + signum` — nsjail's
+/// own `-t` kill writes `137`, measured. A suite that exited on its own
+/// reported a result, and C-18 says the verify verdict is that result and
+/// nothing else, so no clock reading may overwrite it. `elapsed` is measured
+/// from before the jail started and truncated to whole seconds, so without that
+/// restriction the startup skew alone could relabel a genuine `FAIL(1)` near
+/// the end of a budget as a deadline that never fired.
+///
+/// An unreadable `.rc` is E-13's `Fail(255)`, which clears the same bar: past
+/// the deadline with nothing written at all, the kill is the explanation.
 #[must_use]
 pub fn from_run(raw: &str, elapsed: Option<u64>, timeout: u32) -> Verdict {
     let verdict = from_rc(raw);
-    if verdict.passed() || !deadline_fired(elapsed, timeout) {
-        verdict
-    } else {
+    let killable = matches!(verdict, Verdict::Fail(code) if code >= 128);
+    if killable && deadline_fired(elapsed, timeout) {
         Verdict::Timeout(timeout)
+    } else {
+        verdict
     }
 }
 
@@ -396,6 +404,26 @@ mod tests {
             super::from_run("", Some(1200), 1200),
             Verdict::Timeout(1200)
         );
+    }
+
+    /// C-41: the clock may only explain a jail the clock could have killed.
+    ///
+    /// `from_run` covers the verify wave, where C-18 says the verdict is the
+    /// test command's exit status and nothing else. A suite that fails on its
+    /// own near the end of its budget reported a result; replacing it with
+    /// `TIMEOUT` loses the code the user needs and claims a kill that never
+    /// happened. `elapsed` is measured from before the jail started, so the
+    /// startup skew alone can push a genuine failure over the line.
+    #[test]
+    fn c41_the_deadline_cannot_overwrite_a_reported_failure() {
+        // Death by signal, at the deadline: the deadline is the explanation.
+        assert_eq!(from_run("137", Some(1200), 1200), Verdict::Timeout(1200));
+        assert_eq!(from_run("143", Some(1200), 1200), Verdict::Timeout(1200));
+
+        // A suite that ran and failed, at the very same clock reading.
+        assert_eq!(from_run("1", Some(1200), 1200), Verdict::Fail(1));
+        assert_eq!(from_run("2", Some(9999), 1200), Verdict::Fail(2));
+        assert_eq!(from_run("127", Some(1200), 1200), Verdict::Fail(127));
     }
 
     /// C-37: a timed-out run is not a passing row and earns no `git apply`.

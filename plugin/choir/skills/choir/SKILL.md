@@ -77,7 +77,14 @@ command is narrower than the whole suite.
   they proved nothing and no implementation wave ran for it. `RED TAMPERED` means the jail
   changed or deleted one of its own approved test files while implementing. Neither is a pass
   and neither gets a `git apply` line.
-- The line under the rows says how many patches were byte-distinct. Fewer than `n` means the
+- The line under the rows says how many patches were byte-distinct.
+- The audit answers four fixed questions — `AGREEMENT`, `DIVERGENCE`, `UNDERSPECIFIED`,
+  `SUSPECT` — and is worth reading for the last two. `UNDERSPECIFIED` names the clause of
+  your task the patches disagreed about, which is usually the real finding. `SUSPECT` names
+  any patch that made its own tests easier to satisfy: Choir's own red lock compares bytes
+  and has no notion of what a test is, so a patch that leaves every approved test untouched
+  and adds a `conftest.py` beside them passes it. The audit is a model reading, unverified,
+  and gates nothing. Fewer than `n` means the
   extra jails bought nothing, and this kind of task wants a smaller `n`.
 - `<out>/<i>.log` and `<out>/<i>.verify.log` hold what the table only summarises.
 
@@ -105,6 +112,13 @@ Choir does not rank, sort, or recommend. Read the patches before applying one.
 
 ## If a run is interrupted
 
-The scratch directory survives, and it holds a copy of the provider's OAuth credential. Choir
-prints its path on line 1. Remove it with `rm -rf` — never a trash-based "safe delete", which
-moves the token somewhere it persists rather than deleting it.
+The scratch directory survives; the credential in it does not. Each wave's own shell sweeps
+its jails' credential copies on the way out, whether it returns or is interrupted, so a
+Ctrl-C no longer strands a full-account OAuth token on disk. What is left is repository
+copies and logs. Choir prints the directory on line 1; remove it with `rm -rf` when you are
+done reading the logs — never a trash-based "safe delete", which moves files somewhere they
+persist rather than deleting them.
+
+The uncovered case is `kill -9` on the wave's shell, which no trap can reach. A `kill` aimed
+at Choir alone leaves the jails running to their deadline: they are sealed and they sweep
+themselves, but they keep spending until they finish.
