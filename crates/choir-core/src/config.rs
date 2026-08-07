@@ -662,7 +662,7 @@ pub fn help_text() -> String {
     s.push_str("  choir - [--test '<cmd>'] [FLAGS]      # instruction from stdin\n\n");
     s.push_str("FLAGS\n");
     s.push_str("  --test '<cmd>'      your test command, run by sh inside a jail: against\n");
-    s.push_str("                      every patch, and once against the tree as it stands,\n");
+    s.push_str("                      every patch, and twice against the tree as it stands,\n");
     s.push_str("                      reported above the table. Omit it and it is read off\n");
     s.push_str("                      one marker file in the repository root (Cargo.toml,\n");
     s.push_str("                      go.mod, Makefile, package.json, pyproject.toml) and\n");

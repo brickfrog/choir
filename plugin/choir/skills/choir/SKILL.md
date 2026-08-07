@@ -59,10 +59,13 @@ command is narrower than the whole suite.
    name it has never heard of, and work jails do have network — so still do not cache a
    directory holding a secret under some other filename.
 2. **Read the `baseline` line before the rows.** It runs `--test` against the *unpatched* tree
-   in the same sealed jail. `baseline PASS` means every `PASS` below it proves nothing — the
-   tests already passed. `baseline FAIL` with every patch failing the same way usually means
-   the test command cannot run sealed, not that the patches are bad.
-3. **Put `TMPDIR` on the same filesystem as `--repo`.** Choir copies the repo `1 + 2n` times.
+   in two identical sealed jails. `baseline PASS` means every `PASS` below it proves nothing —
+   the tests already passed. `baseline FAIL` with every patch failing the same way usually means
+   the test command cannot run sealed, not that the patches are bad. `baseline
+   NONDETERMINISTIC` means the two jails disagreed on the same untouched tree: the suite is
+   flaky, so no row below it is evidence of anything and the run should be repeated with a
+   `--test` that is stable.
+3. **Put `TMPDIR` on the same filesystem as `--repo`.** Choir copies the repo `2 + 2n` times.
    On one copy-on-write filesystem those copies are nearly free; across filesystems, or onto a
    `tmpfs /tmp`, each is a full byte copy.
 

@@ -99,14 +99,14 @@ pub fn execute(cfg: &Config) -> i32 {
 
     let work_started = work_wave(cfg, &paths, &reds);
     let attempts = stage(cfg, &paths, &reds, &red_verdicts);
-    let (baseline, verify_started) = verify_wave(cfg, &paths, &attempts);
+    let (baseline, baseline_again, verify_started) = verify_wave(cfg, &paths, &attempts);
 
     let rows = collect(cfg, &paths, &attempts, work_started, verify_started);
     let patches: Vec<(usize, &[u8])> = attempts
         .iter()
         .map(|a| (a.index, a.patch.as_slice()))
         .collect();
-    print_table(baseline, &rows, &patches, &paths.out);
+    print_table(baseline, baseline_again, &rows, &patches, &paths.out);
     let passed = rows.iter().filter(|r| r.verdict.passed()).count();
 
     audit_wave(cfg, &paths);
@@ -341,6 +341,11 @@ fn flatten_nested_repos(dir: &str) {
 /// directory is theirs, and a run that writes nothing leaves absence behind:
 /// honest, and unmistakable for a result.
 fn clear_stale_output(out: &str, n: usize) {
+    // Not per-index, cleared for the reason the rest are: a failed write leaves
+    // the previous run's transcript under a path this run's header names (C-44).
+    for name in ["baseline.0.log", "baseline.1.log"] {
+        sys::remove_tree(&format!("{out}/{name}"));
+    }
     for index in 0..n {
         for name in [
             format!("{index}.patch"),
@@ -781,18 +786,31 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
         .collect()
 }
 
-/// Wave 2: the unpatched base and one sealed jail per applicable patch.
+/// Wave 2: the unpatched base twice, and one sealed jail per applicable patch.
 ///
-/// Returns the baseline verdict and the instant the wave started. The baseline
+/// Returns both baseline verdicts and the instant the wave started. The baseline
 /// is classified against the clock like every other jail (C-37): a `--test`
 /// command that cannot finish inside `--timeout` reads `TIMEOUT`, not a `137`
 /// the reader has to guess at.
-fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, SystemTime) {
-    let baseline = paths.slot("b", 0);
-    prep_slot(&baseline, &cfg.test_cmd);
-    sys::copy_tree(&paths.base_repo(), &format!("{baseline}/repo"));
-
-    let mut jails = vec![Jail::new(jail::verify(cfg, &baseline), baseline.clone())];
+///
+/// Two baseline slots, not one (C-44). Every row is read against the baseline,
+/// so a `--test` answering differently on two identical trees makes the table
+/// noise, and one jail holds no fact that can say so. Built like every other slot
+/// and joining the same wave: the pair costs one more copy of the base tree and
+/// no wall time, since the wave still ends with its longest jail (N-4).
+fn verify_wave(
+    cfg: &Config,
+    paths: &Paths,
+    attempts: &[Attempt],
+) -> (Verdict, Verdict, SystemTime) {
+    let first = paths.slot("b", 0);
+    let second = paths.slot("b", 1);
+    let mut jails = Vec::new();
+    for slot in [&first, &second] {
+        prep_slot(slot, &cfg.test_cmd);
+        sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+        jails.push(Jail::new(jail::verify(cfg, slot), slot.clone()));
+    }
     jails.extend(attempts.iter().filter_map(|a| match &a.staged {
         Staged::Ready(slot) => Some(Jail::new(jail::verify(cfg, slot), slot.clone())),
         Staged::Skipped(_) => None,
@@ -800,7 +818,25 @@ fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, S
 
     println!("[verify] {} jails started", jails.len());
     let started = run_wave(&jails);
-    (timed_verdict(&baseline, started, cfg.timeout), started)
+
+    // Both baseline logs into `--out`, beside every other log (C-28). `collect`
+    // copies one per *attempt* and the baseline is not one, so the jail whose
+    // verdict licenses reading the table was the only one whose output died with
+    // the scratch tree. Reporting NONDETERMINISTIC and then deleting both
+    // transcripts destroys the two files that say why.
+    for (name, slot) in [("0", &first), ("1", &second)] {
+        let log = sys::read_text(Path::new(&format!("{slot}.log")));
+        sys::write_bytes(
+            Path::new(&format!("{}/baseline.{name}.log", paths.out)),
+            log.as_bytes(),
+        );
+    }
+
+    (
+        timed_verdict(&first, started, cfg.timeout),
+        timed_verdict(&second, started, cfg.timeout),
+        started,
+    )
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -860,8 +896,14 @@ fn collect(
 /// The entire user interface: rows in jail order, the distinct-patch count, then
 /// a `git apply` line per passing patch. No ranking, no recommendation, no
 /// winner.
-fn print_table(baseline: Verdict, rows: &[Row], patches: &[(usize, &[u8])], out_dir: &str) {
-    println!("\n{}", report::baseline(baseline));
+fn print_table(
+    baseline: Verdict,
+    baseline_again: Verdict,
+    rows: &[Row],
+    patches: &[(usize, &[u8])],
+    out_dir: &str,
+) {
+    println!("\n{}", report::baseline(baseline, baseline_again));
     println!("{}", report::HEADER);
     for entry in rows {
         println!("{}", report::row(entry));
@@ -2021,6 +2063,73 @@ mod tests {
             !Path::new(&format!("{out}/0.log")).exists(),
             "a previous run's log survived into this run's output directory"
         );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// C-44: two baselines really run, both transcripts reach `--out`, and
+    /// neither survives into the next run.
+    ///
+    /// The baseline is the only jail `collect` never sees — it is not an attempt
+    /// — so the one verdict that licenses reading the table was also the only one
+    /// whose output died with the scratch tree.
+    #[test]
+    fn c44_both_baseline_logs_reach_the_out_dir() {
+        let dir = scratch("baseline-logs");
+        let dir_s = dir.str();
+        let base = format!("{dir_s}/repo");
+        fs::create_dir_all(&base).expect("base");
+        git(&base, &["init", "-q"]);
+        git(&base, &["config", "user.email", "t@t"]);
+        git(&base, &["config", "user.name", "t"]);
+        fs::write(format!("{base}/base.txt"), "unpatched\n").expect("base.txt");
+        git(&base, &["add", "-A"]);
+        git(&base, &["commit", "-qm", "base"]);
+
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+
+        // Stale transcripts from an earlier run, under this run's own paths.
+        for name in ["baseline.0.log", "baseline.1.log"] {
+            fs::write(format!("{}/{name}", paths.out), "STALE").expect("stale");
+        }
+        super::clear_stale_output(&paths.out, 2);
+        for name in ["baseline.0.log", "baseline.1.log"] {
+            assert!(
+                !Path::new(&format!("{}/{name}", paths.out)).exists(),
+                "a previous run's {name} survived into this run's output directory"
+            );
+        }
+
+        let cfg = Config {
+            test_cmd: "exit 0".to_owned(),
+            timeout: 30,
+            ..Config::default()
+        };
+        let _ = super::verify_wave(&cfg, &paths, &[]);
+
+        // Sharing one slot would make the second jail an echo of the first, and
+        // the header would report an agreement it never measured.
+        for slot in ["b0", "b1"] {
+            assert!(
+                Path::new(&format!("{dir_s}/{slot}.rc")).exists(),
+                "{slot} never ran as its own jail"
+            );
+        }
+
+        // Both, separately: one file leaves half of a disagreement unreadable.
+        for name in ["baseline.0.log", "baseline.1.log"] {
+            let path = format!("{}/{name}", paths.out);
+            assert!(
+                Path::new(&path).exists(),
+                "{name} was not copied into --out"
+            );
+            assert_ne!(fs::read_to_string(&path).unwrap_or_default(), "STALE");
+        }
         sys::remove_tree(&paths.dir);
     }
 }

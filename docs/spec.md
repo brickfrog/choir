@@ -150,11 +150,11 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **C-29** A row shows the work jail's own exit code, or `?` when it wrote no
   readable `.rc`. A `0 B` patch beside `0` is a provider that ran cleanly and
   produced nothing; beside `137` it is one the deadline killed.
-- **C-30** The verify wave first runs `--test` once against an unpatched copy of
+- **C-30** The verify wave first runs `--test` against an unpatched copy of
   the base tree, through the same verify jail template and wave runner as patch
   trees. Immediately above the results table Choir prints `BASELINE TESTS`
   followed by that jail's existing verdict label. The baseline neither gates nor
-  changes any patch jail or result.
+  changes any patch jail or result. C-44 makes it two such jails.
 - **C-31** Below the table rows Choir prints one line stating how many of the
   run's patches are byte-distinct, naming any jail whose patch is byte-identical
   to a lower-numbered jail's. The comparison is over the patch bytes themselves —
@@ -248,6 +248,29 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   every patch is still written and offered, and no verdict changes except a
   `FAIL` that was the deadline all along.
 
+- **C-44** The baseline runs in two independent sealed jails rather than one.
+  Every row of the table is read against the `baseline` line — C-30 exists because
+  a baseline that already passes empties every `PASS` below it — so a `--test`
+  that is itself nondeterministic makes the whole table noise, and Choir had no
+  fact with which to say so. Two jails is the smallest number that can produce
+  that fact: the same verify template (C-13), the same `--test`, two separate
+  copies of the same untouched base tree, both started in the verify wave beside
+  the patch jails. The cost is one more copy of the base tree and nothing else —
+  no wall time, because the wave still ends with its longest jail (N-4), and no
+  provider call, because a verify jail runs no model (C-39). Agreement prints the
+  line byte for byte as one jail did, so every existing reader still reads it.
+  Disagreement says `NONDETERMINISTIC` and prints both, because naming either
+  would be Choir picking an answer it does not have; agreement is only the absence
+  of a disagreement in two samples and is not claimed as proof of determinism.
+  Like C-30 and C-31 it gates nothing: no jail is skipped, no row withheld, no
+  patch's bytes or verdict changed, and the exit status is still whether a patch
+  passed. The decision is `report::baseline`, total over the pair and in the pure
+  core, so a disagreeing pair renders without a jail. Both transcripts are copied
+  to `--out` as `baseline.0.log` and `baseline.1.log` and cleared there like every
+  other output (C-28): `collect` copies a log per attempt and the baseline is not
+  one, so the run's most load-bearing verdict was its only unreadable one, and a
+  header that reports `NONDETERMINISTIC` while deleting both transcripts destroys
+  the evidence for its own claim.
 - **C-43** `agy`, Google's Antigravity CLI, is the third provider. It differs from
   the other two in three ways, each measured rather than assumed. Its credential
   is not a file: it lives in the login keyring under `service=gemini,

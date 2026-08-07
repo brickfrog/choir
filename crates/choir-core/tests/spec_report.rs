@@ -44,14 +44,62 @@ fn c24_verdict_labels() {
 /// C-30: the baseline line reports the existing mechanical verdict label.
 #[test]
 fn c30_baseline_verdict_line() {
-    let pass = report::baseline(Verdict::Pass);
+    let pass = report::baseline(Verdict::Pass, Verdict::Pass);
     assert!(
         pass.starts_with("baseline (--test on the unpatched tree"),
         "{pass}"
     );
     assert!(pass.ends_with("PASS"));
-    assert!(report::baseline(Verdict::Fail(101)).ends_with("FAIL(101)"));
-    assert_ne!(pass, report::baseline(Verdict::Fail(1)));
+    assert!(report::baseline(Verdict::Fail(101), Verdict::Fail(101)).ends_with("FAIL(101)"));
+    assert_ne!(pass, report::baseline(Verdict::Fail(1), Verdict::Fail(1)));
+}
+
+/// C-44: two agreeing baseline jails read as one did; two that disagree say the
+/// baseline is nondeterministic and print both verdicts.
+///
+/// The `baseline` line is what every row of the table is read against, so a
+/// `--test` command that answers differently on two identical untouched trees
+/// makes the whole table noise. Agreement has to stay byte-identical to the
+/// single-jail line, because that is the line every existing reader and every
+/// pasted review thread already knows; disagreement has to name both, because
+/// picking one would be Choir answering a question it just watched have two
+/// answers.
+#[test]
+fn c44_a_nondeterministic_baseline_is_named_and_shows_both_verdicts() {
+    // Agreement: byte-for-byte the line the table had with one jail.
+    assert_eq!(
+        report::baseline(Verdict::Pass, Verdict::Pass),
+        "baseline (--test on the unpatched tree, same sealed jail): PASS"
+    );
+    assert_eq!(
+        report::baseline(Verdict::Fail(2), Verdict::Fail(2)),
+        "baseline (--test on the unpatched tree, same sealed jail): FAIL(2)"
+    );
+
+    let split = report::baseline(Verdict::Pass, Verdict::Fail(1));
+    assert!(split.contains("NONDETERMINISTIC"), "{split}");
+    assert!(split.contains("PASS"), "{split}");
+    assert!(split.contains("FAIL(1)"), "{split}");
+    // Still one header line, whatever it says.
+    assert!(!split.contains('\n'), "{split}");
+
+    // Two failures with different codes are two different answers, not one.
+    let codes = report::baseline(Verdict::Fail(1), Verdict::Fail(2));
+    assert!(codes.contains("NONDETERMINISTIC"), "{codes}");
+    assert!(
+        codes.contains("FAIL(1)") && codes.contains("FAIL(2)"),
+        "{codes}"
+    );
+
+    // Neither jail is the answer, so the pair is reported in jail order rather
+    // than resolved to one of them.
+    assert_ne!(split, report::baseline(Verdict::Fail(1), Verdict::Pass));
+
+    // A baseline the deadline killed disagreeing with one that ran is the same
+    // finding: the label is whatever the jail earned, and both are printed.
+    let timed = report::baseline(Verdict::Timeout(1200), Verdict::Fail(1));
+    assert!(timed.contains("NONDETERMINISTIC"), "{timed}");
+    assert!(timed.contains("TIMEOUT(1200s)"), "{timed}");
 }
 
 /// C-31: the run says whether its N attempts were N attempts.

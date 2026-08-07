@@ -13,7 +13,8 @@ use crate::verdict::{self, Verdict};
 pub const HEADER: &str =
     "JAIL PROVIDER  PATCH    EXIT  TESTS           TIME   WHY            LAST LINE FROM PROVIDER";
 
-/// Render the unpatched tree's test verdict immediately above the table (C-30).
+/// Render the unpatched tree's test verdict immediately above the table (C-30,
+/// C-44).
 ///
 /// The table alone cannot tell a run where every patch is bad from one where the
 /// `--test` command cannot run sealed at all: before `--cache` existed, every
@@ -24,12 +25,27 @@ pub const HEADER: &str =
 /// fact, and nothing else — every patch is still tested, printed, and offered
 /// whatever this says. Spelled out rather than abbreviated because the table is
 /// pasted into review threads by people who have never run Choir.
+///
+/// Two verdicts, because the whole table is read against this one line and a
+/// `--test` that answers differently twice makes every row below it noise
+/// (C-44). Agreement prints the line the table has always had, byte for byte;
+/// disagreement prints both, because naming either as *the* baseline would be
+/// Choir answering a question it just watched have two answers. Agreement is not
+/// proof of determinism: this reports a disagreement it saw, never an absence it
+/// did not. Gates nothing.
 #[must_use]
-pub fn baseline(verdict: Verdict) -> String {
-    format!(
-        "baseline (--test on the unpatched tree, same sealed jail): {}",
-        verdict.label()
-    )
+pub fn baseline(first: Verdict, second: Verdict) -> String {
+    let head = "baseline (--test on the unpatched tree, same sealed jail)";
+    if first == second {
+        format!("{head}: {}", first.label())
+    } else {
+        format!(
+            "{head}: NONDETERMINISTIC - two identical jails returned {} and {}, \
+             so every TESTS verdict below is noise",
+            first.label(),
+            second.label()
+        )
+    }
 }
 
 /// How many of the run's patches are byte-distinct, and which repeat (C-31).
