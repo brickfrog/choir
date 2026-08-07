@@ -49,6 +49,15 @@ pub enum Verdict {
     RedTampered,
     /// The red gate jail never started, so no red result exists (E-41).
     Unrun,
+    /// `--red` only: with every approved test replaced by bytes that cannot
+    /// execute, the suite still reported success, so it never ran them (E-44).
+    ///
+    /// C-36 holds the approved files to the byte, and a green wave that leaves
+    /// them untouched can still add a file beside them that stops them running:
+    /// a runner config that excludes the path, a collection hook that drops it.
+    /// The approved bytes are then present and irrelevant, and the `TESTS`
+    /// column reads `PASS` for a suite that executed none of them.
+    RedNeutered,
 }
 
 impl Verdict {
@@ -64,6 +73,7 @@ impl Verdict {
             Self::RedGate => "RED FAILED".to_owned(),
             Self::RedTampered => "RED TAMPERED".to_owned(),
             Self::Unrun => "RED UNRUN".to_owned(),
+            Self::RedNeutered => "RED NEUTERED".to_owned(),
         }
     }
 

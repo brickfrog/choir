@@ -125,6 +125,8 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
 - **C-19** A zero-byte patch yields `NoPatch` and skips its verify jail.
 - **C-20** A patch `git apply` rejects yields `ApplyFailed` and skips its jail.
 - **C-21** C-19, C-20, C-32 and C-36 are the only conditions that skip work.
+  C-45 is not among them: its jail runs after the work it would skip, so it
+  replaces a verdict rather than withholding a run.
   All four are mechanical facts about the patch, never judgements of it: empty,
   unappliable, a red wave that failed to go red, and a green wave that altered
   a red-approved file.
@@ -138,7 +140,7 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   with trailing space trimmed.
 - **C-24** Verdict labels are `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)` (C-37),
   `APPLY FAILED`, `-`, and under `--red` also `RED FAILED` (C-32) and
-  `RED TAMPERED` (C-36).
+  `RED TAMPERED` (C-36), `RED UNRUN` (E-41) and `RED NEUTERED` (C-45).
 - **C-25** Rows print in jail index order. There is no ranking and no sort.
 - **C-26** A `git apply` line prints for each passing patch, and only those.
 - **C-28** Each work jail's log is copied to `<out>/<index>.log`, and each verify
@@ -199,6 +201,19 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   intent. Choir does not detect them: a test command can be read off a marker
   file (C-35), but an artifact glob has no such marker, and one guessed wrong
   deletes the model's work from its patch with nothing on screen to say so.
+- **C-45** Under `--red`, a patch whose verify jail passed earns one more jail:
+  the same tree with every approved test replaced by bytes that cannot execute.
+  A suite that runs those tests now fails; one that still reports success was
+  never running them, and the row reads `RED NEUTERED`, earns no `git apply`
+  line and is no pass. The probe runs only for a jail already classed `Pass`, so
+  it can replace a pass and never rescue a failure, and it calls no provider, so
+  `--red` still costs `2n+1` model calls. Like C-32 and C-36 this is a
+  mechanical fact — Choir wrote the bytes it planted and read one exit code —
+  never a judgement of what the patch contains. It closes the half of C-36's
+  disclosed gap where the approved tests are not executed at all; a test that is
+  collected and executed but rigged to succeed runs the planted bytes, so the
+  probe stays silent and the audit's `SUSPECT` line remains the only thing that
+  speaks to it (E-44).
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -469,6 +484,31 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   the `diff --git` header of every file it refused over: `RED TAMPERED` is the
   gravest thing the table says and the row has one column, so without a name a
   weakened test and a byproduct read identically.
+- **E-44** C-36 held every approved file to the byte and the README disclosed,
+  from the beginning, that a green wave could leave all of them untouched and
+  add a file beside them that stops them running. Nothing measured it. Measured
+  now, on the built product with a provider that adds `pytest.ini` carrying
+  `addopts = --ignore=test_c.py` and one passing decoy: before, `PASS` and a
+  `git apply` line for a suite that executed none of the approved tests.
+  The probe is the patched tree the verify jail just passed, with every approved
+  test replaced by bytes that cannot execute — a bare prose line is two
+  juxtaposed names in any language that has names, and the delimiters are never
+  closed. A suite that runs those tests now fails. This needs no notion of what
+  a test is, no list of runner-config filenames, and no parsing of any output,
+  which is why it is a gate and not commentary. The paths come from
+  `git apply --numstat -z`, so git does the quoting and a path holding a space
+  or a quote arrives whole, and git's `-` for both counts of a binary file skips
+  exactly the byproducts E-43 refuses to approve. Choir writes to those paths
+  itself rather than through `git apply`, so it refuses `../` on its own behalf,
+  and unlinks before writing for E-35's reason: the tree was built from an
+  untrusted patch. Both legitimate shapes that killed the earlier design were
+  measured clean — a red test importing a module the green wave then adds, and a
+  red test needing a fixture the green wave adds in a `conftest.py`. The limit is
+  real and deliberate: a test that is collected and executed but rigged to pass
+  — a fixture stubbing the code under test, a hook marking it xfail — reads the
+  planted bytes and fails, so the probe stays silent. Separating a rigged pass
+  from an honest one needs to know what an assertion means, which is the one
+  thing Choir refuses to guess.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is

@@ -105,7 +105,19 @@ pub fn execute(cfg: &Config) -> i32 {
     let attempts = stage(cfg, &paths, &reds, &red_verdicts);
     let (baseline, baseline_again, verify_started) = verify_wave(cfg, &paths, &attempts);
 
-    let rows = collect(cfg, &paths, &attempts, work_started, verify_started);
+    let neutered = if cfg.red {
+        red_canary(cfg, &paths, &attempts, verify_started)
+    } else {
+        Vec::new()
+    };
+    let rows = collect(
+        cfg,
+        &paths,
+        &attempts,
+        &neutered,
+        work_started,
+        verify_started,
+    );
     let patches: Vec<(usize, &[u8])> = attempts
         .iter()
         .map(|a| (a.index, a.patch.as_slice()))
@@ -1058,6 +1070,126 @@ fn verify_wave(
     )
 }
 
+/// Replace every readable file the red patch created with bytes that cannot
+/// execute, and return how many were planted (E-44).
+///
+/// The paths come from `git apply --numstat -z`, so git does the parsing: `-z`
+/// removes its quoting rules, and a path holding a space, a quote or a newline
+/// arrives whole. A record is `added \t deleted \t path`, and git writes `-` for
+/// both counts of a binary file — the same files C-36 does not approve (E-43),
+/// skipped here for the same reason: their bytes were never the claim.
+///
+/// Choir writes to these paths itself rather than through `git apply`, so
+/// nothing else refuses `../` on its behalf; [`report::safe_relative`] does.
+/// A path that is not valid UTF-8 survives `-z` but not the lossy conversion,
+/// and lands on no file, which costs the probe one file's coverage and can
+/// write nothing. Unlinked before writing, never truncated in place, for E-35's
+/// reason: the tree was built from an untrusted patch, and a symlink sitting at
+/// the path would redirect the write out of it.
+fn plant_canary(repo: &str, red_patch: &str) -> usize {
+    let (code, out) = sys::git(&["-C", repo, "apply", "--numstat", "-z", red_patch]);
+    if code != 0 {
+        return 0;
+    }
+    let mut planted = 0;
+    for record in out.split(|b| *b == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(record);
+        let mut fields = text.splitn(3, '\t');
+        let (added, _deleted, path) = (fields.next(), fields.next(), fields.next());
+        let (Some(added), Some(path)) = (added, path) else {
+            continue;
+        };
+        if added == "-" || !report::safe_relative(path) {
+            continue;
+        }
+        let full = format!("{repo}/{path}");
+        if !Path::new(&full).is_file() {
+            continue;
+        }
+        sys::remove_tree(&full);
+        sys::write_bytes(Path::new(&full), report::CANARY);
+        planted += 1;
+    }
+    planted
+}
+
+/// Wave 3, `--red` only: prove the approved tests still run (E-44).
+///
+/// C-36 holds the red patch's files to the byte, and a green wave that leaves
+/// every one of them untouched can still add a file beside them that stops them
+/// running — a runner config excluding the path, a collection hook dropping it.
+/// The approved bytes are then present and irrelevant, and the `TESTS` column
+/// reads `PASS` for a suite that executed none of them. That is the hole the
+/// README has always disclosed and nothing measured.
+///
+/// The probe is the patched tree the verify jail just passed, with every
+/// approved test replaced by bytes that cannot execute. A suite that runs those
+/// tests now fails; one that still reports success was not running them. That
+/// is a fact about the run, not a judgement of the patch: no notion of what a
+/// test is, no list of runner-config filenames, no parsing of any output.
+///
+/// Only for a jail that already passed, because only a pass makes the claim the
+/// probe checks — which also means the probe can never turn a failure into a
+/// pass, and bounds it to one extra test run per passing patch. It calls no
+/// provider, so `--red` still costs `2n+1` model calls.
+///
+/// What it does not catch: a test that is collected and executed but rigged to
+/// succeed — a fixture stubbing the code under test, a hook marking it xfail.
+/// Those run the approved file, so the canary is read and the probe stays
+/// silent. Measured, along with the two shapes below. Separating a rigged pass
+/// from an honest one needs to know what the assertions mean, which is the one
+/// thing Choir refuses to guess.
+fn red_canary(
+    cfg: &Config,
+    paths: &Paths,
+    attempts: &[Attempt],
+    verify_started: SystemTime,
+) -> Vec<usize> {
+    let mut jails = Vec::new();
+    let mut candidates = Vec::new();
+
+    for attempt in attempts {
+        let Staged::Ready(verified) = &attempt.staged else {
+            continue;
+        };
+        if !timed_verdict(verified, verify_started, cfg.timeout).passed() {
+            continue;
+        }
+        let index = attempt.index;
+        let slot = paths.slot("n", index);
+        prep_slot(&slot, &cfg.test_cmd);
+        sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+        let repo = format!("{slot}/repo");
+        let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
+        if code != 0 {
+            continue;
+        }
+        // Nothing readable was approved, so there is nothing to prove ran. An
+        // all-binary red patch is the only way here, and C-36 approves none of
+        // it: a probe over an empty set would report every such patch neutered.
+        if plant_canary(&repo, &format!("{}/patches/{index}.red.patch", paths.dir)) == 0 {
+            continue;
+        }
+        jails.push(Jail::new(jail::verify(cfg, &slot), slot.clone()));
+        candidates.push((index, slot));
+    }
+
+    if jails.is_empty() {
+        return Vec::new();
+    }
+    println!("[canary] {} jails started", jails.len());
+    let started = run_wave(&jails);
+
+    candidates
+        .into_iter()
+        .filter(|(_, slot)| timed_verdict(slot, started, cfg.timeout).passed())
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Read each jail's verdict and log line into a renderable row, and copy the
 /// logs the table only summarises into `--out` (C-28).
 ///
@@ -1074,6 +1206,7 @@ fn collect(
     cfg: &Config,
     paths: &Paths,
     attempts: &[Attempt],
+    neutered: &[usize],
     work_started: SystemTime,
     verify_started: SystemTime,
 ) -> Vec<Row> {
@@ -1084,7 +1217,16 @@ fn collect(
                 Staged::Ready(slot) => {
                     let log = sys::read_text(Path::new(&format!("{slot}.log")));
                     write_out(paths, &format!("{}.verify.log", a.index), log.as_bytes());
-                    timed_verdict(slot, verify_started, cfg.timeout)
+                    let verdict = timed_verdict(slot, verify_started, cfg.timeout);
+                    // The probe only ever ran for a jail this call already
+                    // classed `Pass` (E-44), so this replaces a pass and can
+                    // never rescue a failure: a suite that failed honestly is
+                    // reported as it failed.
+                    if verdict.passed() && neutered.contains(&a.index) {
+                        Verdict::RedNeutered
+                    } else {
+                        verdict
+                    }
                 }
                 Staged::Skipped(v) => *v,
             };
@@ -1745,6 +1887,7 @@ mod tests {
                 patch: b"a patch\n".to_vec(),
                 staged: Staged::Ready(format!("{dir_s}/v0")),
             }],
+            &[],
             started,
             started,
         );
@@ -1797,6 +1940,7 @@ mod tests {
                 patch: Vec::new(),
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
+            &[],
             sys::clock(),
             sys::clock(),
         );
@@ -2646,5 +2790,168 @@ mod tests {
             rest, "pytest -q --ignore=__pycache__",
             "the user's test command must reach the jail verbatim"
         );
+    }
+
+    /// E-44: the probe replaces approved tests, skips byproducts, and cannot be
+    /// aimed out of the tree.
+    ///
+    /// Every part is a real patch through real `git apply --numstat -z`, because
+    /// the record format and its `-` for a binary file are the whole basis for
+    /// telling an approved test from a byproduct here, and a hand-built string
+    /// would assert Choir's belief about git rather than git.
+    #[test]
+    fn e44_the_canary_replaces_only_approved_readable_tests() {
+        let dir = scratch("canary-plant");
+        let repo = format!("{}/repo", dir.str());
+        fs::create_dir_all(&repo).expect("repo");
+        let git = |args: &[&str]| {
+            let mut full = vec!["-C", repo.as_str()];
+            full.extend_from_slice(args);
+            sys::git(&full)
+        };
+        git(&["init", "-q"]);
+        fs::write(format!("{repo}/base.txt"), "base\n").expect("base");
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+
+        // A test with a space in its path, and a byproduct beside it.
+        fs::create_dir_all(format!("{repo}/a dir")).expect("dir");
+        fs::write(format!("{repo}/a dir/test_it.py"), "assert real\n").expect("test");
+        fs::write(format!("{repo}/build.bin"), [0u8, 1, 2, 255]).expect("bin");
+        git(&["add", "-A"]);
+        let (code, patch) = git(&["diff", "--cached", "--binary", "HEAD"]);
+        assert_eq!(code, 0, "the fixture patch must build");
+        let red = format!("{}/red.patch", dir.str());
+        sys::write_bytes(Path::new(&red), &patch);
+
+        let planted = super::plant_canary(&repo, &red);
+
+        assert_eq!(planted, 1, "the readable test, and only it, is replaced");
+        assert_eq!(
+            fs::read(format!("{repo}/a dir/test_it.py")).expect("test readable"),
+            choir_core::report::CANARY,
+            "an approved test must be replaced whatever its path contains"
+        );
+        assert_eq!(
+            fs::read(format!("{repo}/build.bin")).expect("bin readable"),
+            vec![0u8, 1, 2, 255],
+            "a binary byproduct is not an approved test and must be left alone"
+        );
+        sys::remove_tree(&dir.str());
+    }
+
+    /// E-44, E-35: the probe writes through no symlink.
+    ///
+    /// The tree it plants into was built from an untrusted patch, and it writes
+    /// by path rather than through `git apply`, so a link sitting at an approved
+    /// path would redirect the write out of the tree.
+    #[test]
+    fn e44_the_canary_never_writes_through_a_symlink() {
+        let dir = scratch("canary-symlink");
+        let repo = format!("{}/repo", dir.str());
+        let target = format!("{}/host-file", dir.str());
+        fs::create_dir_all(&repo).expect("repo");
+        fs::write(&target, "ORIGINAL").expect("target");
+        let git = |args: &[&str]| {
+            let mut full = vec!["-C", repo.as_str()];
+            full.extend_from_slice(args);
+            sys::git(&full)
+        };
+        git(&["init", "-q"]);
+        fs::write(format!("{repo}/base.txt"), "base\n").expect("base");
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        fs::write(format!("{repo}/test_it.py"), "assert real\n").expect("test");
+        git(&["add", "-A"]);
+        let (_, patch) = git(&["diff", "--cached", "--binary", "HEAD"]);
+        let red = format!("{}/red.patch", dir.str());
+        sys::write_bytes(Path::new(&red), &patch);
+
+        fs::remove_file(format!("{repo}/test_it.py")).expect("unlink");
+        std::os::unix::fs::symlink(&target, format!("{repo}/test_it.py")).expect("symlink");
+
+        super::plant_canary(&repo, &red);
+
+        assert_eq!(
+            fs::read_to_string(&target).expect("target readable"),
+            "ORIGINAL",
+            "the canary followed a symlink out of the tree it was planting in"
+        );
+        sys::remove_tree(&dir.str());
+    }
+
+    /// E-44: the probe replaces a pass and rescues nothing.
+    ///
+    /// A jail whose suite failed honestly is reported as it failed, whatever the
+    /// probe found: `red_canary` only ever runs one for a jail already classed
+    /// `Pass`, and this is the call that trusts it. Mutating the guard to
+    /// override unconditionally would relabel a real `FAIL(1)` as tampering-
+    /// adjacent, which is a worse lie than the hole it closes.
+    #[test]
+    fn e44_a_neutered_index_replaces_a_pass_and_never_a_failure() {
+        let dir = scratch("neutered");
+        let dir_s = dir.str();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+            secrets: Vec::new(),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+        let started = sys::clock();
+        for (index, rc) in [(0, "0\n"), (1, "1\n")] {
+            fs::write(format!("{dir_s}/w{index}.log"), "said\n").expect("w log");
+            fs::write(format!("{dir_s}/w{index}.rc"), "0\n").expect("w rc");
+            fs::write(format!("{dir_s}/v{index}.log"), "ran\n").expect("v log");
+            fs::write(format!("{dir_s}/v{index}.rc"), rc).expect("v rc");
+        }
+        let attempts: Vec<Attempt> = [0usize, 1]
+            .into_iter()
+            .map(|index| Attempt {
+                index,
+                provider: Provider::Claude,
+                patch: b"a patch\n".to_vec(),
+                staged: Staged::Ready(format!("{dir_s}/v{index}")),
+            })
+            .collect();
+
+        // Both indices reported neutered; only the passing one may change.
+        let rows = collect(
+            &Config::default(),
+            &paths,
+            &attempts,
+            &[0, 1],
+            started,
+            started,
+        );
+        let (first, second) = (rows.first().expect("row 0"), rows.get(1).expect("row 1"));
+        assert_eq!(first.verdict, Verdict::RedNeutered, "a pass is replaced");
+        assert_eq!(
+            second.verdict,
+            Verdict::Fail(1),
+            "a jail that failed on its own merits keeps its own verdict"
+        );
+
+        // And with nothing reported, the pass stands.
+        let clean = collect(&Config::default(), &paths, &attempts, &[], started, started);
+        assert_eq!(clean.first().expect("row 0").verdict, Verdict::Pass);
+        sys::remove_tree(&dir_s);
     }
 }

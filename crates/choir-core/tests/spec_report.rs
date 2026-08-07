@@ -526,3 +526,47 @@ fn e42_a_mounted_credential_is_redacted_from_artifacts() {
     // And a run with no credentials never rewrites anything.
     assert!(report::redact(b"anything at all", &[]).is_none());
 }
+
+/// E-44: the probe's path guard refuses everything that is not plainly inside
+/// the tree.
+///
+/// These paths come from a patch a model wrote, and Choir writes to them
+/// directly rather than through `git apply`, so this is the only thing that
+/// refuses `../`. A rejected path costs one file's worth of probe coverage; an
+/// accepted one is a write outside the tree.
+#[test]
+fn e44_the_canary_path_guard_refuses_escapes() {
+    for good in [
+        "test_c.py",
+        "tests/test_c.py",
+        "a dir/test it.py",
+        "quo'te.py",
+        "..hidden/x.py",
+        "a..b/x.py",
+    ] {
+        assert!(report::safe_relative(good), "{good} is inside the tree");
+    }
+    for bad in [
+        "../escape.py",
+        "a/../../escape.py",
+        "/etc/passwd",
+        "",
+        "a//b.py",
+        "..",
+        "a/..",
+        "tests/../../x",
+    ] {
+        assert!(!report::safe_relative(bad), "{bad} must be refused");
+    }
+}
+
+/// E-44: a neutered run is not a pass, and says which refusal it is.
+#[test]
+fn e44_a_neutered_verdict_is_not_a_pass() {
+    assert!(!Verdict::RedNeutered.passed());
+    assert_eq!(Verdict::RedNeutered.label(), "RED NEUTERED");
+    // Distinct from the other two red refusals: the approved files are intact
+    // and the gate did run, so neither of those names this.
+    assert_ne!(Verdict::RedNeutered.label(), Verdict::RedTampered.label());
+    assert_ne!(Verdict::RedNeutered.label(), Verdict::RedGate.label());
+}

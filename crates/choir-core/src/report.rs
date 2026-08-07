@@ -389,3 +389,30 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 pub fn find_redacted(data: &[u8]) -> bool {
     find(data, REDACTED).is_some()
 }
+
+/// The bytes that replace an approved test to prove the suite still runs it
+/// (E-44).
+///
+/// Two independent syntax errors, because this must not parse as code in a
+/// language Choir has never heard of: a bare prose line is two juxtaposed names
+/// in every language that has names, and the delimiters are never closed. A
+/// runner that somehow executes this and reports success has already proved the
+/// point the probe is making.
+pub const CANARY: &[u8] =
+    b"choir canary: this approved test was replaced to prove the suite still runs it\n(((\n";
+
+/// Whether a patch-declared path may be written inside a tree Choir owns
+/// (E-44).
+///
+/// The paths come from a patch a model wrote, and Choir writes to them directly
+/// rather than through `git apply`, so nothing else refuses `../` on its behalf.
+/// Total over arbitrary input, and deliberately narrow: a rejected path costs
+/// one file's worth of probe coverage, an accepted `..` costs a write outside
+/// the tree.
+#[must_use]
+pub fn safe_relative(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\0')
+        && path.split('/').all(|part| part != ".." && !part.is_empty())
+}
