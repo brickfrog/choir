@@ -416,3 +416,31 @@ pub fn safe_relative(path: &str) -> bool {
         && !path.contains('\0')
         && path.split('/').all(|part| part != ".." && !part.is_empty())
 }
+
+/// A planted test that is valid where it lands and must be reported as a
+/// failure (E-45).
+///
+/// The unparseable canary proves an approved test file is *read*. It cannot
+/// prove the test *ran*: a hook that skips or xfails every item reads the file,
+/// chokes on the planted bytes, and the suite fails for the wrong reason —
+/// which reads as innocent. Catching that needs a test the runner collects and
+/// reports as failing, and that shape is language-specific, so this is a table.
+///
+/// Being wrong here costs only coverage, never a false accusation: the probe is
+/// believed solely when a control jail has shown this exact content failing on
+/// the unpatched tree (C-46). An entry that does not parse, does not get
+/// collected, or names a framework the repository does not use makes the
+/// control pass, and a control that passes silences the probe.
+///
+/// One entry, because one is what has been measured. The table grows the same
+/// way: by a jail proving the shape fails before it is trusted to accuse.
+#[must_use]
+pub fn canary_test(path: &str) -> Option<&'static [u8]> {
+    let (_, extension) = path.rsplit_once('.')?;
+    match extension {
+        "py" => Some(
+            b"def test_choir_canary():\n                  assert False, \"choir canary: a planted failing test was not reported as a failure\"\n",
+        ),
+        _ => None,
+    }
+}

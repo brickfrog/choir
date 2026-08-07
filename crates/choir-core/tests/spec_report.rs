@@ -570,3 +570,83 @@ fn e44_a_neutered_verdict_is_not_a_pass() {
     assert_ne!(Verdict::RedNeutered.label(), Verdict::RedTampered.label());
     assert_ne!(Verdict::RedNeutered.label(), Verdict::RedGate.label());
 }
+
+/// E-45: the planted-failing-test table answers only for shapes it knows.
+///
+/// A miss must be silence, not a guess: an entry that does not parse or does not
+/// get collected would make the control jail pass, and C-46 believes the probe
+/// only when its control failed. Nothing here may return content for a file
+/// whose language it cannot name.
+#[test]
+fn e45_the_failing_canary_is_offered_only_for_known_shapes() {
+    let python = report::canary_test("tests/test_thing.py").expect("python is measured");
+    assert!(
+        python.starts_with(b"def test_choir_canary():"),
+        "the planted test must be collectable by name, not merely valid"
+    );
+    assert!(
+        String::from_utf8_lossy(python).contains("assert False"),
+        "the planted test must fail when it runs"
+    );
+    assert_eq!(report::canary_test("a dir/test_x.py"), Some(python));
+    // A bare extension matches, and is meant to: nothing here judges whether a
+    // path looks like a test. Planting into a file the runner does not collect
+    // makes the control pass, and C-46 silences a probe whose control passed —
+    // so the cost of a loose match is coverage, never an accusation.
+    assert_eq!(report::canary_test(".py"), Some(python));
+
+    for unknown in [
+        "test_thing.rb",
+        "Makefile",
+        "test_thing",
+        "src/lib.rs",
+        "",
+        "test.PY",
+    ] {
+        assert_eq!(
+            report::canary_test(unknown),
+            None,
+            "{unknown} has no measured shape and must be left to the unparseable canary"
+        );
+    }
+}
+
+/// C-46: the planted-failing-test probe accuses only behind a control that
+/// failed.
+///
+/// The whole truth table, because three of its four cells are silence and each
+/// is silence for a different reason. Without the control this probe would
+/// accuse any repository whose runner does not collect the planted shape —
+/// every language not in the table — which is the opposite of what it is for.
+#[test]
+fn c46_the_probe_accuses_only_behind_a_failing_control() {
+    // The finding: the same bytes fail unpatched and are called a pass here.
+    assert!(verdict::probe_accuses(Verdict::Fail(1), Verdict::Pass));
+    assert!(verdict::probe_accuses(Verdict::Fail(5), Verdict::Pass));
+    // The control passed: the planted test is not collected in this repository,
+    // so the probe beside it is measuring nothing.
+    assert!(!verdict::probe_accuses(Verdict::Pass, Verdict::Pass));
+    // The probe failed: the planted test was collected and reported. Honest.
+    assert!(!verdict::probe_accuses(Verdict::Fail(1), Verdict::Fail(1)));
+    assert!(!verdict::probe_accuses(Verdict::Pass, Verdict::Fail(1)));
+    // A control Choir's own deadline killed, or one whose jail never started,
+    // ran no test to completion and so demonstrated nothing about what this
+    // runner collects. Both are `!passed()`, which is why the licence is `Fail`
+    // and not merely "did not pass" (C-37, E-41).
+    assert!(!verdict::probe_accuses(
+        Verdict::Timeout(60),
+        Verdict::Timeout(60)
+    ));
+    assert!(
+        !verdict::probe_accuses(Verdict::Timeout(60), Verdict::Pass),
+        "a control the deadline killed licenses nothing"
+    );
+    assert!(
+        !verdict::probe_accuses(Verdict::Unrun, Verdict::Pass),
+        "a control whose jail never started licenses nothing"
+    );
+    assert!(
+        !verdict::probe_accuses(Verdict::ApplyFailed, Verdict::Pass),
+        "only a control that ran and failed shows the shape is collected"
+    );
+}

@@ -223,6 +223,30 @@ pub fn preserves_red(red: &[u8], green: &[u8]) -> bool {
     unpreserved_red(red, green).is_empty()
 }
 
+/// Whether the planted-failing-test probe is allowed to accuse (C-46).
+///
+/// `control` is the unpatched tree with the same test planted, and it is the
+/// only thing that makes the probe evidence rather than a guess: it must have
+/// *failed*, which is this repository's runner demonstrating that it collects
+/// that shape and reports it as a failure. A control that passed means the
+/// planted test is not collected here — wrong language, wrong framework, a path
+/// the runner filters — and then the probe beside it says nothing about the
+/// patch. A control that failed and a probe that passed is the finding: the same
+/// bytes, failing on the base tree and reported as success on the patched one.
+///
+/// `Fail` specifically, not merely "did not pass". A control Choir's deadline
+/// killed, or one whose jail never started, ran no test to completion and so
+/// demonstrated nothing about what this runner collects — and both of those are
+/// `!passed()`, which would otherwise license an accusation off a jail that
+/// measured nothing (C-37, E-41).
+///
+/// Extracted from the wave for the reason `timed_verdict` was: it is the whole
+/// decision, and left inline no unit test could reach it.
+#[must_use]
+pub const fn probe_accuses(control: Verdict, probe: Verdict) -> bool {
+    matches!(control, Verdict::Fail(_)) && probe.passed()
+}
+
 /// Whether Choir's own deadline fired: the jail ran at least as long as the
 /// budget Choir gave it (C-37).
 ///

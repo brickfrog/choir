@@ -209,11 +209,27 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   it can replace a pass and never rescue a failure, and it calls no provider, so
   `--red` still costs `2n+1` model calls. Like C-32 and C-36 this is a
   mechanical fact — Choir wrote the bytes it planted and read one exit code —
-  never a judgement of what the patch contains. It closes the half of C-36's
-  disclosed gap where the approved tests are not executed at all; a test that is
-  collected and executed but rigged to succeed runs the planted bytes, so the
-  probe stays silent and the audit's `SUSPECT` line remains the only thing that
-  speaks to it (E-44).
+  never a judgement of what the patch contains. It answers only whether the
+  approved file is *read*: a hook that skips or xfails every item reads the file
+  and chokes on the planted bytes, so the suite fails for the wrong reason and
+  this probe clears it. C-46 is the half that answers whether its tests *ran*
+  (E-44, E-45).
+- **C-46** Under `--red`, where the approved test's shape is one Choir has
+  measured, the C-45 jail is joined by two more: the same tree with the approved
+  tests replaced by a planted test the runner must report as failing, and the
+  *unpatched* tree with the identical planting. The probe accuses only when the
+  control `Fail`ed and the probe passed — the control failing is this
+  repository's own runner demonstrating that it collects that shape and reports
+  it as a failure, which is what makes the probe evidence instead of a guess. A
+  control that passed means the shape is not collected here, and silences the
+  probe; a control that timed out or never started ran no test to completion and
+  licenses nothing, so the test is `Fail` and not merely "did not pass" (C-37,
+  E-41). Being wrong about a shape therefore costs coverage and can never
+  produce an accusation. The shape table is `report::canary_test` and it grows
+  only by measurement. All of C-45 and C-46's jails join one wave, so they cost
+  one wave of wall time however many patches passed, and none calls a provider.
+  Every one of their logs is copied into `--out` (C-28): they are the only
+  evidence for the gravest verdict the table prints.
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -509,6 +525,26 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   planted bytes and fails, so the probe stays silent. Separating a rigged pass
   from an honest one needs to know what an assertion means, which is the one
   thing Choir refuses to guess.
+- **E-45** E-44's probe answered a narrower question than it was documented as
+  answering. It replaces approved tests with bytes that cannot execute, which
+  proves the file is *read*; the entry claimed the uncaught class was a test
+  "collected and executed but rigged", and a skipped test is neither. Measured
+  on the shipped build: a patch adding nothing but a `conftest.py` whose
+  `pytest_collection_modifyitems` marks every item skipped — `c.py` still
+  `return a - b`, the implementation never written — took `PASS` and a
+  `git apply` line. That is the simplest cheat available and the probe called it
+  clean, because the skip hook reads the planted bytes, chokes, and the suite
+  fails for a reason that looks innocent.
+  Catching it needs a planted test the runner *collects and reports as failing*,
+  which is language-specific, and a guess would accuse honest work in every
+  language not guessed. So the guess is checked before it is believed: the same
+  content is planted on the unpatched tree in the same wave, and the probe is
+  read only if that control failed (C-46). Measured end to end: control `1
+  failed`, probe `1 skipped`, row `RED NEUTERED`, and both logs in `--out`.
+  Both legitimate shapes stay clean, and three real providers on a real red run
+  with both probes live all passed. What remains uncaught is a test that runs
+  and is rigged to succeed — a fixture stubbing the code under test — and a
+  language whose shape is not yet in the table, which fails as silence.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is

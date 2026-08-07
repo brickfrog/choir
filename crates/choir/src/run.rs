@@ -1070,8 +1070,20 @@ fn verify_wave(
     )
 }
 
-/// Replace every readable file the red patch created with bytes that cannot
-/// execute, and return how many were planted (E-44).
+/// Which canary a jail is planted with (E-44, E-45).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Canary {
+    /// Bytes that cannot execute. Proves the approved file is read at all, in
+    /// any language, and can only ever fail to notice something (E-44).
+    Unparseable,
+    /// A test the runner collects and must report as failing. Proves the
+    /// approved file's tests are *run*, and only where the shape is known and a
+    /// control has confirmed it (E-45).
+    Failing,
+}
+
+/// Replace every readable file the red patch created with a canary, and return
+/// how many were planted (E-44, E-45).
 ///
 /// The paths come from `git apply --numstat -z`, so git does the parsing: `-z`
 /// removes its quoting rules, and a path holding a space, a quote or a newline
@@ -1085,8 +1097,10 @@ fn verify_wave(
 /// and lands on no file, which costs the probe one file's coverage and can
 /// write nothing. Unlinked before writing, never truncated in place, for E-35's
 /// reason: the tree was built from an untrusted patch, and a symlink sitting at
-/// the path would redirect the write out of it.
-fn plant_canary(repo: &str, red_patch: &str) -> usize {
+/// the path would redirect the write out of it. Written whether or not the path
+/// exists, because the control jail (C-46) plants into a tree that never had
+/// these files.
+fn plant_canary(repo: &str, red_patch: &str, kind: Canary) -> usize {
     let (code, out) = sys::git(&["-C", repo, "apply", "--numstat", "-z", red_patch]);
     if code != 0 {
         return 0;
@@ -1105,43 +1119,60 @@ fn plant_canary(repo: &str, red_patch: &str) -> usize {
         if added == "-" || !report::safe_relative(path) {
             continue;
         }
+        let content: &[u8] = match kind {
+            Canary::Unparseable => report::CANARY,
+            // No known shape for this file, so nothing here can be trusted to
+            // fail. Skipped rather than guessed: the control would clear it.
+            Canary::Failing => match report::canary_test(path) {
+                Some(shape) => shape,
+                None => continue,
+            },
+        };
         let full = format!("{repo}/{path}");
-        if !Path::new(&full).is_file() {
-            continue;
-        }
         sys::remove_tree(&full);
-        sys::write_bytes(Path::new(&full), report::CANARY);
+        sys::write_bytes(Path::new(&full), content);
         planted += 1;
     }
     planted
 }
 
-/// Wave 3, `--red` only: prove the approved tests still run (E-44).
+/// One patch's probes: the jails that will speak for or against its pass.
+struct Probes {
+    index: usize,
+    /// Green tree, approved tests unparseable (E-44). Always present.
+    unparseable: String,
+    /// Green tree and unpatched tree, approved tests replaced by a planted
+    /// failing test (E-45, C-46). Present only where the shape is known.
+    failing: Option<(String, String)>,
+}
+
+/// Wave 3, `--red` only: prove the approved tests still run (C-45, C-46).
 ///
 /// C-36 holds the red patch's files to the byte, and a green wave that leaves
 /// every one of them untouched can still add a file beside them that stops them
-/// running — a runner config excluding the path, a collection hook dropping it.
+/// counting — a runner config excluding the path, a hook skipping every item.
 /// The approved bytes are then present and irrelevant, and the `TESTS` column
-/// reads `PASS` for a suite that executed none of them. That is the hole the
-/// README has always disclosed and nothing measured.
+/// reads `PASS` for a suite that ran none of them. That is the hole the README
+/// has always disclosed and nothing measured.
 ///
-/// The probe is the patched tree the verify jail just passed, with every
-/// approved test replaced by bytes that cannot execute. A suite that runs those
-/// tests now fails; one that still reports success was not running them. That
-/// is a fact about the run, not a judgement of the patch: no notion of what a
-/// test is, no list of runner-config filenames, no parsing of any output.
+/// Two probes, because one question has two halves and only the first has a
+/// language-free answer:
 ///
-/// Only for a jail that already passed, because only a pass makes the claim the
-/// probe checks — which also means the probe can never turn a failure into a
-/// pass, and bounds it to one extra test run per passing patch. It calls no
-/// provider, so `--red` still costs `2n+1` model calls.
+/// * *Is the file read?* Replace every approved test with bytes that cannot
+///   execute. A suite that still reports success never opened them. This needs
+///   no notion of what a test is and works in any language (E-44).
+/// * *Do its tests run?* Replace them with a test the runner collects and must
+///   report as failing. A suite that still reports success collected a failing
+///   test and called it a pass. The shape is language-specific, so it is
+///   believed only when the same content, planted on the *unpatched* tree, made
+///   that jail fail — a control run in this same wave (C-46). No control, or a
+///   control that passed, and the probe says nothing.
 ///
-/// What it does not catch: a test that is collected and executed but rigged to
-/// succeed — a fixture stubbing the code under test, a hook marking it xfail.
-/// Those run the approved file, so the canary is read and the probe stays
-/// silent. Measured, along with the two shapes below. Separating a rigged pass
-/// from an honest one needs to know what the assertions mean, which is the one
-/// thing Choir refuses to guess.
+/// Only for a jail already classed `Pass`, because only a pass makes the claim
+/// being checked; the probes replace a pass and can never rescue a failure.
+/// None of them calls a provider, so `--red` still costs `2n+1` model calls,
+/// and all of them join one wave, so they cost one wave of wall time however
+/// many patches passed.
 fn red_canary(
     cfg: &Config,
     paths: &Paths,
@@ -1149,7 +1180,7 @@ fn red_canary(
     verify_started: SystemTime,
 ) -> Vec<usize> {
     let mut jails = Vec::new();
-    let mut candidates = Vec::new();
+    let mut probes = Vec::new();
 
     for attempt in attempts {
         let Staged::Ready(verified) = &attempt.staged else {
@@ -1159,22 +1190,43 @@ fn red_canary(
             continue;
         }
         let index = attempt.index;
-        let slot = paths.slot("n", index);
-        prep_slot(&slot, &cfg.test_cmd);
-        sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
-        let repo = format!("{slot}/repo");
-        let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
-        if code != 0 {
+        let red = format!("{}/patches/{index}.red.patch", paths.dir);
+
+        // The green tree, exactly as the verify jail had it, with the approved
+        // tests replaced. Nothing readable approved means nothing to prove ran:
+        // an all-binary red patch is the only way here, and C-36 approves none
+        // of it, so a probe over an empty set would report every patch neutered.
+        let Some(unparseable) = self::probe_slot(cfg, paths, index, &red, Canary::Unparseable)
+        else {
             continue;
+        };
+
+        // The same tree with a planted failing test, and the unpatched tree with
+        // the same planting to prove that test is collected and does fail here.
+        let failing =
+            self::probe_slot(cfg, paths, index, &red, Canary::Failing).and_then(|probe| {
+                let control = paths.slot("k", index);
+                prep_slot(&control, &cfg.test_cmd);
+                sys::copy_tree(&paths.base_repo(), &format!("{control}/repo"));
+                if plant_canary(&format!("{control}/repo"), &red, Canary::Failing) == 0 {
+                    return None;
+                }
+                Some((probe, control))
+            });
+
+        jails.push(Jail::new(
+            jail::verify(cfg, &unparseable),
+            unparseable.clone(),
+        ));
+        if let Some((probe, control)) = &failing {
+            jails.push(Jail::new(jail::verify(cfg, probe), probe.clone()));
+            jails.push(Jail::new(jail::verify(cfg, control), control.clone()));
         }
-        // Nothing readable was approved, so there is nothing to prove ran. An
-        // all-binary red patch is the only way here, and C-36 approves none of
-        // it: a probe over an empty set would report every such patch neutered.
-        if plant_canary(&repo, &format!("{}/patches/{index}.red.patch", paths.dir)) == 0 {
-            continue;
-        }
-        jails.push(Jail::new(jail::verify(cfg, &slot), slot.clone()));
-        candidates.push((index, slot));
+        probes.push(Probes {
+            index,
+            unparseable,
+            failing,
+        });
     }
 
     if jails.is_empty() {
@@ -1183,11 +1235,60 @@ fn red_canary(
     println!("[canary] {} jails started", jails.len());
     let started = run_wave(&jails);
 
-    candidates
-        .into_iter()
-        .filter(|(_, slot)| timed_verdict(slot, started, cfg.timeout).passed())
-        .map(|(index, _)| index)
-        .collect()
+    let mut neutered = Vec::new();
+    for probe in probes {
+        let passed = |slot: &str| timed_verdict(slot, started, cfg.timeout).passed();
+        // Every probe jail's log into `--out` (C-28). These are the only
+        // evidence for the gravest verdict in the table, and without this they
+        // die with the scratch tree exactly like the baseline log used to.
+        let log = |name: &str, slot: &str| {
+            let text = sys::read_text(Path::new(&format!("{slot}.log")));
+            write_out(
+                paths,
+                &format!("{}.{name}.log", probe.index),
+                text.as_bytes(),
+            );
+        };
+        log("canary", &probe.unparseable);
+        let never_read = passed(&probe.unparseable);
+        let never_ran = probe.failing.as_ref().is_some_and(|(p, control)| {
+            log("canary-failing", p);
+            log("canary-control", control);
+            verdict::probe_accuses(
+                timed_verdict(control, started, cfg.timeout),
+                timed_verdict(p, started, cfg.timeout),
+            )
+        });
+        if never_read || never_ran {
+            neutered.push(probe.index);
+        }
+    }
+    neutered
+}
+
+/// Build one probe tree: the base tree, the green patch, and a canary planted
+/// over every approved test. `None` when nothing was planted, which is the only
+/// honest answer for a probe with nothing to say.
+fn probe_slot(
+    cfg: &Config,
+    paths: &Paths,
+    index: usize,
+    red: &str,
+    kind: Canary,
+) -> Option<String> {
+    let prefix = match kind {
+        Canary::Unparseable => "n",
+        Canary::Failing => "f",
+    };
+    let slot = paths.slot(prefix, index);
+    prep_slot(&slot, &cfg.test_cmd);
+    let repo = format!("{slot}/repo");
+    sys::copy_tree(&paths.base_repo(), &repo);
+    let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
+    if code != 0 {
+        return None;
+    }
+    (plant_canary(&repo, red, kind) > 0).then_some(slot)
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -2832,7 +2933,7 @@ mod tests {
         let red = format!("{}/red.patch", dir.str());
         sys::write_bytes(Path::new(&red), &patch);
 
-        let planted = super::plant_canary(&repo, &red);
+        let planted = super::plant_canary(&repo, &red, super::Canary::Unparseable);
 
         assert_eq!(planted, 1, "the readable test, and only it, is replaced");
         assert_eq!(
@@ -2886,7 +2987,7 @@ mod tests {
         fs::remove_file(format!("{repo}/test_it.py")).expect("unlink");
         std::os::unix::fs::symlink(&target, format!("{repo}/test_it.py")).expect("symlink");
 
-        super::plant_canary(&repo, &red);
+        super::plant_canary(&repo, &red, super::Canary::Unparseable);
 
         assert_eq!(
             fs::read_to_string(&target).expect("target readable"),
