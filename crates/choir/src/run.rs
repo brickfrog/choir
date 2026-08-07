@@ -357,17 +357,40 @@ fn clear_stale_output(out: &str, n: usize) {
     }
 }
 
-/// Drop repository config that aims host git outside the copy (E-26).
+/// Drop repository config that aims host git outside the copy (E-26) or runs a
+/// program for it (E-34).
 ///
 /// `cp -a` brings the user's own `.git/config` into every jail, and a
 /// `core.worktree` there points host `git` back at their real checkout. Measured
 /// here: both providers did the work, `git add -A` inspected the user's tree
 /// instead of the jail's, found it clean, and Choir reported `0 B` for both — a
 /// whole paid run discarded. `core.hooksPath`/`core.fsmonitor` name programs.
+///
+/// The rest of that config names programs too, and host git runs them in the
+/// copy before any jail exists (E-34): a `filter.<n>.clean` fires under
+/// `commit_base`'s `git add -A`, and a `diff.<n>.textconv` under the `git diff`
+/// that extracts a patch. Both measured, both as the user, outside the sandbox.
+/// Whole sections go rather than named keys, because the attacker picks `<n>`
+/// and `clean`/`smudge`/`process`/`textconv`/`driver` are only the ones that
+/// exist today — a denylist of keys is a list this repository would maintain
+/// against git's release notes forever.
 fn strip_host_config(dir: &str) {
     let cfg = format!("{dir}/repo/.git/config");
     for key in ["core.worktree", "core.hooksPath", "core.fsmonitor"] {
         let _ = sys::git(&["config", "--file", &cfg, "--unset-all", key]);
+    }
+
+    let (_, listed) = sys::git(&["config", "--file", &cfg, "--list", "--name-only"]);
+    let names = String::from_utf8_lossy(&listed);
+    let mut sections: Vec<&str> = names
+        .lines()
+        .filter(|key| matches!(key.split('.').next(), Some("filter" | "diff" | "merge")))
+        .filter_map(|key| key.rsplit_once('.').map(|(section, _)| section))
+        .collect();
+    sections.sort_unstable();
+    sections.dedup();
+    for section in sections {
+        let _ = sys::git(&["config", "--file", &cfg, "--remove-section", section]);
     }
 }
 
@@ -2131,5 +2154,54 @@ mod tests {
             assert_ne!(fs::read_to_string(&path).unwrap_or_default(), "STALE");
         }
         sys::remove_tree(&paths.dir);
+    }
+
+    /// E-34: nothing in a hostile repository's `.git` runs on the host.
+    ///
+    /// `cp -a` copies `.git` whole and Choir then drives host `git` inside that
+    /// copy. A `pre-commit` hook, a `filter.<n>.clean` and a `diff.<n>.textconv`
+    /// each executed as the user, outside every jail, before the first jail
+    /// started. The hook is blocked in `sys::git` for every call; the two config
+    /// programs by removing their whole sections here.
+    #[test]
+    fn e34_a_hostile_repo_git_dir_runs_nothing_on_the_host() {
+        let dir = scratch("hostile-git");
+        let dir_s = dir.str();
+        let repo = format!("{dir_s}/repo");
+        let marks = format!("{dir_s}/marks");
+        fs::create_dir_all(&repo).expect("repo");
+        fs::create_dir_all(&marks).expect("marks");
+        git(&repo, &["init", "-q"]);
+        fs::write(format!("{repo}/f.txt"), "x\n").expect("f.txt");
+        fs::write(
+            format!("{repo}/.gitattributes"),
+            "*.txt filter=ev diff=ev\n",
+        )
+        .expect("attrs");
+        for (key, mark) in [
+            ("filter.ev.clean", "clean"),
+            ("diff.ev.textconv", "textconv"),
+        ] {
+            let prog = format!("sh -c \"echo ran > {marks}/{mark}; cat\"");
+            git(&repo, &["config", key, &prog]);
+        }
+        let hook = format!("{repo}/.git/hooks/pre-commit");
+        fs::write(&hook, format!("#!/bin/sh\necho ran > {marks}/hook\n")).expect("hook");
+        sys::run("chmod", &["+x", &hook]);
+
+        super::strip_host_config(&dir_s);
+        super::commit_base(&dir_s);
+        // The extraction command, against a change the "provider" made.
+        fs::write(format!("{repo}/f.txt"), "y\n").expect("edit");
+        let _ = sys::git(&["-C", &repo, "add", "-A"]);
+        let _ = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
+
+        for mark in ["hook", "clean", "textconv"] {
+            assert!(
+                !Path::new(&format!("{marks}/{mark}")).exists(),
+                "a repository-controlled {mark} program executed on the host"
+            );
+        }
+        sys::remove_tree(&dir_s);
     }
 }

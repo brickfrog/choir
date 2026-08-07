@@ -440,6 +440,22 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-34** A hostile repository executing on the host → hooks disabled for every
+  host `git` call, and every program-valued config section removed from the base
+  copy. `cp -a` brings `.git/` along whole, and Choir then runs host `git add -A`,
+  `git commit` and `git diff` inside that copy. Three paths were live and all
+  three were measured on the built product, as the user, outside every jail,
+  before the first jail started: a `.git/hooks/pre-commit` under `commit_base`, a
+  `filter.<n>.clean` under its `git add -A`, and a `diff.<n>.textconv` under the
+  `git diff --cached --binary` that extracts a patch. E-26 unset `core.hooksPath`
+  and that key does not reach this: it only *redirects* the hook search, so the
+  default `.git/hooks` kept running. `sys::git` now passes
+  `core.hooksPath=/dev/null`, which is not a directory, so no hook is ever found;
+  `strip_host_config` removes the whole `filter`, `diff` and `merge` sections
+  rather than named keys, because the attacker chooses the subsection name and
+  `clean`/`smudge`/`process`/`textconv`/`driver` are only today's list. `merge` is
+  included without a demonstration: Choir never merges, so no driver has been
+  observed to run. Found by a scan of this repository, not by a test here.
 - **E-33** A previous run's output is never presented as this run's. `--out` is
   not scoped per run and writes are silent on failure, so a patch that failed to
   write left the earlier run's file in place -- and the `git apply <out>/N.patch`

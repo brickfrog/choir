@@ -51,7 +51,22 @@ pub fn git(args: &[&str]) -> (i32, Vec<u8>) {
         // step is a `cp -a` of that very tree, which hit the lock between
         // readdir and stat and exited 1. Silent before, so it never surfaced;
         // fatal now, so it aborts a run for a file nobody wants copied.
-        .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
+        //
+        // And never run a hook (E-34). `cp -a` brings the repository's own
+        // `.git/hooks` into the copy, and `commit_base` commits there with host
+        // `git`: a `pre-commit` in a repository Choir was pointed at executed on
+        // the host, as the user, outside every jail, before the first jail
+        // started. Unsetting `core.hooksPath` does not reach it -- that key only
+        // *redirects* the search, and the default `.git/hooks` still runs.
+        // `/dev/null` is not a directory, so no hook is ever found.
+        .args([
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
