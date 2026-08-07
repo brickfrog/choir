@@ -17,7 +17,7 @@ fn c11_shared_prefix() {
     assert_eq!(
         p,
         "nsjail -Mo -q -t 9 \
-         --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
+         --rlimit_as 32768 --rlimit_fsize 8192 --rlimit_nofile 4096 \
          --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
@@ -79,6 +79,7 @@ fn c12_provider_jail() {
         "/r/w1",
         "-B /r/w1/repo:/repo",
         "/x/codex",
+        &[],
         Provider::Codex,
     );
 
@@ -102,6 +103,7 @@ fn c12_provider_jail() {
         "/r/a",
         "-R /r/repo:/repo",
         "/x/claude",
+        &[],
         Provider::Claude,
     );
     assert!(c.contains(" -E CLAUDE_CONFIG_DIR=/cred -R /r/repo:/repo "));
@@ -131,6 +133,7 @@ fn c14_two_templates_only() {
         "/r/w0",
         "-B /r/w0/repo:/repo",
         "/b",
+        &[],
         Provider::Claude,
     );
     let verify = jail::verify(&jail_cfg(5, &[]), "/r/w0");
@@ -225,6 +228,7 @@ fn c27_cache_is_mounted_read_only_in_both_templates() {
         "/r/w1",
         "-B /r/w1/repo:/repo",
         "/b",
+        &[],
         Provider::Claude,
     );
     assert!(p.contains(want), "provider jail lost the cache: {p}");
@@ -260,6 +264,7 @@ fn c43_agy_home_is_the_credential_mount() {
         "/r/s",
         "-B /r/s/repo:/repo",
         "/b",
+        &[],
         Provider::Agy,
     );
     assert_eq!(j.matches("-E HOME=").count(), 1);
@@ -275,6 +280,7 @@ fn c43_agy_home_is_the_credential_mount() {
             "/r/s",
             "-B /r/s/repo:/repo",
             "/b",
+            &[],
             p,
         );
         assert!(o.contains("-E HOME=/tmp"), "{p} lost its /tmp home");

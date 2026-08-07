@@ -235,7 +235,7 @@ proptest! {
         timeout in 1_u32..100_000,
         provider in any_provider(),
     ) {
-        let j = jail::provider(&jail_cfg(timeout, &[]), "/r", "/r/s", "-B /r/s/repo:/repo", "/b", provider);
+        let j = jail::provider(&jail_cfg(timeout, &[]), "/r", "/r/s", "-B /r/s/repo:/repo", "/b", &[], provider);
         let prov = format!("/prov/{}", provider.name());
         prop_assert!(j.contains(&prov));
         prop_assert_eq!(j.matches("-E HOME=").count(), 1);

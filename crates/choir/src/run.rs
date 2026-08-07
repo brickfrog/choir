@@ -595,7 +595,15 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
             let binary = prep_provider_slot(&slot, &prompt, provider);
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
             let mount = format!("-B {}/repo:/repo", Quoted(&slot));
-            let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
+            let command = jail::provider(
+                cfg,
+                &paths.dir,
+                &slot,
+                &mount,
+                &binary,
+                &sys::provider_helpers(&binary, provider.name()),
+                provider,
+            );
             Jail::new(command, slot)
         })
         .collect();
@@ -687,7 +695,15 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
                 let _ = sys::git(&["-C", &repo, "apply", &red]);
             }
             let mount = format!("-B {}/repo:/repo", Quoted(&slot));
-            let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
+            let command = jail::provider(
+                cfg,
+                &paths.dir,
+                &slot,
+                &mount,
+                &binary,
+                &sys::provider_helpers(&binary, provider.name()),
+                provider,
+            );
             Jail::new(command, slot)
         })
         .collect();
@@ -976,7 +992,15 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
         Quoted(&paths.dir),
         Quoted(&instruction)
     );
-    let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
+    let command = jail::provider(
+        cfg,
+        &paths.dir,
+        &slot,
+        &mount,
+        &binary,
+        &sys::provider_helpers(&binary, provider.name()),
+        provider,
+    );
     let jails = [Jail::new(command, slot.clone())];
     run_wave(&jails);
 
@@ -2335,5 +2359,43 @@ mod tests {
             !Path::new(&marker).exists(),
             "a quoted path executed a command"
         );
+    }
+
+    /// E-38: a provider's helper binaries are found beside it and named for the
+    /// provider, not for the host file.
+    ///
+    /// The CLI resolves helpers from `/proc/self/exe`, which in a jail is
+    /// `/prov/<name>`, so a host binary carrying a version in its filename must
+    /// still produce `/prov/<name>-<suffix>`.
+    #[test]
+    fn e38_provider_helpers_are_named_for_the_jail_not_the_host_file() {
+        let dir = scratch("provider-helpers");
+        let bin = format!("{}/codex-0.147.0", dir.str());
+        for name in [
+            "codex-0.147.0",
+            "codex-0.147.0-code-mode-host",
+            "codex-0.147.0-sandbox",
+        ] {
+            fs::write(format!("{}/{name}", dir.str()), "x").expect("write");
+        }
+        // Neither a helper of this binary: one is a different CLI, one is the
+        // prefix without the separator.
+        fs::write(format!("{}/claude-helper", dir.str()), "x").expect("write");
+        fs::write(format!("{}/codex-0.147.0x", dir.str()), "x").expect("write");
+
+        let found = sys::provider_helpers(&bin, "codex");
+        let jailed: Vec<&str> = found.iter().map(|(_, n)| n.as_str()).collect();
+        assert_eq!(
+            jailed,
+            ["codex-code-mode-host", "codex-sandbox"],
+            "helpers must be named for the provider and exclude unrelated files"
+        );
+        assert!(
+            found.iter().all(|(host, _)| Path::new(host).exists()),
+            "every helper must name a real host path"
+        );
+        // The binary itself is not its own helper.
+        assert!(!found.iter().any(|(host, _)| *host == bin));
+        sys::remove_tree(&dir.str());
     }
 }

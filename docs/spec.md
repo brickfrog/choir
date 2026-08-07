@@ -347,15 +347,19 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   was satisfied rather than a self-set exam. The banner names every wave's
   providers before the run spends anything, including the red wave, which doubles
   the bill.
-- **C-38** A jail's resources are bounded, not disabled: `--rlimit_as 8192`,
+- **C-38** A jail's resources are bounded, not disabled: `--rlimit_as 32768`,
   `--rlimit_fsize 8192`, `--rlimit_nofile 4096`, `--rlimit_nproc 2048`,
   `--rlimit_stack 64`. `--disable_rlimits` was reached for because nsjail caps
   file size at 1 MB by default, which truncates a git index write and yields an
   empty patch with no distinguishable signal; it took every other bound down
   with it, so an untrusted patch had an unbounded fork bomb, allocation and
   write. Measured under these limits: `truncate -s 9G` fails with `File too
-  large`, a 10 GB allocation raises `MemoryError`, and `cargo test --workspace`
-  builds and runs unchanged. A `--cache` path is mounted read-only at its own
+  large` and `cargo test --workspace` builds and runs unchanged. `--rlimit_as`
+  was 8 GB until E-38: it bounds address space, not memory, and a provider's JS
+  runtime reserves gigabytes it never commits, so no value both admits that
+  runtime and holds allocation near 8 GB. Measured in a jail: at 8 GB a 10 GB
+  allocation raised `MemoryError`, at 32 GB it succeeds, and a 40 GB one still
+  raises. Coarser, not gone; `--timeout` is what ends a runaway. A `--cache` path is mounted read-only at its own
   host path, so every file beside the dependencies is readable too; each name in
   `jail::CREDENTIAL_FILES` that exists inside a cache is bind-mounted from
   `/dev/null` after the cache mount, which leaves the dependencies readable and
@@ -440,6 +444,20 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-38** A provider CLI that grew a second binary → its helpers are mounted
+  beside it, and the address-space bound admits their runtime. Codex 0.147.0
+  ships `codex-code-mode-host` next to `codex` and resolves it from
+  `/proc/self/exe`, which inside a jail is `/prov/codex`. Two separate failures,
+  both measured on the built product, and both of which the table reported as
+  `wrote nothing` with the model's own complaint in the last-line column — a
+  broken mount presented as a provider declining, which is the one thing the
+  table must never do. First the helper was absent: `failed to spawn code-mode
+  host /prov/codex-code-mode-host`. Mounted, it spawned and died: `code-mode host
+  closed its stdout`, reproduced on the host under `ulimit -v` and bisected to
+  between 12 and 16 GB, which is `--rlimit_as` (C-38). Helpers are matched by
+  filename prefix rather than a list of known names — the set belongs to the
+  vendor — and named inside the jail from the provider's own name, so a host
+  `codex-0.147.0` with its own helper beside it still resolves.
 - **E-37** Shell metacharacters in a scratch path → every host path Choir
   interpolates is one quoted shell word. Both the wave script and the nsjail
   command line are strings handed to `/bin/sh -c`, and every scratch path

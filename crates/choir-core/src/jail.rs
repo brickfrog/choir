@@ -75,8 +75,21 @@ pub fn credential_masks(cache: &str) -> Vec<String> {
 /// distinguishable signal. Turning every limit off to fix that also handed an
 /// untrusted patch an unbounded fork bomb, an unbounded allocation and an
 /// unbounded write. Measured on this host: with the limits below, a 9 GB
-/// `truncate` fails with `File too large` and a 10 GB allocation raises
-/// `MemoryError`, while `cargo test --workspace` builds and runs unchanged.
+/// `truncate` fails with `File too large`, and `cargo test --workspace` builds
+/// and runs unchanged.
+///
+/// `--rlimit_as` is 32 GB rather than the 8 GB that first shipped (E-38). Codex
+/// 0.147.0 spawns a JS runtime beside itself, and V8 *reserves* a multi-gigabyte
+/// address-space cage it never commits: measured on the host, 12 GB fails and
+/// 16 GB works, with the failure surfacing as `code-mode host closed its stdout`
+/// and every codex jail then reporting `wrote nothing`. `RLIMIT_AS` cannot tell a
+/// reservation from an allocation, so no value both admits that runtime and holds
+/// allocation near 8 GB. Measured in a jail, this is exactly what it cost: at
+/// 8 GB a 10 GB allocation raised `MemoryError`, at 32 GB it succeeds, and a
+/// 40 GB one still raises. The bound is coarser, not gone, and the per-jail
+/// `--timeout` is what actually ends a runaway. `--rlimit_fsize`, `--rlimit_nproc` and
+/// `--rlimit_stack` are unchanged and still bound the write, the fork and the
+/// stack.
 ///
 /// `/dev/urandom` is required or Claude Code dies with a bare SIGSEGV.
 /// `-R /etc/passwd -R /etc/group` are required or nothing in the jail can name
@@ -86,7 +99,7 @@ pub fn prefix(cfg: &Config, slot: &str, home: &str) -> String {
     let q = Quoted(slot);
     let mut s = format!(
         "nsjail -Mo -q -t {} \
-         --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
+         --rlimit_as 32768 --rlimit_fsize 8192 --rlimit_nofile 4096 \
          --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
@@ -149,6 +162,7 @@ pub fn provider(
     slot: &str,
     repo_mount: &str,
     binary: &str,
+    helpers: &[(String, String)],
     provider: Provider,
 ) -> String {
     let name = provider.name();
@@ -162,10 +176,16 @@ pub fn provider(
     let q = Quoted(slot);
     let r = Quoted(run_dir);
     let b = Quoted(binary);
+    // A CLI that spawns a helper from its own directory needs it beside the
+    // binary inside the jail too (E-38).
+    let mut aides = String::new();
+    for (host, jailed) in helpers {
+        let _ = write!(aides, " -R {}:/prov/{jailed}", Quoted(host));
+    }
     format!(
         "{} --use_pasta -R {r}/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates \
-         -R {b}:/prov/{name} -R {r}/patches:/patches \
+         -R {b}:/prov/{name}{aides} -R {r}/patches:/patches \
          -B {q}/cred:/cred{env} {repo_mount} \
          -- /usr/bin/sh -c '{command}'",
         prefix(cfg, slot, provider.home())

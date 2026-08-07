@@ -310,6 +310,44 @@ pub fn resolve_binary(name: &str) -> String {
     sh_line(&format!("readlink -f \"$(command -v {name})\""))
 }
 
+/// A provider CLI's helper binaries, as (host path, name inside `/prov`) (E-38).
+///
+/// Codex 0.147.0 began shipping `codex-code-mode-host` beside `codex` and
+/// spawning it from its own directory. Choir mounted one file, so every codex
+/// jail wrote nothing and the table read `wrote nothing` with the model's
+/// complaint in the last-line column — a broken mount presented as a provider
+/// declining, which is the one thing the table must never do.
+///
+/// Matched by prefix rather than by a list of known helper names: the set is the
+/// provider's to change, and a name list here would be a list this repository
+/// maintains against three vendors' release notes. The jail-side name is built
+/// from the provider's own name, not the host filename, because the CLI looks
+/// beside its `argv[0]` — which is `/prov/<name>` — so a host `codex-0.147.0`
+/// with a `codex-0.147.0-code-mode-host` beside it still resolves.
+pub fn provider_helpers(binary: &str, name: &str) -> Vec<(String, String)> {
+    let path = Path::new(binary);
+    let (Some(dir), Some(file)) = (path.parent(), path.file_name().and_then(|f| f.to_str())) else {
+        return Vec::new();
+    };
+    let prefix = format!("{file}-");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, String)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let found = entry.file_name().into_string().ok()?;
+            let suffix = found.strip_prefix(&prefix)?;
+            let host = entry.path().to_str()?.to_owned();
+            Some((host, format!("{name}-{suffix}")))
+        })
+        .collect();
+    // `read_dir` order is the filesystem's, and the jail command line is compared
+    // byte for byte by the sealed-jail tests.
+    found.sort();
+    found
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
