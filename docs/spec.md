@@ -199,8 +199,9 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   intent. Choir does not detect them: a test command can be read off a marker
   file (C-35), but an artifact glob has no such marker, and one guessed wrong
   deletes the model's work from its patch with nothing on screen to say so.
-- **C-36** Under `--red`, every file the red patch created or modified must
-  appear byte-identical in the green patch. When one does not, the attempt is
+- **C-36** Under `--red`, every file the red patch created or modified with
+  readable hunks must appear byte-identical in the green patch (E-43 narrows
+  this from every file). When one does not, the attempt is
   skipped with the verdict `RED TAMPERED`, no `git apply` line is printed for
   it, and it does not count as a pass. Without this the gate proves a test was
   real once and then stops defending it: the green jail's tree is seeded with
@@ -213,7 +214,8 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   file's section of the diff is byte-identical in the two exactly when the
   file's content is; the decision is therefore a byte equality over the sections
   a `diff --git ` line opens, with no path parsing and no notion of what a test
-  is. Deleting an approved file is tampering and so is editing one; adding files
+  is. A section holding a `GIT binary patch` payload is not approved (E-43).
+  Deleting an approved file is tampering and so is editing one; adding files
   is not, because implementation is new files plus edits to files the red patch
   never touched. An empty green patch is checked here rather than by C-19: after
   a gate that admitted, it means every approved test is gone. Like C-32 this is
@@ -444,6 +446,29 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-43** A binary section of the red patch is not an approved test. The red
+  wave runs its own tests to watch them fail, so its patch carries whatever that
+  run produced; measured on a plain Python repository, that is
+  `__pycache__/*.pyc`. A byproduct compiled from the implementation *must*
+  change when the green wave writes that implementation, which is the one thing
+  the green wave is required to do, so byte-identity refuses every honest run.
+  Measured before the fix, against both real providers: `RED TAMPERED` on two
+  patches whose `test_c.py` was byte-identical in red and green — the only
+  differing sections were the two `.pyc` files, and one of them differed only
+  because a fresh copy of the tree gave its source a new mtime. Red mode was
+  therefore unusable on any repository that does not already `.gitignore` its
+  build output, and it failed in the direction that discredits the tool: the
+  gravest verdict in the table, on correct work. No exit code, clock, or second
+  run separates a byproduct from a test before the green wave exists — the gate
+  tree reproduces the same bytes the red tree did — so the guarantee narrows to
+  what a test can actually be: hunks someone could read. The discriminator is
+  the `GIT binary patch` line git itself writes, not a path, extension, or list
+  of formats, so a source file cannot buy the exemption by being named `.pyc`.
+  A binary fixture a green wave swaps to pass its own test is outside the
+  guarantee and stays the audit's `SUSPECT` line to name. The refusal now prints
+  the `diff --git` header of every file it refused over: `RED TAMPERED` is the
+  gravest thing the table says and the row has one column, so without a name a
+  weakened test and a byproduct read identically.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is

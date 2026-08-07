@@ -145,8 +145,23 @@ fn file_sections(patch: &[u8]) -> Vec<Vec<&[u8]>> {
     sections
 }
 
-/// Under `--red`: does the green patch still carry every file the red patch
-/// created or modified, byte for byte (C-36)?
+/// The line `git diff --binary` writes in place of a file's text hunks (E-43).
+const BINARY_MARKER: &[u8] = b"GIT binary patch";
+
+/// Whether a section carries a binary payload rather than readable hunks.
+///
+/// Structural, read off the patch git wrote: the marker occupies a whole line
+/// of its own, and no text hunk can produce one, because every body line of a
+/// unified diff carries a leading `+`, `-` or space. No path, no extension, no
+/// list of formats.
+fn is_binary(section: &[&[u8]]) -> bool {
+    section
+        .iter()
+        .any(|line| line.strip_suffix(b"\n").unwrap_or(line) == BINARY_MARKER)
+}
+
+/// Under `--red`: the red-approved files the green patch failed to carry
+/// through byte for byte, named by their `diff --git` header line (C-36).
 ///
 /// The Red Gate proves a test failed once. Without this, nothing keeps proving
 /// it: the green jail's tree is seeded with its own red patch, so a jail that
@@ -165,16 +180,37 @@ fn file_sections(patch: &[u8]) -> Vec<Vec<&[u8]>> {
 /// it cannot reproduce those bytes. Files the red patch never touched are not
 /// examined, which is what leaves the green wave free to add implementation.
 ///
+/// Binary sections are not approved (E-43). A red wave that runs its own tests
+/// leaves the byproducts in its patch — measured: `__pycache__/*.pyc` — and a
+/// byproduct compiled from the implementation *must* change when the green wave
+/// writes that implementation, which is the one thing green is required to do.
+/// Demanding byte-identity of it fails every honest run, and it failed both
+/// real providers on a patch whose test file was byte-identical. No exit code,
+/// clock or second run distinguishes such a file from a test before the green
+/// wave exists, so the guarantee narrows to what a test can actually be: hunks
+/// someone could read. A binary fixture a green wave swaps is outside it, and
+/// stays the audit's `SUSPECT` line to name.
+///
 /// A direct comparison rather than a hash, for the reason
 /// [`crate::report::distinct_patches`] gives: `n` is small, so this is total and
-/// exact, costs no dependency, and has no collision story. Vacuously true for an
-/// empty red patch, which the gate has already refused as `RedGate`.
+/// exact, costs no dependency, and has no collision story. Empty for an empty
+/// red patch, which the gate has already refused as `RedGate`.
 #[must_use]
-pub fn preserves_red(red: &[u8], green: &[u8]) -> bool {
+pub fn unpreserved_red(red: &[u8], green: &[u8]) -> Vec<String> {
     let kept = file_sections(green);
     file_sections(red)
         .iter()
-        .all(|section| kept.contains(section))
+        .filter(|section| !is_binary(section) && !kept.contains(section))
+        .filter_map(|section| section.first().copied())
+        .map(|header| String::from_utf8_lossy(header).trim_end().to_owned())
+        .collect()
+}
+
+/// Under `--red`: does the green patch still carry every red-approved file,
+/// byte for byte (C-36)? See [`unpreserved_red`], which names the failures.
+#[must_use]
+pub fn preserves_red(red: &[u8], green: &[u8]) -> bool {
+    unpreserved_red(red, green).is_empty()
 }
 
 /// Whether Choir's own deadline fired: the jail ran at least as long as the
@@ -262,7 +298,7 @@ pub fn reason(
 
 #[cfg(test)]
 mod tests {
-    use super::{from_rc, from_run, preserves_red, reason, Verdict};
+    use super::{from_rc, from_run, preserves_red, reason, unpreserved_red, Verdict};
 
     /// The red patch every case below starts from: one new test file, exactly
     /// what a red wave produces. Written as real `git diff --cached --binary`
@@ -536,5 +572,97 @@ mod tests {
     fn c36_tampering_is_not_a_pass() {
         assert!(!Verdict::RedTampered.passed());
         assert_eq!(Verdict::RedTampered.label(), "RED TAMPERED");
+    }
+
+    /// A build artifact as `git diff --binary` writes it: the payload git emits
+    /// for a file it will not diff as text.
+    const RED_PYC: &[u8] = b"diff --git a/__pycache__/calc.pyc b/__pycache__/calc.pyc\n\
+        new file mode 100644\n\
+        index 0000000..a1b2c3d\n\
+        GIT binary patch\n\
+        literal 475\n\
+        zcmZ9KOA5j;5QX2Ekc1yTn1sYIWn~1qL0AsMg\n\
+        \n";
+
+    /// The same artifact after the green wave wrote the implementation it is
+    /// compiled from: a different payload, necessarily.
+    const GREEN_PYC: &[u8] = b"diff --git a/__pycache__/calc.pyc b/__pycache__/calc.pyc\n\
+        new file mode 100644\n\
+        index 0000000..9f8e7d6\n\
+        GIT binary patch\n\
+        literal 470\n\
+        zcmX@j%1o1Tfq{Xhg[NyRVW3TVQ2rP1nGh\n\
+        \n";
+
+    /// E-43: a byproduct in the red patch is not an approved test.
+    ///
+    /// The red wave runs its own tests to watch them fail, so its patch carries
+    /// whatever that run produced. A byproduct compiled from the implementation
+    /// changes exactly when the green wave writes that implementation, so
+    /// demanding it byte-for-byte refuses every honest run. Measured on the
+    /// built product against both real providers before this: `RED TAMPERED` on
+    /// two patches whose test file was byte-identical.
+    #[test]
+    fn e43_a_binary_byproduct_is_not_a_red_approved_test() {
+        let red = [RED, RED_PYC].concat();
+        let green = [IMPL, RED, GREEN_PYC].concat();
+        assert!(
+            preserves_red(&red, &green),
+            "a byproduct that changed with the implementation is not tampering"
+        );
+        // Absent altogether is the same non-finding: the green wave is not
+        // obliged to reproduce a file it never had reason to write.
+        assert!(preserves_red(&red, &[IMPL, RED].concat()));
+    }
+
+    /// E-43: the exemption is the payload, not the path.
+    ///
+    /// A test lives in hunks someone can read, and every such file is still held
+    /// to the byte. Nothing here looks at a name or an extension, so a source
+    /// file cannot buy the exemption by being called `.pyc`.
+    #[test]
+    fn e43_text_is_still_held_to_the_byte_beside_a_binary_section() {
+        let weakened: &[u8] = b"diff --git a/test_calc.py b/test_calc.py\n\
+            new file mode 100644\n\
+            index 0000000..3f5b0d1\n\
+            --- /dev/null\n\
+            +++ b/test_calc.py\n\
+            @@ -0,0 +1,2 @@\n\
+            +def test_add():\n\
+            +    assert True\n";
+        let red = [RED, RED_PYC].concat();
+        let green = [IMPL, weakened, GREEN_PYC].concat();
+        assert!(
+            !preserves_red(&red, &green),
+            "a weakened test beside a byproduct is still tampering"
+        );
+
+        // A text file whose name says binary is text, and is still held.
+        let named_pyc: &[u8] = b"diff --git a/test_calc.pyc b/test_calc.pyc\n\
+            --- /dev/null\n\
+            +++ b/test_calc.pyc\n\
+            @@ -0,0 +1 @@\n\
+            +assert real\n";
+        assert!(!preserves_red(named_pyc, IMPL));
+    }
+
+    /// E-43: the failure names the file, and only the file that failed.
+    ///
+    /// `RED TAMPERED` is the gravest thing the table says about a patch and the
+    /// row has one column of room. Without a name, a weakened test and a
+    /// byproduct Choir should never have approved read identically.
+    #[test]
+    fn e43_the_refusal_names_the_file_it_refused_over() {
+        let red = [RED, RED_PYC].concat();
+        let named = unpreserved_red(&red, IMPL);
+        assert_eq!(
+            named,
+            vec!["diff --git a/test_calc.py b/test_calc.py".to_owned()],
+            "the dropped test is named, the byproduct is not mentioned"
+        );
+        assert!(
+            unpreserved_red(&red, &[IMPL, RED, GREEN_PYC].concat()).is_empty(),
+            "a preserved patch names nothing"
+        );
     }
 }

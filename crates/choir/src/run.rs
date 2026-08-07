@@ -955,7 +955,20 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
             // green one diffs the same base, so this is a byte comparison of
             // two files Choir wrote itself.
             let red = reds.get(index).map_or([].as_slice(), Vec::as_slice);
-            if cfg.red && !verdict::preserves_red(red, &patch) {
+            let tampered = if cfg.red {
+                verdict::unpreserved_red(red, &patch)
+            } else {
+                Vec::new()
+            };
+            if !tampered.is_empty() {
+                // Name them. `RED TAMPERED` is the gravest thing the table can
+                // say about a patch, and the row has one column of room; a user
+                // who cannot see which file broke the seal cannot tell a
+                // weakened test from a byproduct Choir should never have
+                // approved (E-43).
+                for header in &tampered {
+                    println!("choir: green wave did not preserve a red-approved file: {header}");
+                }
                 return Attempt {
                     index,
                     provider,
