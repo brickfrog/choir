@@ -15,6 +15,7 @@
 use core::fmt::Write as _;
 
 use crate::config::{Config, Provider};
+use crate::Quoted;
 
 /// One jail ready to run: its full command line and the slot it reports into.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,13 +83,14 @@ pub fn credential_masks(cache: &str) -> Vec<String> {
 /// uid 1000.
 #[must_use]
 pub fn prefix(cfg: &Config, slot: &str, home: &str) -> String {
+    let q = Quoted(slot);
     let mut s = format!(
         "nsjail -Mo -q -t {} \
          --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
          --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
-         -R {slot}/cmd:/cmd -B {slot}/tmp:/tmp -D /repo \
+         -R {q}/cmd:/cmd -B {q}/tmp:/tmp -D /repo \
          -E PATH=/usr/local/bin:/usr/bin -E HOME={home}",
         cfg.timeout
     );
@@ -157,11 +159,14 @@ pub fn provider(
         .cred_env()
         .map_or_else(String::new, |e| format!(" -E {e}=/cred"));
     let command = provider_command(provider);
+    let q = Quoted(slot);
+    let r = Quoted(run_dir);
+    let b = Quoted(binary);
     format!(
-        "{} --use_pasta -R {run_dir}/resolv.conf:/etc/resolv.conf \
+        "{} --use_pasta -R {r}/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates \
-         -R {binary}:/prov/{name} -R {run_dir}/patches:/patches \
-         -B {slot}/cred:/cred{env} {repo_mount} \
+         -R {b}:/prov/{name} -R {r}/patches:/patches \
+         -B {q}/cred:/cred{env} {repo_mount} \
          -- /usr/bin/sh -c '{command}'",
         prefix(cfg, slot, provider.home())
     )
@@ -175,8 +180,9 @@ pub fn provider(
 /// the program.
 #[must_use]
 pub fn verify(cfg: &Config, slot: &str) -> String {
+    let q = Quoted(slot);
     format!(
-        "{} -B {slot}/repo:/repo -- /usr/bin/sh /cmd",
+        "{} -B {q}/repo:/repo -- /usr/bin/sh /cmd",
         prefix(cfg, slot, "/tmp")
     )
 }

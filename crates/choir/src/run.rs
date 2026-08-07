@@ -13,6 +13,7 @@ use std::time::SystemTime;
 use choir_core::config::{unquotable, Config, CredSource, Provider};
 use choir_core::report::{self, Row};
 use choir_core::verdict::{self, Verdict};
+use choir_core::Quoted;
 use choir_core::{jail, wave, Jail, AUDIT_PROMPT};
 
 use crate::sys;
@@ -357,6 +358,25 @@ fn clear_stale_output(out: &str, n: usize) {
     }
 }
 
+/// Write one file into `--out`, never through a symlink already sitting there (E-35).
+///
+/// `fs::write` follows a symlink, and `--out` defaults to `./choir-out` inside a
+/// repository Choir was merely pointed at. A repository that ships
+/// `choir-out/0.patch -> ~/.ssh/authorized_keys` would have host Choir write
+/// model-controlled patch bytes into it. Unlinking first makes the write land on
+/// a new file every time; `rm -rf` on a symlink removes the link, not its target.
+///
+/// This exists as a chokepoint rather than a rule because the property held by
+/// accident before it: every name written here also appeared in
+/// `clear_stale_output`, which unlinks for an unrelated reason (C-44, stale
+/// transcripts) and is a separate list. A fifth write site that nobody thought to
+/// add there is an arbitrary host file write, and nothing would have said so.
+fn write_out(out: &str, name: &str, bytes: &[u8]) {
+    let path = format!("{out}/{name}");
+    sys::remove_tree(&path);
+    sys::write_bytes(Path::new(&path), bytes);
+}
+
 /// Drop repository config that aims host git outside the copy (E-26) or runs a
 /// program for it (E-34).
 ///
@@ -574,7 +594,7 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
             let slot = paths.slot("r", index);
             let binary = prep_provider_slot(&slot, &prompt, provider);
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
-            let mount = format!("-B {slot}/repo:/repo");
+            let mount = format!("-B {}/repo:/repo", Quoted(&slot));
             let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
             Jail::new(command, slot)
         })
@@ -666,7 +686,7 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
                 let red = format!("{}/patches/{index}.red.patch", paths.dir);
                 let _ = sys::git(&["-C", &repo, "apply", &red]);
             }
-            let mount = format!("-B {slot}/repo:/repo");
+            let mount = format!("-B {}/repo:/repo", Quoted(&slot));
             let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
             Jail::new(command, slot)
         })
@@ -737,7 +757,7 @@ fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8
     // bad patch rather than a diff Choir could not express.
     let (_, patch) = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
 
-    sys::write_bytes(Path::new(&format!("{}/{name}.patch", paths.out)), &patch);
+    write_out(&paths.out, &format!("{name}.patch"), &patch);
     sys::write_bytes(
         Path::new(&format!("{}/patches/{name}.patch", paths.dir)),
         &patch,
@@ -849,10 +869,7 @@ fn verify_wave(
     // transcripts destroys the two files that say why.
     for (name, slot) in [("0", &first), ("1", &second)] {
         let log = sys::read_text(Path::new(&format!("{slot}.log")));
-        sys::write_bytes(
-            Path::new(&format!("{}/baseline.{name}.log", paths.out)),
-            log.as_bytes(),
-        );
+        write_out(&paths.out, &format!("baseline.{name}.log"), log.as_bytes());
     }
 
     (
@@ -887,8 +904,9 @@ fn collect(
             let verdict = match &a.staged {
                 Staged::Ready(slot) => {
                     let log = sys::read_text(Path::new(&format!("{slot}.log")));
-                    sys::write_bytes(
-                        Path::new(&format!("{}/{}.verify.log", paths.out, a.index)),
+                    write_out(
+                        &paths.out,
+                        &format!("{}.verify.log", a.index),
                         log.as_bytes(),
                     );
                     timed_verdict(slot, verify_started, cfg.timeout)
@@ -897,10 +915,7 @@ fn collect(
             };
             let slot = paths.slot("w", a.index);
             let log = sys::read_text(Path::new(&format!("{slot}.log")));
-            sys::write_bytes(
-                Path::new(&format!("{}/{}.log", paths.out, a.index)),
-                log.as_bytes(),
-            );
+            write_out(&paths.out, &format!("{}.log", a.index), log.as_bytes());
             let rc = format!("{slot}.rc");
             Row {
                 index: a.index,
@@ -956,7 +971,11 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     // `/patches` are: `AUDIT_PROMPT` stays one string, identical every run.
     let instruction = format!("{}/instruction", paths.dir);
     sys::write_bytes(Path::new(&instruction), cfg.instruction.as_bytes());
-    let mount = format!("-R {}/repo:/repo -R {instruction}:/instruction", paths.dir);
+    let mount = format!(
+        "-R {}/repo:/repo -R {}:/instruction",
+        Quoted(&paths.dir),
+        Quoted(&instruction)
+    );
     let command = jail::provider(cfg, &paths.dir, &slot, &mount, &binary, provider);
     let jails = [Jail::new(command, slot.clone())];
     run_wave(&jails);
@@ -2203,5 +2222,118 @@ mod tests {
             );
         }
         sys::remove_tree(&dir_s);
+    }
+
+    /// E-35: a symlink planted in `--out` never redirects a write off the host
+    /// paths Choir owns.
+    ///
+    /// `--out` defaults to `./choir-out` inside the repository, so a repository
+    /// Choir is merely pointed at chooses these names. `fs::write` follows a
+    /// symlink; every write goes through `write_out`, which unlinks first.
+    /// Asserted against `write_out` directly rather than a full run, because the
+    /// bug this guards is a *fifth* write site added later — one that a run-shaped
+    /// test would not reach.
+    #[test]
+    fn e35_a_symlink_in_the_out_dir_never_redirects_a_write() {
+        let dir = scratch("out-symlink");
+        let out = format!("{}/out", dir.str());
+        let target = format!("{}/host-secret", dir.str());
+        fs::create_dir_all(&out).expect("out");
+        fs::write(&target, "ORIGINAL").expect("target");
+
+        for name in ["0.patch", "0.log", "0.verify.log", "baseline.0.log"] {
+            std::os::unix::fs::symlink(&target, format!("{out}/{name}")).expect("symlink");
+            super::write_out(&out, name, b"MODEL CONTROLLED");
+            assert_eq!(
+                fs::read_to_string(&target).expect("target readable"),
+                "ORIGINAL",
+                "writing {name} followed a symlink out of the output directory"
+            );
+            assert_eq!(
+                fs::read_to_string(format!("{out}/{name}")).expect("written"),
+                "MODEL CONTROLLED",
+                "{name} was not written where it belongs"
+            );
+        }
+        sys::remove_tree(&dir.str());
+    }
+
+    /// E-36: a nested `.git` symlink never aims the permission repair out of the
+    /// copy.
+    ///
+    /// `chmod -R` dereferences the path named on its command line, and
+    /// `flatten_nested_repos` names whatever `find` returned from a repository
+    /// Choir was pointed at. Measured on the built product before the guard: a
+    /// tree outside the copy went `0400` to `0700`.
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn e36_a_nested_git_symlink_never_chmods_outside_the_copy() {
+        let dir = scratch("nested-git-symlink");
+        let dir_s = dir.str();
+        let victim = format!("{dir_s}/victim");
+        let repo = format!("{dir_s}/repo/sub");
+        fs::create_dir_all(format!("{victim}/inner")).expect("victim");
+        fs::create_dir_all(&repo).expect("repo");
+        sys::run("chmod", &["0400", &format!("{victim}/inner")]);
+        std::os::unix::fs::symlink(&victim, format!("{repo}/.git")).expect("symlink");
+
+        super::flatten_nested_repos(&dir_s);
+
+        let mode = fs::metadata(format!("{victim}/inner"))
+            .expect("victim readable")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o400,
+            "the permission repair followed a symlink out of the copy"
+        );
+        assert!(
+            !Path::new(&format!("{repo}/.git")).exists(),
+            "the nested link itself should still be removed"
+        );
+        assert!(
+            Path::new(&victim).exists(),
+            "removal followed the link instead of unlinking it"
+        );
+        sys::remove_tree(&dir_s);
+    }
+
+    /// E-37: `/bin/sh` reads a quoted path back as exactly the original.
+    ///
+    /// The string shape is asserted in `choir_core`; this is the claim that
+    /// matters — a real shell, the one the wave script runs under, recovers the
+    /// path byte for byte and executes nothing along the way.
+    #[test]
+    fn e37_the_shell_reads_a_quoted_path_back() {
+        let marker = format!("{}/e37-marker", std::env::temp_dir().display());
+        let _ = fs::remove_file(&marker);
+        let hostile = [
+            "/tmp/plain",
+            "/tmp/has space",
+            &format!("/tmp/x$(echo BAD > {marker})y"),
+            &format!("/tmp/a`echo BAD > {marker}`b"),
+            "quote'inside",
+            "back\\slash",
+            "semi;colon&pipe|",
+            "new\nline",
+        ];
+        for raw in hostile {
+            let (code, out) = sys::run(
+                "/bin/sh",
+                &["-c", &format!("printf %s {}", super::Quoted(raw))],
+            );
+            assert_eq!(code, 0, "the shell rejected {raw:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&out),
+                *raw,
+                "the shell did not read {raw:?} back unchanged"
+            );
+        }
+        assert!(
+            !Path::new(&marker).exists(),
+            "a quoted path executed a command"
+        );
     }
 }

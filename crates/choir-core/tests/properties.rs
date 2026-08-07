@@ -12,6 +12,7 @@ use proptest::prelude::*;
 use choir_core::config::Config;
 use choir_core::config::{rotation_slot, Providers};
 use choir_core::report::{self, Row};
+use choir_core::Quoted;
 use choir_core::{jail, parse, verdict, wave, Invocation, Jail, Provider, Verdict};
 
 fn any_provider() -> impl Strategy<Value = Provider> {
@@ -103,9 +104,12 @@ proptest! {
         prop_assert!(script.contains("\ntrap sweep EXIT\n"));
         prop_assert!(script.contains("\ntrap 'sweep; exit 130' INT TERM HUP\n"));
         for jail in &jails {
-            let log = format!("> {}.log", jail.slot);
-            let rc = format!("> {}.rc", jail.slot);
-            let cred = format!(" '{}/cred'", jail.slot);
+            // Quoted, not raw (E-37): the slot descends from the user's TMPDIR
+            // and this script is handed to `/bin/sh -c`, so the property is that
+            // each path arrives as exactly one shell word.
+            let log = format!("> {}", Quoted(&format!("{}.log", jail.slot)));
+            let rc = format!("> {}", Quoted(&format!("{}.rc", jail.slot)));
+            let cred = format!(" {}", Quoted(&format!("{}/cred", jail.slot)));
             prop_assert!(script.contains(&log));
             prop_assert!(script.contains(&rc));
             // Once to unlock, once to remove — slots need not be distinct.

@@ -440,6 +440,35 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-37** Shell metacharacters in a scratch path → every host path Choir
+  interpolates is one quoted shell word. Both the wave script and the nsjail
+  command line are strings handed to `/bin/sh -c`, and every scratch path
+  descends from `mktemp -d` under the caller's `TMPDIR`. Unquoted, both measured
+  on the built product: a `TMPDIR` holding `$(...)` executed it on the host
+  before any jail started, and — the case that reaches ordinary users — a
+  `TMPDIR` with a *space* in it split the redirection so every jail failed `255`
+  and the baseline reported `FAIL(255)` with no indication why. `Quoted` wraps in
+  single quotes and closes/escapes/reopens on `'`, the one character they cannot
+  carry. Applied at the redirections, the credential sweep, the three `nsjail`
+  slot mounts, the resolv/patches mounts, the provider binary and the caller-built
+  repo and instruction mounts. `TMPDIR` is the caller's own environment, so this
+  is not a repository-borne attack; it is the same class as E-23 refusing `'` and
+  `:` in `--cache`, one layer further in.
+- **E-35** A symlink planted in `--out` never redirects a write. `--out` defaults
+  to `./choir-out` inside the repository, so a repository Choir is merely pointed
+  at chooses those names, and `fs::write` follows a symlink:
+  `choir-out/0.patch -> ~/.ssh/authorized_keys` would take model-controlled patch
+  bytes. This was not exploitable as shipped and no run is known to have been
+  redirected — every name written into `--out` also appeared in
+  `clear_stale_output`, which unlinks it first. That is the whole defence, and it
+  is an accident: `clear_stale_output` exists for stale transcripts (C-44), it is
+  a second list maintained by hand, and the two agreed only because they had so
+  far been edited together. A fifth write site added without a matching entry is
+  an arbitrary host file write. The writes now go through one `write_out` that
+  unlinks before writing, so the property is a property of the write rather than
+  of two lists staying in sync. Recorded because the guard was sound and the
+  reasoning behind it was not — the same shape as E-26, which read correctly and
+  stopped nothing (E-34).
 - **E-34** A hostile repository executing on the host → hooks disabled for every
   host `git` call, and every program-valued config section removed from the base
   copy. `cp -a` brings `.git/` along whole, and Choir then runs host `git add -A`,

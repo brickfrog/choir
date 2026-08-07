@@ -183,7 +183,18 @@ pub fn remove_tree(path: &str) {
 /// extraction. Measured firing. The uid mapping into a jail is the identity, so
 /// the user owns every file a model made and the unlock cannot fail. `u+rwX`
 /// touches the execute bit on directories only, so patch file modes are intact.
+///
+/// Never through a symlink (E-36). `chmod -R` does not follow links it meets
+/// during the walk, but it dereferences the one named on the command line, and
+/// `flatten_nested_repos` names whatever `find` turned up under a repository
+/// Choir was pointed at. A repository shipping `sub/.git -> /tmp/victimtree` was
+/// measured taking that tree from `0400` to `0700` on the host, outside the copy.
+/// The unlock exists to open a tree a jail locked; a link is never that tree, and
+/// `rm -rf` removes the link itself without needing any of this.
 pub fn unlock_tree(path: &str) {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return;
+    }
     let _ = run("chmod", &["-R", "u+rwX", path]);
 }
 

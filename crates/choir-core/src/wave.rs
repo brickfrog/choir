@@ -2,7 +2,10 @@
 //!
 //! Implements contract items C-16 and C-17 of `docs/spec.md`.
 
+use core::fmt::Write as _;
+
 use crate::jail::Jail;
+use crate::Quoted;
 
 /// Build the script for one wave (C-16, C-17, C-40).
 ///
@@ -44,10 +47,10 @@ pub fn script(jails: &[Jail]) -> String {
         out.push_str("( ");
         out.push_str(&jail.command);
         out.push_str(" < /dev/null > ");
-        out.push_str(&jail.slot);
-        out.push_str(".log 2>&1 ; echo $? > ");
-        out.push_str(&jail.slot);
-        out.push_str(".rc ) &\n");
+        let _ = write!(out, "{}", Quoted(&format!("{}.log", jail.slot)));
+        out.push_str(" 2>&1 ; echo $? > ");
+        let _ = write!(out, "{}", Quoted(&format!("{}.rc", jail.slot)));
+        out.push_str(" ) &\n");
     }
     out.push_str("wait");
     out
@@ -58,8 +61,7 @@ pub fn script(jails: &[Jail]) -> String {
 /// knowledge of which waves carry a credential.
 fn push_cred_paths(out: &mut String, jails: &[Jail]) {
     for jail in jails {
-        out.push_str(" '");
-        out.push_str(&jail.slot);
-        out.push_str("/cred'");
+        out.push(' ');
+        let _ = write!(out, "{}", Quoted(&format!("{}/cred", jail.slot)));
     }
 }

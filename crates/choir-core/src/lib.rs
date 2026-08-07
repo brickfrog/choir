@@ -9,6 +9,35 @@
 //! one. The dependency is one-way: this crate cannot perform I/O because it
 //! cannot name it.
 
+use core::fmt;
+
+/// One host path as a single POSIX shell word (E-37).
+///
+/// Every scratch path Choir builds descends from `mktemp -d` under the user's
+/// `TMPDIR`, and both the wave script and the nsjail command line are strings
+/// handed to `/bin/sh -c`. Unquoted, a space in `TMPDIR` split the redirection
+/// and every jail failed `255`; `$(...)` in it executed on the host. Both
+/// measured. `'` is the only character single quotes cannot carry, so it closes,
+/// escapes and reopens — the one escaping rule POSIX guarantees.
+///
+/// `Display` rather than a `String` return: the wave script is the hottest string
+/// this program builds and the callers already push piecewise, so quoting costs
+/// no allocation.
+pub struct Quoted<'a>(pub &'a str);
+
+impl fmt::Display for Quoted<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("'")?;
+        for (i, part) in self.0.split('\'').enumerate() {
+            if i > 0 {
+                f.write_str("'\\''")?;
+            }
+            f.write_str(part)?;
+        }
+        f.write_str("'")
+    }
+}
+
 pub mod config;
 pub mod jail;
 pub mod report;
@@ -81,3 +110,28 @@ pub fn green_prompt(instruction: &str) -> String {
 pub use config::{parse, Config, CredSource, Invocation, ParseError, Provider, Providers};
 pub use jail::Jail;
 pub use verdict::Verdict;
+
+#[cfg(test)]
+mod quoting_tests {
+    use super::*;
+
+    /// E-37: a path becomes one shell word whatever it contains.
+    ///
+    /// String assertions only — this crate spawns nothing. The round trip
+    /// through a real `/bin/sh` is `e37_the_shell_reads_a_quoted_path_back`
+    /// in the binary crate, which is allowed to spawn.
+    #[test]
+    fn a_hostile_path_becomes_one_shell_word() {
+        assert_eq!(Quoted("/tmp/plain").to_string(), "'/tmp/plain'");
+        assert_eq!(Quoted("/tmp/has space").to_string(), "'/tmp/has space'");
+        assert_eq!(
+            Quoted("/tmp/x$(id)y").to_string(),
+            "'/tmp/x$(id)y'",
+            "command substitution stays inert inside single quotes"
+        );
+        // The one character single quotes cannot carry: close, escape, reopen.
+        assert_eq!(Quoted("a'b").to_string(), "'a'\\''b'");
+        assert_eq!(Quoted("'").to_string(), "''\\'''");
+        assert_eq!(Quoted("").to_string(), "''");
+    }
+}

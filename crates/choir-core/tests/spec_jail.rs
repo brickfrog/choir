@@ -21,7 +21,7 @@ fn c11_shared_prefix() {
          --rlimit_nproc 2048 --rlimit_stack 64 \
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
-         -R /r/w1/cmd:/cmd -B /r/w1/tmp:/tmp -D /repo \
+         -R '/r/w1'/cmd:/cmd -B '/r/w1'/tmp:/tmp -D /repo \
          -E PATH=/usr/local/bin:/usr/bin -E HOME=/tmp"
     );
 }
@@ -84,12 +84,12 @@ fn c12_provider_jail() {
 
     assert!(j.starts_with(&jail::prefix(&jail_cfg(9, &[]), "/r/w1", "/tmp")));
     assert!(j.contains(
-        " --use_pasta -R /r/resolv.conf:/etc/resolv.conf \
+        " --use_pasta -R '/r'/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates"
     ));
     assert!(j.contains(
-        " -R /x/codex:/prov/codex -R /r/patches:/patches \
-         -B /r/w1/cred:/cred -E CODEX_HOME=/cred -B /r/w1/repo:/repo "
+        " -R '/x/codex':/prov/codex -R '/r'/patches:/patches \
+         -B '/r/w1'/cred:/cred -E CODEX_HOME=/cred -B /r/w1/repo:/repo "
     ));
     assert!(j.ends_with(
         " -- /usr/bin/sh -c '/prov/codex exec --skip-git-repo-check \
@@ -119,7 +119,7 @@ fn c13_verify_jail_is_sealed() {
     assert!(!j.contains("/prov"));
     assert!(!j.contains("resolv.conf"));
     assert!(!j.contains("/patches"));
-    assert!(j.ends_with(" -B /r/v0/repo:/repo -- /usr/bin/sh /cmd"));
+    assert!(j.ends_with(" -B '/r/v0'/repo:/repo -- /usr/bin/sh /cmd"));
 }
 
 /// C-14: exactly two shapes exist, and they differ only as documented.
@@ -163,8 +163,8 @@ fn c16_wave_script() {
          rm -rf '/r/w0/cred' '/r/w1/cred'; }\n\
          trap sweep EXIT\n\
          trap 'sweep; exit 130' INT TERM HUP\n\
-         ( nsjail a < /dev/null > /r/w0.log 2>&1 ; echo $? > /r/w0.rc ) &\n\
-         ( nsjail b < /dev/null > /r/w1.log 2>&1 ; echo $? > /r/w1.rc ) &\n\
+         ( nsjail a < /dev/null > '/r/w0.log' 2>&1 ; echo $? > '/r/w0.rc' ) &\n\
+         ( nsjail b < /dev/null > '/r/w1.log' 2>&1 ; echo $? > '/r/w1.rc' ) &\n\
          wait"
     );
 }
@@ -265,8 +265,8 @@ fn c43_agy_home_is_the_credential_mount() {
     assert_eq!(j.matches("-E HOME=").count(), 1);
     assert!(j.contains("-E HOME=/cred"));
     assert!(!j.contains("-E HOME=/tmp"));
-    assert!(j.contains("-B /r/s/cred:/cred"));
-    assert!(j.contains("-R /b:/prov/agy"));
+    assert!(j.contains("-B '/r/s'/cred:/cred"));
+    assert!(j.contains("-R '/b':/prov/agy"));
     // The other two keep their own variable and a /tmp home.
     for p in [Provider::Claude, Provider::Codex] {
         let o = jail::provider(
