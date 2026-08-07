@@ -384,3 +384,127 @@ fn e23_cache_rejects_unquotable_paths() {
     // Every other byte survives: a space is quoted, not refused.
     assert!(parse(&argv(&["x", "--test", "t", "--cache", "/a b$`"])).is_ok());
 }
+
+// C-39: per-wave provider assignment.
+
+/// An unset wave inherits the rotation, so C-39 changes no default.
+#[test]
+fn c39_unset_roles_inherit_the_rotation() {
+    let cfg = config(&["x", "--test", "t", "-n", "2"]);
+    assert_eq!(cfg.red_plan(), cfg.plan());
+    assert_eq!(cfg.audit_provider(), Provider::Claude);
+}
+
+/// `--role red=` is the whole point: the falsifier is not the implementer.
+#[test]
+fn c39_red_can_be_a_different_model_than_work() {
+    let cfg = config(&[
+        "x",
+        "--test",
+        "t",
+        "-n",
+        "2",
+        "--red",
+        "--providers",
+        "claude",
+        "--role",
+        "red=codex",
+    ]);
+    assert!(cfg.plan().iter().all(|&(_, p)| p == Provider::Claude));
+    assert!(cfg.red_plan().iter().all(|&(_, p)| p == Provider::Codex));
+    // Every jail's tests come from a model that never gets to satisfy them.
+    assert!(cfg
+        .plan()
+        .iter()
+        .zip(cfg.red_plan())
+        .all(|(&(_, w), (_, r))| w != r));
+}
+
+/// The audit override replaces rotation index `n` rather than shifting it.
+#[test]
+fn c39_audit_override_wins() {
+    let cfg = config(&["x", "--test", "t", "--role", "audit=codex"]);
+    assert_eq!(cfg.audit_provider(), Provider::Codex);
+    assert_eq!(cfg.plan(), config(&["x", "--test", "t"]).plan());
+}
+
+/// `--providers` *is* `--role work=`, so both is a collision, not a precedence
+/// contest. Naming any wave twice is the same error.
+#[test]
+fn c39_a_wave_cannot_be_assigned_twice() {
+    for words in [
+        vec![
+            "x",
+            "--test",
+            "t",
+            "--providers",
+            "claude",
+            "--role",
+            "work=codex",
+        ],
+        vec![
+            "x",
+            "--test",
+            "t",
+            "--role",
+            "work=codex",
+            "--providers",
+            "claude",
+        ],
+        vec![
+            "x",
+            "--test",
+            "t",
+            "--role",
+            "audit=codex",
+            "--role",
+            "audit=claude",
+        ],
+        vec![
+            "x",
+            "--test",
+            "t",
+            "--role",
+            "red=codex",
+            "--role",
+            "red=claude",
+        ],
+    ] {
+        assert!(
+            matches!(parse(&argv(&words)), Err(ParseError::DuplicateRole(_))),
+            "accepted a double assignment: {words:?}"
+        );
+    }
+}
+
+/// Verify runs no model, so it is not a nameable wave (C-39).
+#[test]
+fn c39_verify_is_not_a_role() {
+    assert_eq!(
+        parse(&argv(&["x", "--test", "t", "--role", "verify=claude"])),
+        Err(ParseError::UnknownRole("verify".to_owned()))
+    );
+    assert_eq!(
+        parse(&argv(&["x", "--test", "t", "--role", "audit"])),
+        Err(ParseError::MalformedRole("audit".to_owned()))
+    );
+}
+
+/// The banner names the red wave, because it doubles what the run costs.
+#[test]
+fn c39_banner_names_every_wave_it_will_pay_for() {
+    let quiet = config(&["x", "--test", "t", "--providers", "claude"]);
+    assert!(!quiet.banner().contains("red jails"));
+    let loud = config(&[
+        "x",
+        "--test",
+        "t",
+        "--red",
+        "--providers",
+        "claude",
+        "--role",
+        "red=codex",
+    ]);
+    assert!(loud.banner().starts_with("red jails: 0=codex 1=codex;"));
+    assert!(loud.banner().contains("work jails: 0=claude 1=claude"));
+}

@@ -248,6 +248,21 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   every patch is still written and offered, and no verdict changes except a
   `FAIL` that was the deadline all along.
 
+- **C-39** Each model-bearing wave takes its providers from `--role <wave>=<list>`,
+  and from the `--providers` rotation when unset. The waves that can be named are
+  `red`, `work` and `audit`; `verify` cannot, because it runs no model, and the
+  day it takes one is the day an untrusted patch is handed a provider credential.
+  `--providers` is the same assignment as `--role work=`, so giving both is
+  rejected rather than resolved, as is naming any wave twice. Default behaviour is
+  unchanged: red and work share the rotation by index, audit continues it at `n`.
+  The point is not convenience. Under `--red` a jail writes its own tests and then
+  implements against them, so the Red Gate's adversary is also its author - the
+  arrangement `RED TAMPERED` exists to police. `--role red=codex --providers
+  claude` makes the tests come from a model that never gets to satisfy them, which
+  is the only configuration where a passing red row means an independent falsifier
+  was satisfied rather than a self-set exam. The banner names every wave's
+  providers before the run spends anything, including the red wave, which doubles
+  the bill.
 - **C-38** A jail's resources are bounded, not disabled: `--rlimit_as 8192`,
   `--rlimit_fsize 8192`, `--rlimit_nofile 4096`, `--rlimit_nproc 2048`,
   `--rlimit_stack 64`. `--disable_rlimits` was reached for because nsjail caps

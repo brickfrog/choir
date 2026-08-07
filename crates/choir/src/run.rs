@@ -506,7 +506,7 @@ fn run_wave(jails: &[Jail]) -> SystemTime {
 fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
     let prompt = choir_core::red_prompt(&cfg.instruction);
     let jails: Vec<Jail> = cfg
-        .plan()
+        .red_plan()
         .into_iter()
         .map(|(index, provider)| {
             let slot = paths.slot("r", index);

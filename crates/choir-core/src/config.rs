@@ -193,6 +193,10 @@ pub struct Config {
     /// Enforce VSDD's Red Gate: a wave that writes only tests, which must fail
     /// on the unpatched tree before any implementation is written (C-32).
     pub red: bool,
+    /// Providers for the red wave, overriding the work rotation (C-39).
+    pub red_providers: Option<Providers>,
+    /// Provider for the audit jail, overriding rotation index `n` (C-39).
+    pub audit_providers: Option<Providers>,
 }
 
 impl Default for Config {
@@ -209,6 +213,8 @@ impl Default for Config {
             cache_masks: Vec::new(),
             ignore: Vec::new(),
             red: false,
+            red_providers: None,
+            audit_providers: None,
         }
     }
 }
@@ -220,10 +226,16 @@ impl Config {
         self.providers.at(index)
     }
 
-    /// The provider serving the audit jail: index `n` in the same rotation (C-10).
+    /// The provider serving the audit jail (C-10, C-39).
+    ///
+    /// Without a `--role audit=` override this is index `n` in the work
+    /// rotation, so a two-provider run audits with the family that did not
+    /// write the last patch.
     #[must_use]
     pub fn audit_provider(&self) -> Provider {
-        self.providers.at(self.n)
+        self.audit_providers
+            .as_ref()
+            .map_or_else(|| self.providers.at(self.n), |p| p.at(0))
     }
 
     /// The work jail plan: `(index, provider)` for every jail, in order.
@@ -232,7 +244,22 @@ impl Config {
         (0..self.n).map(|i| (i, self.providers.at(i))).collect()
     }
 
+    /// The red jail plan (C-39).
+    ///
+    /// Defaults to the work rotation, so jail `i` writes its own tests and then
+    /// implements against them. `--role red=` breaks that: the tests come from
+    /// a model that does not get to satisfy them, which is the only arrangement
+    /// in which the Red Gate has an adversary rather than an author.
+    #[must_use]
+    pub fn red_plan(&self) -> Vec<(usize, Provider)> {
+        let pool = self.red_providers.as_ref().unwrap_or(&self.providers);
+        (0..self.n).map(|i| (i, pool.at(i))).collect()
+    }
+
     /// The banner printed before the first wave.
+    ///
+    /// It names every provider the run will pay for, before it pays: the red
+    /// wave appears only under `--red`, where it doubles the bill (C-39).
     #[must_use]
     pub fn banner(&self) -> String {
         let assignments = self
@@ -241,13 +268,71 @@ impl Config {
             .map(|(i, p)| format!("{i}={p}"))
             .collect::<Vec<_>>()
             .join(" ");
+        let red = if self.red {
+            let reds = self
+                .red_plan()
+                .into_iter()
+                .map(|(i, p)| format!("{i}={p}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("red jails: {reds}; ")
+        } else {
+            String::new()
+        };
         format!(
-            "{} work jails: {}; audit={}; timeout {}s",
+            "{}{} work jails: {}; audit={}; timeout {}s",
+            red,
             self.n,
             assignments,
             self.audit_provider(),
             self.timeout
         )
+    }
+}
+
+/// A wave a model serves, as named by `--role` (C-39).
+///
+/// Verify is absent by design: it runs no model, and the day it takes one is
+/// the day an untrusted patch gets a provider credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Role {
+    /// The `--red` wave, which writes tests and nothing else.
+    Red,
+    /// The implementation wave. The same pool as `--providers`.
+    Work,
+    /// The read-only audit jail.
+    Audit,
+}
+
+impl Role {
+    /// The lowercase word naming this role, as accepted by `--role`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Red => "red",
+            Self::Work => "work",
+            Self::Audit => "audit",
+        }
+    }
+
+    /// Parse one `--role` key (C-39).
+    ///
+    /// # Errors
+    /// Returns [`ParseError::UnknownRole`] for any word other than the exact
+    /// lowercase `red`, `work` or `audit`.
+    pub fn from_word(word: &str) -> Result<Self, ParseError> {
+        match word {
+            "red" => Ok(Self::Red),
+            "work" => Ok(Self::Work),
+            "audit" => Ok(Self::Audit),
+            other => Err(ParseError::UnknownRole(other.to_owned())),
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -275,6 +360,13 @@ pub enum ParseError {
     UnexpectedArgument(String),
     /// A `--cache` path held `'` or `:`, which the mount spec cannot express (E-23).
     UnsafePath(String),
+    /// `--role` named a wave other than `red`, `work` or `audit` (C-39).
+    UnknownRole(String),
+    /// `--role` was given something without a single `=` (C-39).
+    MalformedRole(String),
+    /// One wave was assigned twice. `--providers` assigns `work`, so pairing it
+    /// with `--role work=` is the same collision (C-39).
+    DuplicateRole(&'static str),
 }
 
 impl fmt::Display for ParseError {
@@ -290,6 +382,13 @@ impl fmt::Display for ParseError {
             Self::UnknownProvider(word) => write!(f, "unknown provider: {word}"),
             Self::UnexpectedArgument(arg) => write!(f, "unexpected argument: {arg}"),
             Self::UnsafePath(p) => write!(f, "--cache path may not contain ' or : — {p}"),
+            Self::UnknownRole(word) => {
+                write!(f, "unknown role: {word} (expected red, work or audit)")
+            }
+            Self::MalformedRole(arg) => {
+                write!(f, "--role expects <role>=<providers>, got: {arg}")
+            }
+            Self::DuplicateRole(role) => write!(f, "role assigned twice: {role}"),
         }
     }
 }
@@ -339,6 +438,9 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
     let mut instruction: Option<String> = None;
     let mut test_cmd: Option<String> = None;
     let mut rest = args.iter();
+    // `--providers` and `--role work=` name the same pool; taking both would
+    // mean silently preferring one (C-39).
+    let mut work_assigned = false;
 
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -353,7 +455,41 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
                     got: secs.to_string(),
                 })?;
             }
-            "--providers" => cfg.providers = Providers::parse(&value(&mut rest, "--providers")?)?,
+            "--providers" => {
+                if work_assigned {
+                    return Err(ParseError::DuplicateRole("work"));
+                }
+                work_assigned = true;
+                cfg.providers = Providers::parse(&value(&mut rest, "--providers")?)?;
+            }
+            "--role" => {
+                let spec = value(&mut rest, "--role")?;
+                let (word, list) = spec
+                    .split_once('=')
+                    .ok_or_else(|| ParseError::MalformedRole(spec.clone()))?;
+                let pool = Providers::parse(list)?;
+                match Role::from_word(word)? {
+                    Role::Red => {
+                        if cfg.red_providers.is_some() {
+                            return Err(ParseError::DuplicateRole("red"));
+                        }
+                        cfg.red_providers = Some(pool);
+                    }
+                    Role::Work => {
+                        if work_assigned {
+                            return Err(ParseError::DuplicateRole("work"));
+                        }
+                        work_assigned = true;
+                        cfg.providers = pool;
+                    }
+                    Role::Audit => {
+                        if cfg.audit_providers.is_some() {
+                            return Err(ParseError::DuplicateRole("audit"));
+                        }
+                        cfg.audit_providers = Some(pool);
+                    }
+                }
+            }
             "--cache" => {
                 let path = value(&mut rest, "--cache")?;
                 // Refused, not escaped (E-23); every other byte survives.
@@ -499,6 +635,12 @@ pub fn help_text() -> String {
     s.push_str("  --ignore <glob>     gitignore pattern applied inside every jail copy.\n");
     s.push_str("                      Repeat it. Keeps build artifacts a test run makes\n");
     s.push_str("                      (__pycache__, target/) out of the patch.\n");
+    s.push_str("  --role <r>=<list>   providers for one wave: red, work or audit. Repeat\n");
+    s.push_str("                      it. An unset wave uses --providers; audit otherwise\n");
+    s.push_str("                      continues the rotation past the work jails. Pairing\n");
+    s.push_str("                      --role red= with a different --providers is the\n");
+    s.push_str("                      useful one: the tests come from a model that does\n");
+    s.push_str("                      not then get to satisfy them.\n");
     s.push_str("  --red               TDD mode. An extra wave writes tests only; they must\n");
     s.push_str("                      FAIL on the unpatched tree before the implementation\n");
     s.push_str("                      wave runs. Costs 2n+1 provider calls instead of n+1.\n");

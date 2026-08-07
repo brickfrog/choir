@@ -18,6 +18,14 @@ choir "<instruction>"                       # --test read off one root marker fi
 choir "<instruction>" --test '<cmd>' --red  # tests must go red before implementation
 ```
 
+Each wave that runs a model takes its providers from `--role`, and from `--providers` when
+unset: `--role red=codex --providers claude --red` has codex write every jail's tests and
+claude implement against them. That is the only arrangement where a passing red row means an
+*independent* falsifier was satisfied rather than a self-set exam — by default a jail writes
+its own tests and then implements against them, which is exactly what `RED TAMPERED` polices.
+`--role audit=codex` puts a different family on the reading. `verify` is not a nameable wave:
+it runs no model, and never will.
+
 `--test` is optional. Omitted, Choir reads it off exactly one marker in the repository root
 (`Cargo.toml`, `go.mod`, `Makefile`, `package.json`, `pyproject.toml`) and prints
 `detected --test: <cmd>` before anything starts. None of them, or two, is a usage error naming
