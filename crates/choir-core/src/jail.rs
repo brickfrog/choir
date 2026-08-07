@@ -37,34 +37,65 @@ impl Jail {
     }
 }
 
-/// Files a dependency cache is known to keep credentials in (C-38).
+/// Basenames a dependency cache is known to keep credentials in (C-38, E-40).
 ///
 /// A `--cache` path is mounted read-only at its own host path, so anything
 /// beside the dependencies is readable by an untrusted patch. `cargo login`
 /// writes `credentials.toml` into the same `~/.cargo` that holds the registry
 /// people actually want cached, so the useful mount and the secret are the same
-/// directory. Each of these is masked with `/dev/null` when it exists, which
-/// leaves the cache readable and the token empty.
-pub const CREDENTIAL_FILES: [&str; 6] = [
+/// directory. Each match is masked with `/dev/null`, which leaves the cache
+/// readable and the token empty.
+///
+/// Matched at any depth, not just the cache root (E-40): `~/.m2/settings.xml`
+/// and a nested `.npmrc` both held live secrets through a root-only list.
+///
+/// Masking can cost a build. `settings.xml` carries Maven's mirror
+/// configuration as well as its passwords, so emptying it may leave a jail
+/// unable to resolve dependencies. That is the deliberate direction to fail in:
+/// a broken resolve is printed and diagnosable, an exfiltrated password is not.
+/// The masked paths are listed at startup for exactly this reason.
+pub const CREDENTIAL_FILES: [&str; 16] = [
     "credentials",
     "credentials.toml",
     ".npmrc",
+    ".yarnrc.yml",
     ".git-credentials",
     ".netrc",
     "config.json",
+    ".dockercfg",
+    "settings.xml",
+    "settings-security.xml",
+    "gradle.properties",
+    "pip.conf",
+    ".pypirc",
+    "auth.json",
+    "nuget.config",
+    "credentials.tfrc.json",
 ];
 
-/// Every path inside `cache` that would leak a credential if it existed (C-38).
+/// Whether a file's basename is one a cache keeps credentials in (E-40).
 ///
-/// Total over any path: the caller checks which of these are really there,
-/// because a bind mount onto a path that does not exist aborts the jail.
+/// Case-insensitive: `NuGet` ships the same file as `NuGet.Config`, `nuget.config`
+/// and `NuGet.config` depending on who wrote it, and a case-sensitive match
+/// would mask one machine's secret and miss the next.
 #[must_use]
-pub fn credential_masks(cache: &str) -> Vec<String> {
-    let base = cache.strip_suffix('/').unwrap_or(cache);
+pub fn is_credential_file(name: &str) -> bool {
     CREDENTIAL_FILES
         .iter()
-        .map(|name| format!("{base}/{name}"))
-        .collect()
+        .any(|known| known.eq_ignore_ascii_case(name))
+}
+
+/// Whether a discovered path can be named safely in the wave script (E-40).
+///
+/// A mask is emitted as `-R /dev/null:'<path>'`, so a `'` ends the quote and a
+/// `:` splits nsjail's own source/destination pair. The `--cache` argument
+/// itself is refused at parse time for both (E-23), but a file *inside* a cache
+/// is not the caller's to name. Such a path cannot be masked, so the caller
+/// warns and leaves it — silently dropping it would keep the promise in the
+/// README while breaking it on disk.
+#[must_use]
+pub fn maskable(path: &str) -> bool {
+    !path.contains('\'') && !path.contains(':')
 }
 
 /// The prefix every jail shares (C-11).

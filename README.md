@@ -29,7 +29,7 @@ choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 | `--providers <list>` | `claude,codex` | `agy` also available; needs `secret-tool`. |
 | `--timeout <secs>` | `1200` | Per jail, enforced by the kernel. |
 | `--out <dir>` | `./choir-out` | `<index>.patch` beside `<index>.log`, plus `baseline.0.log` and `baseline.1.log`. |
-| `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. Credential files inside it (`credentials.toml`, `.npmrc`, `.netrc`, …) are masked with `/dev/null`. |
+| `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. Credential files inside it (`credentials.toml`, `.npmrc`, `settings.xml`, `gradle.properties`, …) are masked with `/dev/null`, at any depth; the list is `jail::CREDENTIAL_FILES` and the masked paths are printed at startup. Masking a file a build needs will break that build, which is the intended direction. |
 | `--ignore <glob>` | none | Repeatable. Excluded inside every jail copy — keeps artifacts a test run makes out of the patch. |
 | `--role <wave>=<list>` | rotation | Repeatable | Providers for one wave: `red`, `work`, `audit`. `--providers` is `--role work=`; both is an error. |
 | `--red` | off | TDD mode: an extra wave writes tests only, and they must FAIL on the unpatched tree before implementation runs. Every file that wave wrote must then come back byte-identical, or the row reads `RED TAMPERED` and is no pass. That stops a jail editing or deleting its own approved tests; it does not stop a *new* file — a `conftest.py`, a config exclusion — from neutering them. Costs `2n+1` calls. |

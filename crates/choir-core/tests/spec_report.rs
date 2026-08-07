@@ -472,3 +472,57 @@ fn exit_column_separates_empty_from_killed() {
     assert_ne!(report::exit_label(Some(0)), report::exit_label(None));
     assert!(killed.starts_with('1'));
 }
+
+/// E-41: a gate jail that never started is not a red result.
+///
+/// nsjail exits 255 for a failed mount and for a missing entry binary, the wave
+/// records that with `echo $?`, and an absent `.rc` parses to `Fail(255)` too --
+/// so every infrastructure failure used to read as "the red test ran and
+/// failed", which is the one thing the gate is asked. It is its own verdict now,
+/// and the table says which refusal happened.
+#[test]
+fn e41_an_unrun_gate_does_not_admit_green() {
+    assert!(!Verdict::admits_green(Some(Verdict::Unrun)));
+    assert!(Verdict::admits_green(Some(Verdict::Fail(1))));
+    assert!(Verdict::admits_green(Some(Verdict::Fail(255))));
+    assert_eq!(Verdict::Unrun.label(), "RED UNRUN");
+    assert_ne!(
+        Verdict::Unrun.label(),
+        Verdict::RedGate.label(),
+        "a gate that never ran and a red test that passed are different facts"
+    );
+}
+
+/// E-42: the exact credential bytes Choir mounted never reach `--out`.
+///
+/// Not a secret scanner: the needles come from the file the run itself copied
+/// into the jail, so there is no pattern to be wrong about.
+#[test]
+fn e42_a_mounted_credential_is_redacted_from_artifacts() {
+    let cred = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAABBBBCCCCDDDDEEEEFFFFGGGG","refreshTokenExpiresAt":1234}}"#;
+    let needles = report::secret_needles(cred);
+
+    // A jail that copies the whole file, and one that lifts a single value.
+    for artifact in [
+        format!("+{}\n", String::from_utf8_lossy(cred)),
+        "+token = sk-ant-oat01-AAAABBBBCCCCDDDDEEEEFFFFGGGG\n".to_owned(),
+    ] {
+        let clean = report::redact(artifact.as_bytes(), &needles).expect("must be caught");
+        assert!(
+            !clean.windows(20).any(|w| w == b"AAAABBBBCCCCDDDDEEEE"),
+            "token bytes survived redaction"
+        );
+        assert!(
+            report::find_redacted(&clean),
+            "the artifact must say something was removed"
+        );
+    }
+
+    // Structure is not a secret: a patch mentioning the field names is clean.
+    assert!(
+        report::redact(b"+  accessToken: read from env\n", &needles).is_none(),
+        "field names are below the needle threshold and must not trip"
+    );
+    // And a run with no credentials never rewrites anything.
+    assert!(report::redact(b"anything at all", &[]).is_none());
+}

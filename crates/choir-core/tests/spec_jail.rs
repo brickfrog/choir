@@ -48,14 +48,31 @@ fn c38_resources_are_bounded_not_disabled() {
     assert!(p.contains("--rlimit_fsize 8192"), "{p}");
 }
 
-/// C-38: a credential beside a cached dependency is masked, not mounted.
+/// C-38, E-40: a credential beside a cached dependency is masked, not mounted —
+/// recognised by basename at any depth, and case-insensitively.
 #[test]
 fn c38_credentials_in_a_cache_are_masked() {
-    let names = jail::credential_masks("/home/u/.cargo");
-    assert!(names.contains(&"/home/u/.cargo/credentials.toml".to_owned()));
-    assert!(names.contains(&"/home/u/.cargo/credentials".to_owned()));
-    // A trailing slash is the same cache, not a different one.
-    assert_eq!(jail::credential_masks("/home/u/.cargo/"), names);
+    for name in [
+        "credentials.toml",
+        "credentials",
+        ".npmrc",
+        "settings.xml",
+        "gradle.properties",
+    ] {
+        assert!(jail::is_credential_file(name), "{name} must be masked");
+    }
+    // NuGet ships all three spellings (E-40).
+    for name in ["NuGet.Config", "nuget.config", "NuGet.config"] {
+        assert!(jail::is_credential_file(name), "{name} must be masked");
+    }
+    // A dependency is not a credential.
+    for name in ["lib.rs", "package.json", "readme.txt", ""] {
+        assert!(!jail::is_credential_file(name), "{name} must not be masked");
+    }
+    // A path the wave script cannot quote is refused, not silently emitted.
+    assert!(jail::maskable("/home/u/.m2/settings.xml"));
+    assert!(!jail::maskable("/home/u/od'd/.npmrc"));
+    assert!(!jail::maskable("/home/u/a:b/.npmrc"));
 
     let mut cfg = jail_cfg(9, &["/home/u/.cargo"]);
     cfg.cache_masks = vec!["/home/u/.cargo/credentials.toml".to_owned()];

@@ -94,6 +94,15 @@ pub fn sh_line(script: &str) -> String {
     String::from_utf8_lossy(&out).trim().to_owned()
 }
 
+/// Read a file as raw bytes, or empty when it is not there.
+///
+/// Distinct from [`read_text`]: a credential is compared byte for byte (E-42),
+/// and lossy UTF-8 would rewrite any non-UTF-8 byte in it into a replacement
+/// character that no longer matches what the jail was handed.
+pub fn read_bytes(path: &Path) -> Vec<u8> {
+    fs::read(path).unwrap_or_default()
+}
+
 /// Read a file as text, lossily (E-7).
 ///
 /// Provider output is not guaranteed to be valid UTF-8, and one stray byte must

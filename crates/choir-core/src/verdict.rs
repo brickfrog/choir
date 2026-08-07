@@ -47,6 +47,8 @@ pub enum Verdict {
     /// delete them in the green wave, and the row would read `PASS` for a suite
     /// no gate ever saw.
     RedTampered,
+    /// The red gate jail never started, so no red result exists (E-41).
+    Unrun,
 }
 
 impl Verdict {
@@ -61,6 +63,7 @@ impl Verdict {
             Self::NoPatch => "-".to_owned(),
             Self::RedGate => "RED FAILED".to_owned(),
             Self::RedTampered => "RED TAMPERED".to_owned(),
+            Self::Unrun => "RED UNRUN".to_owned(),
         }
     }
 
@@ -69,7 +72,9 @@ impl Verdict {
     /// Only a red run that FAILED. `Pass` means the tests passed with no
     /// implementation present, so they demanded nothing and VSDD calls them
     /// suspect. `NoPatch` means no test was written. `ApplyFailed` means the
-    /// tests never reached a tree. None of the three earns an implementation.
+    /// tests never reached a tree. `Unrun` means the gate jail never started, so
+    /// there is no red result to read at all (E-41). None earns an
+    /// implementation.
     #[must_use]
     pub const fn admits_green(red: Option<Self>) -> bool {
         matches!(red, Some(Self::Fail(_)))

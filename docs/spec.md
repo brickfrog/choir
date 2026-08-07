@@ -444,6 +444,43 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
     `HEAD` is. A model that committed its work — routine under
     `--dangerously-skip-permissions` — moved `HEAD` past the change and the
     diff came back empty, reporting `0 B` for a jail that had succeeded.
+- **E-39** A credential is the last thing written into a slot, after every step
+  that can abort the run. It used to be the first: `prep_provider_slot` wrote the
+  token one line above the `sys::copy_tree` that seeds the slot, and that copy is
+  deliberately fatal (C-38). Measured by faulting the copy: the run panicked and
+  left `w0/cred/.credentials.json` — a live `accessToken` and `refreshToken` —
+  in the scratch directory whose path it had just printed. `panic = "abort"`
+  rules out a `Drop` guard and the wave script's `sweep` trap does not exist
+  until the wave starts, so ordering is the only thing that can close it.
+- **E-40** A cache's credentials are masked by basename at any depth, not at its
+  root. Measured from inside a jail with network: `~/.m2/settings.xml` returned a
+  Maven password and a nested `.npmrc` returned a token, while the root-level
+  `credentials.toml` beside them came back empty. The list also grew the
+  ecosystems people actually mount, and matches case-insensitively because NuGet
+  ships `NuGet.Config` and `nuget.config` interchangeably. Masking can break a
+  build — `settings.xml` holds mirrors as well as passwords — which is the
+  direction to fail in, and the masked paths are printed at startup so a failed
+  resolve is diagnosable. A path containing `'` or `:` cannot be named in the
+  wave script; it is reported rather than silently skipped.
+- **E-41** The red gate requires proof its jail ran. nsjail exits 255 for a
+  failed mount and for a missing entry binary — measured, both — the wave script
+  records that with `echo $?`, and an absent or unparseable `.rc` becomes
+  `Fail(255)` as well; `admits_green` admitted every one of them, so a gate jail
+  that never started authorised the green wave. This is C-37's 137 hole with a
+  different number, and no exit code can separate the two, so the jail's `/cmd`
+  touches a marker in its own fresh `/tmp` before the test command runs. Without
+  it the verdict is `Unrun`, which is not a `Fail` and is reported as its own
+  refusal: "the gate never ran" and "your red test passed" are different facts.
+- **E-42** The exact credential bytes a run mounts never reach `--out`. A jail
+  is handed its own OAuth token by design and an untrusted patch runs beside it,
+  so a token in a patch or a log is a copy the jail made — and `--out` outlives
+  the run. This is not a secret scanner: Choir searches for the literal bytes it
+  copied in, so there is no pattern to be wrong about. Needles are the whole
+  credential and its inner runs of 24 bytes or more, which clears the longest
+  field name in a real file (`refreshTokenExpiresAt`, 21) and sits far below any
+  token. Enforced at `write_out`, the single chokepoint every durable artifact
+  passes through (E-35). Measured: a jail that copied its token into both a patch
+  and a log had both redacted, with a warning naming the artifact.
 - **E-38** A provider CLI that grew a second binary → its helpers are mounted
   beside it, and the address-space bound admits their runtime. Codex 0.147.0
   ships `codex-code-mode-host` next to `codex` and resolves it from

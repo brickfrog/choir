@@ -55,6 +55,9 @@ struct Paths {
     /// Credential files really present inside `cache`, to mask (C-38). Read
     /// here because `prepare` is the one place that asks the filesystem.
     cache_masks: Vec<String>,
+    /// Byte runs from every credential this run will mount, which must never
+    /// reach `--out` (E-42). Read here for the same reason as `cache_masks`.
+    secrets: Vec<Vec<u8>>,
 }
 
 impl Paths {
@@ -168,20 +171,58 @@ fn prepare(cfg: &Config) -> Option<Paths> {
     exclude_user_globs(&dir, &cfg.ignore);
     commit_base(&dir);
 
-    // A bind mount onto a path that is not there aborts the jail, so only the
-    // masks that exist are emitted (C-38).
-    let cache_masks = cache
-        .iter()
-        .flat_map(|c| jail::credential_masks(c))
-        .filter(|p| Path::new(p).exists())
-        .collect();
+    let cache_masks = discover_cache_masks(&cache);
+    let secrets = run_secrets(cfg);
 
     Some(Paths {
         dir,
         out,
         cache,
         cache_masks,
+        secrets,
     })
+}
+
+/// Every credential file really present inside the caches, at any depth (E-40).
+///
+/// Only paths that exist are returned: a bind mount onto a path that is not
+/// there aborts the jail (C-38). The walk is `find`, not a recursive read here,
+/// for the reason every other tree operation shells out — one process over a
+/// 200k-file registry beats a syscall per entry.
+///
+/// `-type f` skips symlinks deliberately. A link inside a cache pointing at the
+/// user's real `~/.npmrc` resolves *inside* the jail, where that path is not
+/// mounted, so it dangles rather than leaking.
+fn discover_cache_masks(cache: &[String]) -> Vec<String> {
+    let mut found = Vec::new();
+    for root in cache {
+        let (_, out) = sys::run("find", &[root, "-type", "f", "-print0"]);
+        for path in String::from_utf8_lossy(&out).split('\0') {
+            let name = match path.rsplit_once('/') {
+                Some((_, base)) => base,
+                None => path,
+            };
+            if name.is_empty() || !jail::is_credential_file(name) {
+                continue;
+            }
+            if jail::maskable(path) {
+                found.push(path.to_owned());
+            } else {
+                eprintln!(
+                    "choir: cannot mask {path}: a credential file whose name \
+                     contains `'` or `:` cannot be named in the jail command. \
+                     It stays readable inside every jail using this cache."
+                );
+            }
+        }
+    }
+    if !found.is_empty() {
+        println!("[cache]  masked {} credential file(s):", found.len());
+        for path in &found {
+            println!("         {path}");
+        }
+    }
+    found
 }
 
 /// Resolve every `--cache` path once, and decide about the resolved string
@@ -371,10 +412,25 @@ fn clear_stale_output(out: &str, n: usize) {
 /// `clear_stale_output`, which unlinks for an unrelated reason (C-44, stale
 /// transcripts) and is a separate list. A fifth write site that nobody thought to
 /// add there is an arbitrary host file write, and nothing would have said so.
-fn write_out(out: &str, name: &str, bytes: &[u8]) {
-    let path = format!("{out}/{name}");
+fn write_out(paths: &Paths, name: &str, bytes: &[u8]) {
+    let path = format!("{}/{name}", paths.out);
     sys::remove_tree(&path);
-    sys::write_bytes(Path::new(&path), bytes);
+    // Everything durable passes through here, so this is the one place a
+    // credential can be stopped on its way out (E-42). A jail is handed its own
+    // OAuth token by design and an untrusted patch runs beside it, so a token in
+    // a patch or a log is a copy the jail made -- and `--out` survives the run.
+    match report::redact(bytes, &paths.secrets) {
+        Some(clean) => {
+            eprintln!(
+                "choir: redacted a provider credential from {name}. A jail copied \
+                 its own mounted token into this artifact; the patch or log is \
+                 written with the secret replaced, and the token should be treated \
+                 as compromised and rotated."
+            );
+            sys::write_bytes(Path::new(&path), &clean);
+        }
+        None => sys::write_bytes(Path::new(&path), bytes),
+    }
 }
 
 /// Drop repository config that aims host git outside the copy (E-26) or runs a
@@ -511,13 +567,20 @@ fn prep_slot(slot: &str, command: &str) {
     sys::write_text(Path::new(&format!("{slot}/cmd")), command);
 }
 
-/// Add what only a provider jail needs: one credential, and the resolved
-/// provider binary to mount at `/prov/<name>`.
+/// Add what only a provider jail needs: the resolved provider binary to mount
+/// at `/prov/<name>`. The credential is *not* written here — see
+/// [`install_credential`].
 ///
 /// Kept separate from [`prep_slot`] rather than gated by a flag on it. A verify
 /// jail mounts no `/cred`, so copying a full-account OAuth token into every
 /// verify slot only widened the token's footprint on disk — seven copies at
 /// `-n 3` where four will do.
+fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
+    prep_slot(slot, command);
+    sys::resolve_binary(provider.name())
+}
+
+/// Copy this jail's credential into its slot, immediately before the wave runs.
 ///
 /// The credential is written at the provider's own path under `/cred` (C-43):
 /// a basename for a CLI whose variable names the directory, a nested path for
@@ -525,9 +588,18 @@ fn prep_slot(slot: &str, command: &str) {
 /// and writes no file until a keyring save fails, so there is nothing to copy —
 /// it is read out per jail and never lands in the user's home at all, which is
 /// strictly less exposure than the two that copy a file already sitting there.
-fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
-    prep_slot(slot, command);
-
+///
+/// Called last, after every preparation step that can abort the run (E-39).
+/// This used to sit inside [`prep_provider_slot`], one line above the
+/// `sys::copy_tree` that seeds the slot — and that copy is deliberately fatal
+/// (C-38), so a full disk or an unreadable mode panicked with a live
+/// `accessToken` and `refreshToken` already lying in the scratch directory whose
+/// path the run had just printed. `panic = "abort"` rules out a `Drop` guard,
+/// and the wave script's `sweep` trap — the thing that removes `<slot>/cred` —
+/// is not installed until the wave starts. Measured: the file survived with
+/// both tokens readable. Ordering is the whole fix; nothing between this call
+/// and the wave can fail.
+fn install_credential(slot: &str, provider: Provider) {
     let dest = format!("{slot}/cred/{}", provider.cred_dest());
     if let Some(parent) = Path::new(&dest).parent() {
         sys::mkdir_all(parent);
@@ -552,8 +624,47 @@ fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
             sys::write_bytes(Path::new(&dest), secret.as_bytes());
         }
     }
+}
 
-    sys::resolve_binary(provider.name())
+/// This credential's bytes, as they will be mounted.
+///
+/// Read rather than hashed: [`report::secret_needles`] searches artifacts for
+/// the literal bytes, which is what makes the check exact instead of a guess
+/// about what a secret looks like (E-42). The file is already on disk in the
+/// user's home and about to be copied into a slot, so holding a few hundred
+/// bytes of it in memory adds no exposure the run did not already have.
+fn read_credential(provider: Provider) -> Vec<u8> {
+    match provider.cred_source() {
+        CredSource::Home(relative) => {
+            sys::read_bytes(Path::new(&format!("{}/{relative}", sys::home())))
+        }
+        CredSource::Keyring(service, username) => {
+            sys::keyring_lookup(service, username).into_bytes()
+        }
+    }
+}
+
+/// Needles for every credential this run will mount (E-42).
+///
+/// Derived once in `prepare`, from the providers the plan names plus the audit's
+/// -- the same set that will get a `/cred` mount. A provider that is configured
+/// but unused contributes nothing, so an artifact is never measured against a
+/// token that never entered a jail.
+fn run_secrets(cfg: &Config) -> Vec<Vec<u8>> {
+    let mut providers: Vec<Provider> = cfg.plan().into_iter().map(|(_, p)| p).collect();
+    providers.push(cfg.audit_provider());
+    providers.sort_unstable_by_key(|p| p.name());
+    providers.dedup();
+
+    let mut needles = Vec::new();
+    for provider in providers {
+        for needle in report::secret_needles(&read_credential(provider)) {
+            if !needles.contains(&needle) {
+                needles.push(needle);
+            }
+        }
+    }
+    needles
 }
 
 /// Read a jail's exit code and judge it against the wave's clock (C-37, C-41).
@@ -594,6 +705,7 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
             let slot = paths.slot("r", index);
             let binary = prep_provider_slot(&slot, &prompt, provider);
             sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
+            install_credential(&slot, provider);
             let mount = format!("-B {}/repo:/repo", Quoted(&slot));
             let command = jail::provider(
                 cfg,
@@ -617,6 +729,20 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The file a gate jail touches to prove it started (E-41).
+const GATE_MARKER: &str = "choir-gate-ran";
+
+/// The gate jail's `/cmd`: prove the jail started, then run the user's test.
+///
+/// nsjail's own failure exit code is indistinguishable from a test's, so the
+/// gate cannot be read off an exit code alone. This line runs inside the jail
+/// before anything else, into the slot's own `/tmp` bind mount, so its presence
+/// on the host is proof the jail reached the entry point. The test command
+/// follows verbatim on its own line and its exit status is still the script's.
+fn gate_command(test_cmd: &str) -> String {
+    format!(": > /tmp/{GATE_MARKER}\n{test_cmd}")
+}
+
 /// The Red Gate (VSDD Phase 2a): each jail's new tests must FAIL on the
 /// unpatched tree, in the same sealed jail the green run will use.
 ///
@@ -635,7 +761,7 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
             continue;
         }
         let slot = paths.slot("g", index);
-        prep_slot(&slot, &cfg.test_cmd);
+        prep_slot(&slot, &gate_command(&cfg.test_cmd));
         sys::copy_tree(&paths.base_repo(), &format!("{slot}/repo"));
         let repo = format!("{slot}/repo");
         let red = format!("{}/patches/{index}.red.patch", paths.dir);
@@ -660,6 +786,19 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
                 // wrote 137, `from_rc` read it as `Fail`, and `admits_green`
                 // admits any `Fail` -- so the green wave ran on the strength of
                 // a red run that never finished. `Timeout` is not a `Fail`.
+                //
+                // 255 was the same hole with a different number (E-41). nsjail
+                // exits 255 for a failed mount and for a missing entry binary --
+                // measured, both -- the wave script records that with `echo $?`,
+                // and `from_rc` maps an absent or unparseable `.rc` to `Fail(255)`
+                // as well. Every one of those read as "the red test ran and
+                // failed", which is the gate's entire question. No exit code can
+                // separate them, so the jail proves it started instead: `/cmd`
+                // touches this marker before the test command runs, in a `/tmp`
+                // that is fresh per slot and that no patch can reach ahead of it.
+                if !Path::new(&format!("{s}/tmp/{GATE_MARKER}")).exists() {
+                    return Verdict::Unrun;
+                }
                 timed_verdict(&s, started, cfg.timeout)
             })
         })
@@ -694,6 +833,7 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
                 let red = format!("{}/patches/{index}.red.patch", paths.dir);
                 let _ = sys::git(&["-C", &repo, "apply", &red]);
             }
+            install_credential(&slot, provider);
             let mount = format!("-B {}/repo:/repo", Quoted(&slot));
             let command = jail::provider(
                 cfg,
@@ -773,7 +913,7 @@ fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8
     // bad patch rather than a diff Choir could not express.
     let (_, patch) = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
 
-    write_out(&paths.out, &format!("{name}.patch"), &patch);
+    write_out(paths, &format!("{name}.patch"), &patch);
     sys::write_bytes(
         Path::new(&format!("{}/patches/{name}.patch", paths.dir)),
         &patch,
@@ -791,12 +931,22 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
             let patch = extract(paths, index);
             // The Red Gate decides before the patch is even looked at: without
             // a test that failed first, a PASS below would measure the test.
-            if cfg.red && !Verdict::admits_green(red_verdicts.get(index).copied()) {
+            //
+            // The refusal keeps the gate's own verdict rather than flattening
+            // every refusal to `RED FAILED` (E-41): "your red test passed, so it
+            // demanded nothing" and "the gate jail never started, so nothing was
+            // measured" are different facts about the run, and the second one is
+            // about Choir rather than about the model.
+            let gate = red_verdicts.get(index).copied();
+            if cfg.red && !Verdict::admits_green(gate) {
                 return Attempt {
                     index,
                     provider,
                     patch,
-                    staged: Staged::Skipped(Verdict::RedGate),
+                    staged: Staged::Skipped(match gate {
+                        Some(Verdict::Unrun) => Verdict::Unrun,
+                        _ => Verdict::RedGate,
+                    }),
                 };
             }
             // C-37, and before the empty check: an empty patch here is every
@@ -885,7 +1035,7 @@ fn verify_wave(
     // transcripts destroys the two files that say why.
     for (name, slot) in [("0", &first), ("1", &second)] {
         let log = sys::read_text(Path::new(&format!("{slot}.log")));
-        write_out(&paths.out, &format!("baseline.{name}.log"), log.as_bytes());
+        write_out(paths, &format!("baseline.{name}.log"), log.as_bytes());
     }
 
     (
@@ -920,18 +1070,14 @@ fn collect(
             let verdict = match &a.staged {
                 Staged::Ready(slot) => {
                     let log = sys::read_text(Path::new(&format!("{slot}.log")));
-                    write_out(
-                        &paths.out,
-                        &format!("{}.verify.log", a.index),
-                        log.as_bytes(),
-                    );
+                    write_out(paths, &format!("{}.verify.log", a.index), log.as_bytes());
                     timed_verdict(slot, verify_started, cfg.timeout)
                 }
                 Staged::Skipped(v) => *v,
             };
             let slot = paths.slot("w", a.index);
             let log = sys::read_text(Path::new(&format!("{slot}.log")));
-            write_out(&paths.out, &format!("{}.log", a.index), log.as_bytes());
+            write_out(paths, &format!("{}.log", a.index), log.as_bytes());
             let rc = format!("{slot}.rc");
             Row {
                 index: a.index,
@@ -987,6 +1133,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     // `/patches` are: `AUDIT_PROMPT` stays one string, identical every run.
     let instruction = format!("{}/instruction", paths.dir);
     sys::write_bytes(Path::new(&instruction), cfg.instruction.as_bytes());
+    install_credential(&slot, provider);
     let mount = format!(
         "-R {}/repo:/repo -R {}:/instruction",
         Quoted(&paths.dir),
@@ -1108,6 +1255,7 @@ mod tests {
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
             cache_masks: Vec::new(),
+            secrets: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
         let bytes = extract(&paths, 0).len();
@@ -1565,6 +1713,7 @@ mod tests {
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
             cache_masks: Vec::new(),
+            secrets: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -1622,6 +1771,7 @@ mod tests {
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
             cache_masks: Vec::new(),
+            secrets: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -2156,6 +2306,7 @@ mod tests {
             out: format!("{dir_s}/out"),
             cache: Vec::new(),
             cache_masks: Vec::new(),
+            secrets: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
 
@@ -2265,9 +2416,16 @@ mod tests {
         fs::create_dir_all(&out).expect("out");
         fs::write(&target, "ORIGINAL").expect("target");
 
+        let paths = Paths {
+            dir: dir.str(),
+            out: out.clone(),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+            secrets: Vec::new(),
+        };
         for name in ["0.patch", "0.log", "0.verify.log", "baseline.0.log"] {
             std::os::unix::fs::symlink(&target, format!("{out}/{name}")).expect("symlink");
-            super::write_out(&out, name, b"MODEL CONTROLLED");
+            super::write_out(&paths, name, b"MODEL CONTROLLED");
             assert_eq!(
                 fs::read_to_string(&target).expect("target readable"),
                 "ORIGINAL",
@@ -2397,5 +2555,83 @@ mod tests {
         // The binary itself is not its own helper.
         assert!(!found.iter().any(|(host, _)| *host == bin));
         sys::remove_tree(&dir.str());
+    }
+
+    /// E-39: a slot carries no credential until every step that can abort the
+    /// run has already succeeded.
+    ///
+    /// `prep_provider_slot` used to write the token, and the `sys::copy_tree`
+    /// one line below it is deliberately fatal (C-38). `panic = "abort"` rules
+    /// out a `Drop` guard and the wave's `sweep` trap does not exist yet, so the
+    /// only thing standing between a full disk and a live `accessToken` in the
+    /// printed scratch directory is this ordering.
+    #[test]
+    fn e39_slot_prep_writes_no_credential() {
+        let dir = scratch("cred-order");
+        let slot = format!("{}/w0", dir.str());
+        let _ = super::prep_provider_slot(&slot, "instruction", Provider::Claude);
+
+        assert!(
+            Path::new(&format!("{slot}/cmd")).exists(),
+            "the slot must still be prepared"
+        );
+        assert!(
+            !Path::new(&format!("{slot}/cred")).exists(),
+            "a credential was written before the run's fallible steps"
+        );
+        sys::remove_tree(&dir.str());
+    }
+
+    /// E-40: credential files inside a `--cache` are found at any depth and in
+    /// whatever case the ecosystem writes them.
+    ///
+    /// A root-only list left `~/.m2/settings.xml` and a nested `.npmrc` readable
+    /// in a jail that has network. Measured before this: both came back with
+    /// their secrets intact.
+    #[test]
+    fn e40_cache_masks_are_found_at_any_depth() {
+        let dir = scratch("cache-depth");
+        let cache = format!("{}/cache", dir.str());
+        for (rel, body) in [
+            ("credentials.toml", "token=root"),
+            ("settings.xml", "<password>maven</password>"),
+            ("nested/.npmrc", "_authToken=npm"),
+            ("deep/deeper/NuGet.Config", "key=nuget"),
+            ("lib/package.json", "{}"),
+            ("readme.txt", "harmless"),
+        ] {
+            let path = format!("{cache}/{rel}");
+            fs::create_dir_all(Path::new(&path).parent().expect("parent")).expect("dir");
+            fs::write(&path, body).expect("write");
+        }
+
+        let mut found = super::discover_cache_masks(std::slice::from_ref(&cache));
+        found.sort();
+        let mut want = vec![
+            format!("{cache}/credentials.toml"),
+            format!("{cache}/settings.xml"),
+            format!("{cache}/nested/.npmrc"),
+            format!("{cache}/deep/deeper/NuGet.Config"),
+        ];
+        want.sort();
+        assert_eq!(found, want, "every credential, and nothing else, is masked");
+        sys::remove_tree(&dir.str());
+    }
+
+    /// E-41: the gate jail's command proves the jail started before the user's
+    /// test command runs, and does not disturb it.
+    #[test]
+    fn e41_gate_command_marks_then_runs_the_test() {
+        let cmd = super::gate_command("pytest -q --ignore=__pycache__");
+        let (marker, rest) = cmd.split_once('\n').expect("two lines");
+        assert_eq!(
+            marker,
+            format!(": > /tmp/{}", super::GATE_MARKER),
+            "the marker must be written first, inside the jail"
+        );
+        assert_eq!(
+            rest, "pytest -q --ignore=__pycache__",
+            "the user's test command must reach the jail verbatim"
+        );
     }
 }

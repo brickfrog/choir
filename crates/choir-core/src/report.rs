@@ -297,3 +297,95 @@ pub fn audit_body(log: &str) -> String {
 pub fn audit_heading(provider: Provider) -> String {
     format!("audit ({provider} — model commentary, unverified, no effect on the table above)")
 }
+
+/// The marker left where a credential was found in an artifact (E-42).
+pub const REDACTED: &[u8] = b"[choir: CREDENTIAL REDACTED]";
+
+/// The shortest run of credential bytes worth hunting for in an artifact (E-42).
+///
+/// A credential file is mostly structure: `claudeAiOauth`, `accessToken` and
+/// `refreshToken` are 13, 11 and 12 bytes, so a threshold above them keeps the
+/// needles to the values. 24 clears the longest key seen in a real file
+/// (`refreshTokenExpiresAt`, 21) while sitting far below any OAuth token, which
+/// run to hundreds of bytes.
+const MIN_NEEDLE: usize = 24;
+
+/// The byte runs from a credential that must never appear in an artifact (E-42).
+///
+/// Not a secret *scanner*: Choir mounted these exact bytes into the jail itself,
+/// so it can look for exactly them and nothing else. There is no pattern, no
+/// entropy estimate and no false-positive story about what a token looks like.
+///
+/// Both the whole file and its long inner runs are needles, because a jail can
+/// copy the file verbatim or lift one value out of it. Runs are split on
+/// anything that is not a token character, which is what separates a JSON value
+/// from the punctuation around it.
+#[must_use]
+pub fn secret_needles(cred: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    // Total by construction: `get` rather than an index, so a credential of any
+    // shape — empty, all whitespace — yields an empty needle instead of a panic
+    // inside the one routine whose whole job is handling bytes Choir does not
+    // control the shape of.
+    let trimmed: &[u8] = {
+        let start = cred.iter().position(|b| !b.is_ascii_whitespace());
+        let end = cred.iter().rposition(|b| !b.is_ascii_whitespace());
+        match (start, end) {
+            (Some(a), Some(b)) => cred.get(a..=b).unwrap_or_default(),
+            _ => &[],
+        }
+    };
+    if trimmed.len() >= MIN_NEEDLE {
+        out.push(trimmed.to_vec());
+    }
+    let token = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'+' | b'/');
+    for run in cred.split(|b| !token(b)) {
+        if run.len() >= MIN_NEEDLE && !out.iter().any(|n| n == run) {
+            out.push(run.to_vec());
+        }
+    }
+    out
+}
+
+/// Replace every occurrence of a needle in `data`, or `None` if there are none.
+///
+/// `None` rather than an unconditional copy: every artifact Choir writes passes
+/// through here, and the overwhelmingly common answer is "clean".
+#[must_use]
+pub fn redact(data: &[u8], needles: &[Vec<u8>]) -> Option<Vec<u8>> {
+    if needles.iter().all(|n| find(data, n).is_none()) {
+        return None;
+    }
+    let mut out = data.to_vec();
+    for needle in needles {
+        // `from` only ever advances past bytes already rewritten, so both the
+        // tail slice and the splice range are in bounds — but written with `get`
+        // rather than an index, because "obviously in bounds" is how the panic
+        // gets in, and this runs on every artifact the run writes.
+        let mut from = 0;
+        while let Some(at) = out.get(from..).and_then(|tail| find(tail, needle)) {
+            let at = from + at;
+            let end = at + needle.len();
+            if end > out.len() {
+                break;
+            }
+            out.splice(at..end, REDACTED.iter().copied());
+            from = at + REDACTED.len();
+        }
+    }
+    Some(out)
+}
+
+/// First index of `needle` in `hay`. Empty needles never match.
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Whether an artifact carries the mark left by [`redact`].
+#[must_use]
+pub fn find_redacted(data: &[u8]) -> bool {
+    find(data, REDACTED).is_some()
+}
