@@ -37,7 +37,7 @@ choir --help
 | `--test` | string | detected | Run by `sh`; verdict is its exit status. Omitted, it is read off one marker file in the repository root (C-35). |
 | `--repo` | path | `.` | Copied, never written to. |
 | `-n` | int > 0 | `2` | Work jail count. |
-| `--providers` | list | `claude,codex` | Comma-separated; only `claude`/`codex`. |
+| `--providers` | list | `claude,codex` | Comma-separated; only `claude`/`codex`/`agy`. |
 | `--timeout` | int > 0 | `1200` | Per jail, passed to `nsjail --time_limit`. |
 | `--out` | path | `./choir-out` | Patch output directory. |
 
@@ -248,6 +248,29 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   every patch is still written and offered, and no verdict changes except a
   `FAIL` that was the deadline all along.
 
+- **C-43** `agy`, Google's Antigravity CLI, is the third provider. It differs from
+  the other two in three ways, each measured rather than assumed. Its credential
+  is not a file: it lives in the login keyring under `service=gemini,
+  username=antigravity`, and it writes `~/.gemini/antigravity-cli/
+  antigravity-oauth-token` only when a keyring *save* fails, so on a working
+  desktop that path never exists. `Provider::cred_source` therefore has two
+  shapes - a path under `$HOME` for `claude` and `codex`, a keyring item for
+  `agy` - and the secret is read out per jail into the slot. That is strictly
+  less exposure than the other two, which copy a token already sitting in the
+  user's home; nothing new is written there. It needs `secret-tool` on PATH, and
+  says so when the lookup comes back empty. Second, `agy` has no config-dir
+  variable - `GEMINI_CONFIG_DIR` is ignored - so it is pointed at its credential
+  by `HOME`, and the jail's home is the credential mount. `jail::prefix` takes
+  the home as an argument rather than hardcoding `/tmp`, because emitting a
+  second `-E HOME` would leave the run depending on which one nsjail prefers;
+  the last one does win, measured, but that is undocumented and a silent
+  authentication failure is the cost of being wrong. Third, `--add-dir /repo` is
+  mandatory: without a declared workspace `agy` invents a scratch project under
+  its own home and edits that, and the jail reports `wrote nothing` after a full
+  paid call - observed before the flag was added, fixed by it. `--print-timeout`
+  is pinned to `24h` for the reason C-37 and C-41 share: its default is five
+  minutes, shorter than any useful budget, and the deadline must be Choir's
+  alone.
 - **C-42** The audit asks for four fixed sections - `AGREEMENT`, `DIVERGENCE`,
   `UNDERSPECIFIED`, `SUSPECT` - and not for an essay. It was one open sentence,
   "say what is wrong with each one", which returns unbounded prose; prose nobody

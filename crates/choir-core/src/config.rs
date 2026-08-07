@@ -6,14 +6,27 @@ use core::fmt;
 
 /// A provider CLI Choir knows how to drive.
 ///
-/// There are exactly two, named in the source (C-14). Adding a third is an edit
-/// here and in [`crate::jail`], by someone who has run the new CLI.
+/// There are exactly three, named in the source (C-14). Adding a fourth is an
+/// edit here and in [`crate::jail`], by someone who has run the new CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     /// Anthropic's `claude` CLI.
     Claude,
     /// `OpenAI`'s `codex` CLI.
     Codex,
+    /// Google's Antigravity CLI, `agy` (C-43).
+    Agy,
+}
+
+/// Where a provider's credential comes from on the host (C-43).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredSource {
+    /// A file at this path relative to the user's home directory.
+    Home(&'static str),
+    /// A secret service item, by `(service, username)` attribute. `agy` keeps
+    /// its OAuth token in the login keyring and writes no file until a keyring
+    /// save fails, so there is nothing on disk to copy.
+    Keyring(&'static str, &'static str),
 }
 
 impl Provider {
@@ -23,24 +36,54 @@ impl Provider {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Agy => "agy",
         }
     }
 
-    /// The environment variable pointing the CLI at its credential directory.
+    /// The environment variable pointing the CLI at its credential directory,
+    /// or `None` when the CLI has no such variable and is pointed by `HOME`.
     #[must_use]
-    pub const fn cred_env(self) -> &'static str {
+    pub const fn cred_env(self) -> Option<&'static str> {
         match self {
-            Self::Claude => "CLAUDE_CONFIG_DIR",
-            Self::Codex => "CODEX_HOME",
+            Self::Claude => Some("CLAUDE_CONFIG_DIR"),
+            Self::Codex => Some("CODEX_HOME"),
+            // `agy` has no config-dir override -- `GEMINI_CONFIG_DIR` is
+            // ignored, measured -- so its jail's `HOME` is the credential
+            // mount and no second variable is emitted (C-43).
+            Self::Agy => None,
         }
     }
 
-    /// The credential file to copy, relative to the user's home directory.
+    /// The jail's `HOME`. `/cred` for a CLI that resolves its credential
+    /// relative to the home directory, `/tmp` for everything else (C-43).
     #[must_use]
-    pub const fn cred_file(self) -> &'static str {
+    pub const fn home(self) -> &'static str {
         match self {
-            Self::Claude => ".claude/.credentials.json",
-            Self::Codex => ".codex/auth.json",
+            Self::Claude | Self::Codex => "/tmp",
+            Self::Agy => "/cred",
+        }
+    }
+
+    /// Where the credential is read from on the host (C-43).
+    #[must_use]
+    pub const fn cred_source(self) -> CredSource {
+        match self {
+            Self::Claude => CredSource::Home(".claude/.credentials.json"),
+            Self::Codex => CredSource::Home(".codex/auth.json"),
+            Self::Agy => CredSource::Keyring("gemini", "antigravity"),
+        }
+    }
+
+    /// Where the credential is written inside the jail, relative to `/cred`.
+    ///
+    /// A basename for the CLIs whose variable already names the directory; a
+    /// nested path for `agy`, which looks under its home (C-43).
+    #[must_use]
+    pub const fn cred_dest(self) -> &'static str {
+        match self {
+            Self::Claude => ".credentials.json",
+            Self::Codex => "auth.json",
+            Self::Agy => ".gemini/antigravity-cli/antigravity-oauth-token",
         }
     }
 
@@ -48,11 +91,12 @@ impl Provider {
     ///
     /// # Errors
     /// Returns [`ParseError::UnknownProvider`] for any word other than the
-    /// exact lowercase `claude` or `codex`.
+    /// exact lowercase `claude`, `codex` or `agy`.
     pub fn from_word(word: &str) -> Result<Self, ParseError> {
         match word {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "agy" => Ok(Self::Agy),
             other => Err(ParseError::UnknownProvider(other.to_owned())),
         }
     }
@@ -626,7 +670,10 @@ pub fn help_text() -> String {
     s.push_str("                      usage error: there is no default and no guess.\n");
     s.push_str("  --repo <path>       repository to copy (default .). Never written to.\n");
     s.push_str("  -n <count>          work jails (default 2). Providers alternate.\n");
-    s.push_str("  --providers <list>  comma-separated: claude, codex (default both).\n");
+    s.push_str("  --providers <list>  comma-separated: claude, codex, agy (default the\n");
+    s.push_str("                      first two). agy is Google Antigravity and reads its\n");
+    s.push_str("                      token from the login keyring, so it needs\n");
+    s.push_str("                      secret-tool on PATH.\n");
     s.push_str("  --timeout <secs>    per-jail deadline (default 1200), enforced by nsjail.\n");
     s.push_str("  --out <dir>         patch directory (default ./choir-out).\n");
     s.push_str("  --cache <path>      read-only mount into every jail, at its own path.\n");

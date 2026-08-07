@@ -39,7 +39,10 @@ command is narrower than the whole suite.
   `target/release/choir`. If `command -v choir` is empty, say so rather than improvising a
   substitute — nothing else in the toolbox gives sealed per-attempt jails.
 - `nsjail` on PATH and unprivileged user namespaces enabled.
-- `claude` and/or `codex` on PATH and logged in.
+- `claude`, `codex` and/or `agy` on PATH and logged in. `agy` is Google's Antigravity CLI;
+  it keeps its OAuth token in the login keyring rather than a file, so Choir reads it out per
+  jail with `secret-tool` (install libsecret if that is missing). Nothing is written to your
+  home to make this work.
 - **Every run spends the user's real subscription quota.** N work jails plus one audit call.
   Confirm the instruction and `n` before spending it; a vague instruction wastes the whole run.
 - The tree does not need to be committed. Choir commits its own copy, so uncommitted and

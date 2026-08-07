@@ -13,7 +13,7 @@ use choir_core::{Jail, Provider};
 /// C-11: every jail shares one prefix carrying the rlimit and mount decisions.
 #[test]
 fn c11_shared_prefix() {
-    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1");
+    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1", "/tmp");
     assert_eq!(
         p,
         "nsjail -Mo -q -t 9 \
@@ -33,7 +33,7 @@ fn c11_shared_prefix() {
 /// patch, and it took every other bound down with it.
 #[test]
 fn c38_resources_are_bounded_not_disabled() {
-    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1");
+    let p = jail::prefix(&jail_cfg(9, &[]), "/r/w1", "/tmp");
     assert!(!p.contains("--disable_rlimits"), "{p}");
     for limit in [
         "--rlimit_as",
@@ -59,7 +59,7 @@ fn c38_credentials_in_a_cache_are_masked() {
 
     let mut cfg = jail_cfg(9, &["/home/u/.cargo"]);
     cfg.cache_masks = vec!["/home/u/.cargo/credentials.toml".to_owned()];
-    let p = jail::prefix(&cfg, "/r/w1");
+    let p = jail::prefix(&cfg, "/r/w1", "/tmp");
     // The cache is still readable, and the mask lands after it so it wins.
     let mount = p
         .find("-R '/home/u/.cargo':'/home/u/.cargo'")
@@ -82,7 +82,7 @@ fn c12_provider_jail() {
         Provider::Codex,
     );
 
-    assert!(j.starts_with(&jail::prefix(&jail_cfg(9, &[]), "/r/w1")));
+    assert!(j.starts_with(&jail::prefix(&jail_cfg(9, &[]), "/r/w1", "/tmp")));
     assert!(j.contains(
         " --use_pasta -R /r/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates"
@@ -134,7 +134,7 @@ fn c14_two_templates_only() {
         Provider::Claude,
     );
     let verify = jail::verify(&jail_cfg(5, &[]), "/r/w0");
-    let shared = jail::prefix(&jail_cfg(5, &[]), "/r/w0");
+    let shared = jail::prefix(&jail_cfg(5, &[]), "/r/w0", "/tmp");
     assert!(provider.starts_with(&shared));
     assert!(verify.starts_with(&shared));
 }
@@ -247,4 +247,67 @@ fn jail_cfg(timeout: u32, cache: &[&str]) -> Config {
         cache: cache.iter().map(|s| (*s).to_owned()).collect(),
         ..Config::default()
     }
+}
+
+/// C-43: `agy` is pointed at its credential by `HOME`, so its jail's home *is*
+/// the credential mount and there is exactly one `-E HOME` in the command line.
+/// Two would make the run depend on which one nsjail happens to prefer.
+#[test]
+fn c43_agy_home_is_the_credential_mount() {
+    let j = jail::provider(
+        &jail_cfg(600, &[]),
+        "/r",
+        "/r/s",
+        "-B /r/s/repo:/repo",
+        "/b",
+        Provider::Agy,
+    );
+    assert_eq!(j.matches("-E HOME=").count(), 1);
+    assert!(j.contains("-E HOME=/cred"));
+    assert!(!j.contains("-E HOME=/tmp"));
+    assert!(j.contains("-B /r/s/cred:/cred"));
+    assert!(j.contains("-R /b:/prov/agy"));
+    // The other two keep their own variable and a /tmp home.
+    for p in [Provider::Claude, Provider::Codex] {
+        let o = jail::provider(
+            &jail_cfg(600, &[]),
+            "/r",
+            "/r/s",
+            "-B /r/s/repo:/repo",
+            "/b",
+            p,
+        );
+        assert!(o.contains("-E HOME=/tmp"), "{p} lost its /tmp home");
+        assert_eq!(o.matches("-E HOME=").count(), 1);
+    }
+}
+
+/// C-43: `agy`'s print mode self-terminates at 5 minutes by default, which is
+/// shorter than any useful jail budget. The deadline must be Choir's alone.
+#[test]
+fn c43_agy_print_timeout_outlasts_the_jail() {
+    let cmd = jail::provider_command(Provider::Agy);
+    assert!(cmd.contains("--print-timeout 24h"), "got: {cmd}");
+    assert!(cmd.contains("--dangerously-skip-permissions"));
+    assert!(cmd.contains("/prov/agy -p \"$(cat /cmd)\""));
+    // Without a declared workspace it edits a scratch project, not the tree.
+    assert!(cmd.contains("--add-dir /repo"), "got: {cmd}");
+}
+
+/// C-43: the credential lands where the CLI will look for it.
+#[test]
+fn c43_credential_destinations_match_the_env() {
+    // A variable that names the directory takes a basename beside it.
+    assert_eq!(Provider::Claude.cred_dest(), ".credentials.json");
+    assert_eq!(Provider::Codex.cred_dest(), "auth.json");
+    // `HOME`-relative, so the full path under the home the jail is given.
+    assert_eq!(
+        Provider::Agy.cred_dest(),
+        ".gemini/antigravity-cli/antigravity-oauth-token"
+    );
+    // Nothing on disk to copy: it comes out of the login keyring.
+    assert_eq!(
+        Provider::Agy.cred_source(),
+        choir_core::CredSource::Keyring("gemini", "antigravity")
+    );
 }

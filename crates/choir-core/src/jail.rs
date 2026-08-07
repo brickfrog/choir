@@ -81,7 +81,7 @@ pub fn credential_masks(cache: &str) -> Vec<String> {
 /// `-R /etc/passwd -R /etc/group` are required or nothing in the jail can name
 /// uid 1000.
 #[must_use]
-pub fn prefix(cfg: &Config, slot: &str) -> String {
+pub fn prefix(cfg: &Config, slot: &str, home: &str) -> String {
     let mut s = format!(
         "nsjail -Mo -q -t {} \
          --rlimit_as 8192 --rlimit_fsize 8192 --rlimit_nofile 4096 \
@@ -89,7 +89,7 @@ pub fn prefix(cfg: &Config, slot: &str) -> String {
          -R /usr -R /lib64 -R /bin -R /etc/passwd -R /etc/group \
          -R /dev/null -R /dev/zero -R /dev/urandom -R /dev/random \
          -R {slot}/cmd:/cmd -B {slot}/tmp:/tmp -D /repo \
-         -E PATH=/usr/local/bin:/usr/bin -E HOME=/tmp",
+         -E PATH=/usr/local/bin:/usr/bin -E HOME={home}",
         cfg.timeout
     );
     // Read-only, at its own host path, so a test command finds it where it
@@ -118,6 +118,20 @@ pub const fn provider_command(provider: Provider) -> &'static str {
             "/prov/codex exec --skip-git-repo-check \
              --dangerously-bypass-approvals-and-sandbox \"$(cat /cmd)\""
         }
+        // `--add-dir /repo` is not optional: without a declared workspace `agy`
+        // invents a scratch project under its own home and edits that instead
+        // of the tree, so the jail reports `wrote nothing` after a full paid
+        // call. Measured both ways.
+        //
+        // `--print-timeout` defaults to 5m: left alone, `agy` kills its own
+        // print mode long before Choir's deadline and every longer jail reports
+        // whatever it had at five minutes. Pinned past any plausible budget so
+        // nsjail's `-t` stays the only clock, which is the rule C-37 and C-41
+        // are both about.
+        Provider::Agy => {
+            "/prov/agy -p \"$(cat /cmd)\" --dangerously-skip-permissions \
+             --print-timeout 24h --add-dir /repo"
+        }
     }
 }
 
@@ -136,15 +150,20 @@ pub fn provider(
     provider: Provider,
 ) -> String {
     let name = provider.name();
-    let env = provider.cred_env();
+    // A CLI pointed at its credential by `HOME` gets `/cred` as its home and no
+    // second variable: emitting both would leave two `-E HOME` in one command
+    // line and bet the run on nsjail's undocumented precedence (C-43).
+    let env = provider
+        .cred_env()
+        .map_or_else(String::new, |e| format!(" -E {e}=/cred"));
     let command = provider_command(provider);
     format!(
         "{} --use_pasta -R {run_dir}/resolv.conf:/etc/resolv.conf \
          -R /etc/hosts -R /etc/ssl -R /etc/ca-certificates \
          -R {binary}:/prov/{name} -R {run_dir}/patches:/patches \
-         -B {slot}/cred:/cred -E {env}=/cred {repo_mount} \
+         -B {slot}/cred:/cred{env} {repo_mount} \
          -- /usr/bin/sh -c '{command}'",
-        prefix(cfg, slot)
+        prefix(cfg, slot, provider.home())
     )
 }
 
@@ -158,6 +177,6 @@ pub fn provider(
 pub fn verify(cfg: &Config, slot: &str) -> String {
     format!(
         "{} -B {slot}/repo:/repo -- /usr/bin/sh /cmd",
-        prefix(cfg, slot)
+        prefix(cfg, slot, "/tmp")
     )
 }

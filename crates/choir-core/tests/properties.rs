@@ -15,7 +15,11 @@ use choir_core::report::{self, Row};
 use choir_core::{jail, parse, verdict, wave, Invocation, Jail, Provider, Verdict};
 
 fn any_provider() -> impl Strategy<Value = Provider> {
-    prop_oneof![Just(Provider::Claude), Just(Provider::Codex)]
+    prop_oneof![
+        Just(Provider::Claude),
+        Just(Provider::Codex),
+        Just(Provider::Agy)
+    ]
 }
 
 fn any_verdict() -> impl Strategy<Value = Verdict> {
@@ -219,22 +223,39 @@ proptest! {
         prop_assert!(!j.contains("resolv.conf"));
     }
 
-    /// A provider jail always mounts exactly its own credential variable.
+    /// A provider jail mounts exactly its own credential, and exactly one
+    /// `HOME` — a CLI pointed by `HOME` must not leave two in the command line
+    /// and inherit whichever nsjail happens to prefer (C-43).
     #[test]
     fn provider_jail_mounts_one_credential(
         timeout in 1_u32..100_000,
         provider in any_provider(),
     ) {
         let j = jail::provider(&jail_cfg(timeout, &[]), "/r", "/r/s", "-B /r/s/repo:/repo", "/b", provider);
-        let other = match provider {
-            Provider::Claude => Provider::Codex,
-            Provider::Codex => Provider::Claude,
-        };
-        let cred = format!("-E {}=/cred", provider.cred_env());
         let prov = format!("/prov/{}", provider.name());
-        prop_assert!(j.contains(&cred));
-        prop_assert!(!j.contains(other.cred_env()));
         prop_assert!(j.contains(&prov));
+        prop_assert_eq!(j.matches("-E HOME=").count(), 1);
+        let home = format!("-E HOME={}", provider.home());
+        prop_assert!(j.contains(&home));
+
+        match provider.cred_env() {
+            Some(env) => {
+                let want = format!("-E {env}=/cred");
+                prop_assert!(j.contains(&want));
+            }
+            // Pointed by HOME alone: that is the one that points at /cred.
+            None => prop_assert!(j.contains("-E HOME=/cred")),
+        }
+        // Exactly one variable points at the credential mount, whichever it is.
+        prop_assert_eq!(j.matches("=/cred").count(), 1);
+        // No other provider's variable rides along.
+        for other in [Provider::Claude, Provider::Codex, Provider::Agy] {
+            if other != provider {
+                if let Some(env) = other.cred_env() {
+                    prop_assert!(!j.contains(env));
+                }
+            }
+        }
     }
 }
 

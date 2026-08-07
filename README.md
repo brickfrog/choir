@@ -26,7 +26,7 @@ choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 | `--test '<cmd>'` | detected | Run against the unpatched base and each patch. Omitted, it comes from one marker file in the repository root — `Cargo.toml`, `go.mod`, `Makefile`, `package.json`, `pyproject.toml` — and is printed before the run starts. None or two of them is a usage error naming all five. |
 | `--repo <path>` | `.` | Copied, never written. |
 | `-n <count>` | `2` | Work jails. Providers alternate. |
-| `--providers <list>` | `claude,codex` | |
+| `--providers <list>` | `claude,codex` | `agy` also available; needs `secret-tool`. |
 | `--timeout <secs>` | `1200` | Per jail, enforced by the kernel. |
 | `--out <dir>` | `./choir-out` | `<index>.patch` beside `<index>.log`. |
 | `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. Credential files inside it (`credentials.toml`, `.npmrc`, `.netrc`, …) are masked with `/dev/null`. |

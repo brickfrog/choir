@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::time::SystemTime;
 
-use choir_core::config::{unquotable, Config, Provider};
+use choir_core::config::{unquotable, Config, CredSource, Provider};
 use choir_core::report::{self, Row};
 use choir_core::verdict::{self, Verdict};
 use choir_core::{jail, wave, Jail, AUDIT_PROMPT};
@@ -463,26 +463,47 @@ fn prep_slot(slot: &str, command: &str) {
     sys::write_text(Path::new(&format!("{slot}/cmd")), command);
 }
 
-/// Add what only a provider jail needs: one credential file, and the resolved
+/// Add what only a provider jail needs: one credential, and the resolved
 /// provider binary to mount at `/prov/<name>`.
 ///
 /// Kept separate from [`prep_slot`] rather than gated by a flag on it. A verify
 /// jail mounts no `/cred`, so copying a full-account OAuth token into every
 /// verify slot only widened the token's footprint on disk — seven copies at
 /// `-n 3` where four will do.
+///
+/// The credential is written at the provider's own path under `/cred` (C-43):
+/// a basename for a CLI whose variable names the directory, a nested path for
+/// one that looks under its home. `agy` keeps its token in the login keyring
+/// and writes no file until a keyring save fails, so there is nothing to copy —
+/// it is read out per jail and never lands in the user's home at all, which is
+/// strictly less exposure than the two that copy a file already sitting there.
 fn prep_provider_slot(slot: &str, command: &str, provider: Provider) -> String {
     prep_slot(slot, command);
-    sys::mkdir_all(Path::new(&format!("{slot}/cred")));
 
-    let relative = provider.cred_file();
-    let filename = Path::new(relative)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("credentials.json");
-    sys::copy_file(
-        Path::new(&format!("{}/{relative}", sys::home())),
-        Path::new(&format!("{slot}/cred/{filename}")),
-    );
+    let dest = format!("{slot}/cred/{}", provider.cred_dest());
+    if let Some(parent) = Path::new(&dest).parent() {
+        sys::mkdir_all(parent);
+    }
+    match provider.cred_source() {
+        CredSource::Home(relative) => {
+            sys::copy_file(
+                Path::new(&format!("{}/{relative}", sys::home())),
+                Path::new(&dest),
+            );
+        }
+        CredSource::Keyring(service, username) => {
+            let secret = sys::keyring_lookup(service, username);
+            if secret.is_empty() {
+                eprintln!(
+                    "choir: no {} credential in the keyring (service={service}, \
+                     username={username}). Log the CLI in, and install libsecret's \
+                     `secret-tool` if it is missing.",
+                    provider.name()
+                );
+            }
+            sys::write_bytes(Path::new(&dest), secret.as_bytes());
+        }
+    }
 
     sys::resolve_binary(provider.name())
 }

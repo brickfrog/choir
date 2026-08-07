@@ -78,6 +78,6 @@ pub fn green_prompt(instruction: &str) -> String {
     )
 }
 
-pub use config::{parse, Config, Invocation, ParseError, Provider, Providers};
+pub use config::{parse, Config, CredSource, Invocation, ParseError, Provider, Providers};
 pub use jail::Jail;
 pub use verdict::Verdict;

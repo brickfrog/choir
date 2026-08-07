@@ -255,6 +255,25 @@ pub fn absolute(path: &str) -> String {
     }
 }
 
+/// Read one secret out of the login keyring, or the empty string (C-43).
+///
+/// `agy` stores its OAuth token in the secret service and writes no file until
+/// a keyring save fails, so there is no path to copy. Reading it per jail keeps
+/// Choir's one-credential-per-slot shape and, unlike the two providers that
+/// copy a file, leaves nothing new in the user's home. `service` and `username`
+/// are fixed literals from `Provider::cred_source`, never user input.
+pub fn keyring_lookup(service: &str, username: &str) -> String {
+    let (code, out) = run(
+        "secret-tool",
+        &["lookup", "service", service, "username", username],
+    );
+    if code == 0 {
+        String::from_utf8_lossy(&out).into_owned()
+    } else {
+        String::new()
+    }
+}
+
 /// Resolve a provider CLI to the real binary behind it.
 ///
 /// `command -v` then `readlink -f`, because a provider may be an interactive
