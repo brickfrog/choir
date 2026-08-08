@@ -8,7 +8,7 @@
 
 use crate::config::Provider;
 use crate::memory::{Budget, MemoryState};
-use crate::verdict::{self, Verdict};
+use crate::verdict::{self, Canary, Verdict};
 
 /// Column header for the results table.
 pub const HEADER: &str =
@@ -76,6 +76,61 @@ REASON  no cgroup memory control"
 pub fn memory_refusal() -> String {
     "MEMORY CONTROL UNAVAILABLE\n\n       Choir could not set cgroup v2 memory.max and memory.swap.max for a jail,\n       so a provider's memory use would be bounded by nothing it set.\n       No provider call was made.\n\n       Pass --allow-unbounded-memory to accept an unbounded run."
         .to_owned()
+}
+
+/// What the canary wave established, in one line under the table (C-52, E-50).
+///
+/// The C-45 half is language-free and runs for every passing patch, so the
+/// count of probed patches is the whole of its report; a patch it accused is
+/// already `RED NEUTERED` in the table above. The C-46 half is the one that can
+/// be silent, and its silence had three distinct causes that rendered
+/// identically: no shape for the language, a control that passed, and a control
+/// that never ran. A reader could not tell a suite proved to run its tests from
+/// one where the question was never asked.
+///
+/// Unsupported extensions are named because that is the only state a reader can
+/// act on: it says which entry in `canary_test` would buy coverage. The others
+/// are facts about this run, not about the table.
+///
+/// `None` when no patch passed, where there is nothing to report and a line
+/// reading all zeroes would suggest the wave found something.
+#[must_use]
+pub fn canary_line(states: &[Canary], unsupported_kinds: &[String]) -> Option<String> {
+    if states.is_empty() {
+        return None;
+    }
+    let count = |want: Canary| states.iter().filter(|s| **s == want).count();
+    let probed = states.len() - count(Canary::Unprobed);
+    let mut parts = Vec::new();
+    for (n, label) in [
+        (count(Canary::Measured), "measured"),
+        (count(Canary::Unsupported), "unsupported"),
+        (count(Canary::Inconclusive), "not collected here"),
+        (count(Canary::Failed), "control never ran"),
+    ] {
+        if n > 0 {
+            parts.push(format!("{n} {label}"));
+        }
+    }
+    // Every probed patch lands in exactly one state, so an empty list means
+    // none was probed at all - and then the second clause would be a lie by
+    // omission rather than a summary.
+    if parts.is_empty() {
+        return Some(format!(
+            "canary: 0 of {} passes probed; no approved test was readable",
+            states.len()
+        ));
+    }
+    let kinds = if unsupported_kinds.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", unsupported_kinds.join(", "))
+    };
+    Some(format!(
+        "canary: {probed} of {} passes probed; tests shown to run: {}{kinds}",
+        states.len(),
+        parts.join(", ")
+    ))
 }
 
 /// Render the unpatched tree's test verdict immediately above the table (C-30,

@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use choir_core::config::{unquotable, Config, CredSource, Provider};
 use choir_core::memory::{self, Budget, MemoryState};
 use choir_core::report::{self, Row};
-use choir_core::verdict::{self, Verdict};
+use choir_core::verdict::{self, Canary, Verdict};
 use choir_core::Quoted;
 use choir_core::{ingest, jail, wave, Jail, AUDIT_PROMPT};
 
@@ -135,16 +135,22 @@ pub fn execute(cfg: &Config) -> i32 {
     let attempts = stage(cfg, &paths, &reds, &red_verdicts);
     let (baseline, baseline_again, verify_wave_ran) = verify_wave(cfg, &paths, &attempts);
 
-    let neutered = if cfg.red {
-        red_canary(cfg, &paths, &attempts, &verify_wave_ran)
+    let canary = if cfg.red {
+        red_canary(
+            cfg,
+            &paths,
+            &attempts,
+            &verify_wave_ran,
+            (baseline, baseline_again),
+        )
     } else {
-        Vec::new()
+        CanaryReport::default()
     };
     let rows = collect(
         cfg,
         &paths,
         &attempts,
-        &neutered,
+        &canary.neutered,
         &work_ran,
         &verify_wave_ran,
     );
@@ -159,6 +165,7 @@ pub fn execute(cfg: &Config) -> i32 {
         &patches,
         &paths.out,
         bound.state,
+        &canary,
     );
     let passed = rows.iter().filter(|r| r.verdict.passed()).count();
 
@@ -1377,8 +1384,11 @@ fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, V
 }
 
 /// Which canary a jail is planted with (E-44, E-45).
+///
+/// Distinct from [`Canary`], which is what the wave *established*: this is the
+/// bytes going in, that is the evidence coming out.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Canary {
+enum Plant {
     /// Bytes that cannot execute. Proves the approved file is read at all, in
     /// any language, and can only ever fail to notice something (E-44).
     Unparseable,
@@ -1406,12 +1416,13 @@ enum Canary {
 /// the path would redirect the write out of it. Written whether or not the path
 /// exists, because the control jail (C-46) plants into a tree that never had
 /// these files.
-fn plant_canary(repo: &str, red_patch: &str, kind: Canary) -> usize {
+fn plant_canary(repo: &str, red_patch: &str, kind: Plant) -> (usize, Vec<String>) {
     let (code, out) = sys::git(&["-C", repo, "apply", "--numstat", "-z", red_patch]);
     if code != 0 {
-        return 0;
+        return (0, Vec::new());
     }
     let mut planted = 0;
+    let mut unsupported = Vec::new();
     for record in out.split(|b| *b == 0) {
         if record.is_empty() {
             continue;
@@ -1426,20 +1437,49 @@ fn plant_canary(repo: &str, red_patch: &str, kind: Canary) -> usize {
             continue;
         }
         let content: &[u8] = match kind {
-            Canary::Unparseable => report::CANARY,
+            Plant::Unparseable => report::CANARY,
             // No known shape for this file, so nothing here can be trusted to
             // fail. Skipped rather than guessed: the control would clear it.
-            Canary::Failing => match report::canary_test(path) {
-                Some(shape) => shape,
-                None => continue,
-            },
+            // No known shape for this file, so nothing here can be trusted to
+            // fail. Skipped rather than guessed: the control would clear it.
+            // Named on the way past, so a run can say which shape would have
+            // bought coverage instead of reporting nothing at all (C-52). The
+            // extension, never the path: the path is a model's bytes and this
+            // goes on the terminal.
+            Plant::Failing => {
+                let Some(shape) = report::canary_test(path) else {
+                    if let Some((_, kind)) = path.rsplit_once('.') {
+                        unsupported.push(kind.to_owned());
+                    }
+                    continue;
+                };
+                shape
+            }
         };
         let full = format!("{repo}/{path}");
         sys::remove_tree(&full);
         sys::write_bytes(Path::new(&full), content);
         planted += 1;
     }
-    planted
+    unsupported.sort_unstable();
+    unsupported.dedup();
+    (planted, unsupported)
+}
+
+/// What the canary wave established (C-45, C-46, C-52).
+///
+/// The neutered list changes the table; the rest is what the wave could and
+/// could not show, which used to be discarded. A run that probed nothing and a
+/// run that probed everything and found it clean produced identical output, and
+/// only one of them had checked anything (E-50).
+#[derive(Default)]
+struct CanaryReport {
+    /// Patches whose pass the wave withdrew.
+    neutered: Vec<usize>,
+    /// One entry per passing patch, in jail order.
+    states: Vec<Canary>,
+    /// Extensions the shape table has no entry for, sorted and deduplicated.
+    unsupported_kinds: Vec<String>,
 }
 
 /// One patch's probes: the jails that will speak for or against its pass.
@@ -1479,9 +1519,17 @@ struct Probes {
 /// None of them calls a provider, so `--red` still costs `2n+1` model calls,
 /// and all of them join one wave, so they cost one wave of wall time however
 /// many patches passed.
-fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) -> Vec<usize> {
+fn red_canary(
+    cfg: &Config,
+    paths: &Paths,
+    attempts: &[Attempt],
+    verify: &Wave,
+    baselines: (Verdict, Verdict),
+) -> CanaryReport {
     let mut jails = Vec::new();
     let mut probes = Vec::new();
+    let mut unprobed = 0;
+    let mut unsupported_kinds: Vec<String> = Vec::new();
 
     for attempt in attempts {
         let Staged::Ready(verified) = &attempt.staged else {
@@ -1497,23 +1545,30 @@ fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) 
         // tests replaced. Nothing readable approved means nothing to prove ran:
         // an all-binary red patch is the only way here, and C-36 approves none
         // of it, so a probe over an empty set would report every patch neutered.
-        let Some(unparseable) = self::probe_slot(cfg, paths, index, &red, Canary::Unparseable)
-        else {
+        let Ok(unparseable) = self::probe_slot(cfg, paths, index, &red, Plant::Unparseable) else {
+            unprobed += 1;
             continue;
         };
 
         // The same tree with a planted failing test, and the unpatched tree with
         // the same planting to prove that test is collected and does fail here.
-        let failing =
-            self::probe_slot(cfg, paths, index, &red, Canary::Failing).and_then(|probe| {
+        let failing = match self::probe_slot(cfg, paths, index, &red, Plant::Failing) {
+            Ok(probe) => {
                 let control = paths.slot("k", index);
                 prep_slot(&control, &cfg.test_cmd);
                 sys::copy_tree(&paths.base_repo(), &format!("{control}/repo"));
-                if plant_canary(&format!("{control}/repo"), &red, Canary::Failing) == 0 {
-                    return None;
-                }
-                Some((probe, control))
-            });
+                // The control plants into a tree that never had these files, so
+                // it can only come up empty if the green tree did too.
+                (plant_canary(&format!("{control}/repo"), &red, Plant::Failing).0 > 0)
+                    .then_some((probe, control))
+            }
+            // No shape for anything this patch approved. Remembered rather than
+            // dropped: this is the state the run now has to be able to name.
+            Err(kinds) => {
+                unsupported_kinds.extend(kinds);
+                None
+            }
+        };
 
         jails.push(Jail::new(
             jail::verify(cfg, &unparseable),
@@ -1531,12 +1586,16 @@ fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) 
     }
 
     if jails.is_empty() {
-        return Vec::new();
+        return CanaryReport {
+            states: vec![Canary::Unprobed; unprobed],
+            ..CanaryReport::default()
+        };
     }
     announce("canary", &jails, cfg);
     let wave = run_wave(cfg, &jails);
 
     let mut neutered = Vec::new();
+    let mut states = vec![Canary::Unprobed; unprobed];
     for probe in probes {
         let passed = |slot: &str| timed_verdict(&wave, slot, cfg.timeout).passed();
         // Every probe jail's log into `--out` (C-28). These are the only
@@ -1552,19 +1611,32 @@ fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) 
         };
         log("canary", &probe.unparseable);
         let never_read = passed(&probe.unparseable);
-        let never_ran = probe.failing.as_ref().is_some_and(|(p, control)| {
-            log("canary-failing", p);
-            log("canary-control", control);
-            verdict::probe_accuses(
-                timed_verdict(&wave, control, cfg.timeout),
-                timed_verdict(&wave, p, cfg.timeout),
-            )
-        });
+        let (state, never_ran) = probe.failing.as_ref().map_or(
+            // No control jail was built, so the question was never put.
+            (Canary::Unsupported, false),
+            |(p, control)| {
+                log("canary-failing", p);
+                log("canary-control", control);
+                let control = timed_verdict(&wave, control, cfg.timeout);
+                let probe = timed_verdict(&wave, p, cfg.timeout);
+                (
+                    verdict::canary_evidence(baselines, control),
+                    verdict::probe_accuses(baselines, control, probe),
+                )
+            },
+        );
+        states.push(state);
         if never_read || never_ran {
             neutered.push(probe.index);
         }
     }
-    neutered
+    unsupported_kinds.sort_unstable();
+    unsupported_kinds.dedup();
+    CanaryReport {
+        neutered,
+        states,
+        unsupported_kinds,
+    }
 }
 
 /// Build one probe tree: the base tree, the green patch, and a canary planted
@@ -1575,11 +1647,11 @@ fn probe_slot(
     paths: &Paths,
     index: usize,
     red: &str,
-    kind: Canary,
-) -> Option<String> {
+    kind: Plant,
+) -> Result<String, Vec<String>> {
     let prefix = match kind {
-        Canary::Unparseable => "n",
-        Canary::Failing => "f",
+        Plant::Unparseable => "n",
+        Plant::Failing => "f",
     };
     let slot = paths.slot(prefix, index);
     prep_slot(&slot, &cfg.test_cmd);
@@ -1587,9 +1659,10 @@ fn probe_slot(
     sys::copy_tree(&paths.base_repo(), &repo);
     let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
     if code != 0 {
-        return None;
+        return Err(Vec::new());
     }
-    (plant_canary(&repo, red, kind) > 0).then_some(slot)
+    let (planted, unsupported) = plant_canary(&repo, red, kind);
+    (planted > 0).then_some(slot).ok_or(unsupported)
 }
 
 /// Read each jail's verdict and log line into a renderable row, and copy the
@@ -1670,6 +1743,7 @@ fn print_table(
     patches: &[(usize, &[u8])],
     out_dir: &str,
     memory: MemoryState,
+    canary: &CanaryReport,
 ) {
     println!("\n{}", report::baseline(baseline, baseline_again));
     // Repeated here as well as in the header (C-49). A table is the artifact that
@@ -1681,6 +1755,12 @@ fn print_table(
     println!("{}", report::HEADER);
     for entry in rows {
         println!("{}", report::row(entry));
+    }
+    // C-52: what the canary wave was able to establish. Below the table with
+    // the memory notice, for the same reason: the table is what gets read, and
+    // a check that ran and a check that was never possible must not look alike.
+    if let Some(line) = report::canary_line(&canary.states, &canary.unsupported_kinds) {
+        println!("{line}");
     }
     // C-31: whether the run's N attempts were N attempts. Absent below two
     // non-empty patches, where there is nothing to compare.
@@ -3254,7 +3334,7 @@ mod tests {
         let red = format!("{}/red.patch", dir.str());
         sys::write_bytes(Path::new(&red), &patch);
 
-        let planted = super::plant_canary(&repo, &red, super::Canary::Unparseable);
+        let (planted, _) = super::plant_canary(&repo, &red, super::Plant::Unparseable);
 
         assert_eq!(planted, 1, "the readable test, and only it, is replaced");
         assert_eq!(
@@ -3308,7 +3388,7 @@ mod tests {
         fs::remove_file(format!("{repo}/test_it.py")).expect("unlink");
         std::os::unix::fs::symlink(&target, format!("{repo}/test_it.py")).expect("symlink");
 
-        super::plant_canary(&repo, &red, super::Canary::Unparseable);
+        super::plant_canary(&repo, &red, super::Plant::Unparseable);
 
         assert_eq!(
             fs::read_to_string(&target).expect("target readable"),

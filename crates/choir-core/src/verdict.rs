@@ -261,8 +261,78 @@ pub fn preserves_red(red: &[u8], green: &[u8]) -> bool {
 /// Extracted from the wave for the reason `timed_verdict` was: it is the whole
 /// decision, and left inline no unit test could reach it.
 #[must_use]
-pub const fn probe_accuses(control: Verdict, probe: Verdict) -> bool {
-    matches!(control, Verdict::Fail(_)) && probe.passed()
+pub fn probe_accuses(baselines: (Verdict, Verdict), control: Verdict, probe: Verdict) -> bool {
+    matches!(canary_evidence(baselines, control), Canary::Measured) && probe.passed()
+}
+
+/// What the "do its tests run?" probe established for one passing patch
+/// (C-46, C-52, E-50).
+///
+/// The probe answers a question only where a control jail has shown the planted
+/// shape failing here. Everywhere else it is silent - and silence had exactly
+/// one rendering, which made "this repository is not Python" indistinguishable
+/// from "the check ran and found nothing wrong". These are the states that
+/// silence was hiding, and every one of them is now printed (E-50).
+///
+/// Ordered by how much each licenses: only `Measured` licenses anything, and
+/// the accusation itself needs the probe's verdict too ([`probe_accuses`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Canary {
+    /// Nothing readable was approved, so neither half of the canary ran. An
+    /// all-binary red patch is the only way here: C-36 approves none of it.
+    Unprobed,
+    /// A control collected the planted test and reported it as failing, so the
+    /// probe beside it is evidence whichever way it fell.
+    Measured,
+    /// No planted shape for any approved path - the extension is not in
+    /// `report::canary_test`. The question was never asked, and asking it needs
+    /// a measurement, not a guess.
+    Unsupported,
+    /// The control passed: the planted test is not collected in this
+    /// repository. Wrong framework, or a runner that filters the path.
+    Inconclusive,
+    /// The control never ran to completion - killed by Choir's deadline, or a
+    /// jail that never started. It demonstrated nothing (C-37, E-41).
+    Failed,
+}
+
+/// Classify what a control jail established, before the probe is consulted
+/// (C-46, C-52).
+///
+/// Split from [`probe_accuses`] so the four not-an-accusation states are
+/// nameable rather than being one `false`. The accusation rule has one
+/// definition: this function.
+///
+/// A failing control is not enough, which is E-51 and cost a false accusation
+/// on the gravest verdict the table prints. A runner can fail for reasons that
+/// have nothing to do with the planted test: measured on a repository whose
+/// suite is `unittest discover -p 'check_*.py'`, the control ran *zero* tests
+/// and exited 5 - "NO TESTS RAN", a `Fail` that demonstrates nothing - while
+/// the probe beside it passed on a test the patch had added itself. An honest
+/// patch that fixed the bug, preserved every approved byte and added a test of
+/// its own was reported `RED NEUTERED`.
+///
+/// So the control must have *changed* something: the same tree without the
+/// plant is a jail Choir already runs for C-30, and if planting the shape
+/// leaves its verdict untouched then the runner is not reacting to the plant.
+/// Both baselines, because C-44 runs two and a control matching either one is a
+/// control that may have changed nothing. Costs coverage where a failure
+/// coincides, which is the direction C-46 has always chosen.
+#[must_use]
+pub fn canary_evidence(baselines: (Verdict, Verdict), control: Verdict) -> Canary {
+    let (first, second) = baselines;
+    match control {
+        // Planting the shape turned a tree Choir has already run into a
+        // different answer: the runner collected it and called it a failure.
+        Verdict::Fail(_) if control != first && control != second => Canary::Measured,
+        // Two ways to establish nothing, and they are the same claim: the plant
+        // is not what this runner is reacting to. Either it failed exactly as
+        // the untouched tree did, or it ran and reported success - and neither
+        // shows the planted shape being collected and called a failure.
+        Verdict::Fail(_) | Verdict::Pass => Canary::Inconclusive,
+        // Timed out, never started, never applied: no test ran to completion.
+        _ => Canary::Failed,
+    }
 }
 
 /// Whether Choir's own deadline fired: the jail ran at least as long as the

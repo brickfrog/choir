@@ -225,7 +225,8 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   probe; a control that timed out or never started ran no test to completion and
   licenses nothing, so the test is `Fail` and not merely "did not pass" (C-37,
   E-41). Being wrong about a shape therefore costs coverage and can never
-  produce an accusation. The shape table is `report::canary_test` and it grows
+  produce an accusation - narrowed by C-52, which found the one way it could
+  (E-51). The shape table is `report::canary_test` and it grows
   only by measurement. All of C-45 and C-46's jails join one wave, so they cost
   one wave of wall time however many patches passed, and none calls a provider.
   Every one of their logs is copied into `--out` (C-28): they are the only
@@ -307,6 +308,21 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   with an observation about the room it ran in. A provider that catches its own
   `MemoryError` and exits cleanly is *not* classified — that would be reading the
   model's output as evidence, which this program does nowhere.
+- **C-52** The canary wave reports what it was able to establish, and a control
+  licenses the probe only by changing the answer. C-45's half is language-free and
+  runs for every passing patch; C-46's half runs only where the shape is known,
+  and its silence had one rendering for four different states - no shape for the
+  language, a control that passed, a control that never ran, and a patch that
+  approved nothing readable. A reader could not tell a suite proved to run its
+  approved tests from one where the question was never asked (E-50). Every run now
+  prints one line naming the count in each state, with the unsupported extensions
+  named because that is the only part a reader can act on: it says which entry in
+  `report::canary_test` would buy coverage. `Fail` alone is not the licence C-46
+  described: a runner that collects nothing fails too, and its failure says
+  nothing about the planted shape. So the control must fail *differently from the
+  untouched tree* - a jail Choir already runs for C-30, compared against both
+  baselines because C-44 runs two (E-51). Being wrong about a shape still costs
+  only coverage, and now that cost is printed rather than absorbed.
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -671,6 +687,31 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   record. The limit is deliberately one level above nsjail's own cgroup for the
   same reason: nsjail deletes what it creates when the process ends, and C-51
   needs the counters after the wave.
+- **E-50** The canary's second half was silent in four different situations and
+  said the same nothing in all of them. A repository whose approved tests are not
+  Python has no entry in the shape table, so the probe never runs; a control that
+  passed means the shape is not collected here; a control the deadline killed
+  established nothing; and a patch that approved no readable file was never probed
+  at all. All four printed exactly what a run whose tests were proved to execute
+  printed: nothing. The state that matters most is the first, because it is the
+  common case - every language but one - and it read as a clean bill of health.
+  Fixed by giving the wave a typed state per passing patch and one line under the
+  table (C-52).
+- **E-51** A control jail that ran no tests licensed an accusation, and produced a
+  false one on the gravest verdict the table prints. C-46 requires the control to
+  `Fail`, on the reasoning that a runner which reports the planted test as a
+  failure has demonstrated it collects that shape. A runner that collects
+  *nothing* also fails: measured on a repository whose suite is `unittest discover
+  -p 'check_*.py'`, the untouched tree exits 5 - "NO TESTS RAN" - and the control
+  with the canary planted exits 5 again, because a bare `def test_choir_canary`
+  is not a `TestCase`. The plant changed nothing and the control proved nothing,
+  but `Fail(5)` cleared the bar. The patch beside it had fixed the bug, preserved
+  every red-approved byte, and added one passing test of its own; that test made
+  the probe jail pass, and Choir reported `RED NEUTERED` against a patch that had
+  done everything right - the exact outcome C-46 says the control exists to
+  prevent. The fix needs no new jail: the tree without the plant is the baseline
+  (C-30), so a control that matches it changed nothing and licenses nothing. Both
+  baselines, since C-44 runs two.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is
