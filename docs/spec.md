@@ -230,6 +230,33 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   one wave of wall time however many patches passed, and none calls a provider.
   Every one of their logs is copied into `--out` (C-28): they are the only
   evidence for the gravest verdict the table prints.
+- **C-47** Choir bounds what it reads back from a jail. Every log and every
+  patch in a run is bytes a jailed model wrote; the jail bounds what the model
+  may do to itself, and until E-46 nothing bounded what Choir then did to its
+  own host with the result. A log is ingested to `ingest::LOG_CAP`: within it,
+  read whole; over it, the first and last `LOG_CAP/2` bytes are kept and the
+  middle is dropped, with a notice naming the arithmetic. Head *and* tail
+  because a provider states its plan at the start and fails at the end, and
+  `guard` bytes are discarded either side of the cut so no credential can
+  straddle it — `redact` finds whole needles, and a live token split by the
+  elision would be found by neither half (E-42). A patch gets the opposite
+  policy: half a patch is a different patch, so one over `ingest::PATCH_CAP` is
+  refused whole, with the verdict `PATCH TOO LARGE`, and never read. `git diff`
+  writes it with `--output` so its size is a `stat`: capturing it in order to
+  decide would already have spent the memory the decision exists to save. The
+  row reports the size Choir refused rather than the zero bytes it kept, because
+  `0 B` renders as "wrote nothing" and blames the model for Choir's decision.
+  `LAST LINE FROM PROVIDER` is clipped to `ingest::LINE_CAP`: nothing obliges a
+  provider to write a newline, and one 400 MB line with no `\n` in it is one
+  line. Sizes above a kibibyte scale to MB and GB, because a refusal is the
+  first thing to report a number that made `20480.3 KB` overflow the column.
+- **C-48** The errata ledger is contiguous and machine-checked. A number that is
+  skipped is either an erratum nobody wrote down or a renumbering that broke
+  every reference to it, and this specification's whole claim is that it records
+  what was measured. `c48_the_errata_ledger_is_contiguous` and its charter twin
+  parse `docs/spec.md` and fail on a gap or a duplicate. Written because E-36
+  sat fixed, tested and shipped for three commits with no entry, found by
+  reading — the process this replaces.
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -545,6 +572,26 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   with both probes live all passed. What remains uncaught is a test that runs
   and is rigged to succeed — a fixture stubbing the code under test — and a
   language whose shape is not yet in the table, which fails as silence.
+- **E-46** A jail's log had no bound on the way into Choir's own memory.
+  Measured on the shipped build: a provider writing 400 MB to stdout produced a
+  419,430,405-byte log that Choir read whole with `read_text`, decoded with
+  `from_utf8_lossy` — three bytes out for every invalid byte in, measured at
+  exactly 3.0x on a file of `0xFF` — and copied into `--out`. The only ceiling
+  was nsjail's `--rlimit_fsize 8192`, which is 8 *GB* in nsjail's units and was
+  chosen at C-38 so a real `git` index write is not truncated; at that ceiling
+  the decode alone is 24 GB. The `LAST LINE` column was unbounded by the same
+  omission, and a single newline-free line put the whole file on the terminal.
+  Patches had no bound either, and could not take the log's fix: truncating a
+  patch produces a different patch, so `git diff` now writes with `--output` and
+  an oversized one is refused by `stat` without being read (C-47). Measured
+  after: the same 419 MB flood reaches `--out` as 4,193,210 bytes with the
+  elision named, the row is 626 bytes, and a 20,971,828-byte patch is refused
+  with `PATCH TOO LARGE` and no `git apply` line. The framing in the run notes
+  that found this — "self-inflicted DoS, the attacker is the provider you chose
+  to run" — was wrong and is worth recording as the error it was: every other
+  control in this system treats provider bytes as hostile, and provider output
+  depends on a remote service, a prompt, and a wrapper, none of which the
+  operator authored by choosing to start it.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is
@@ -596,6 +643,18 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   filename prefix rather than a list of known names — the set belongs to the
   vendor — and named inside the jail from the provider's own name, so a host
   `codex-0.147.0` with its own helper beside it still resolves.
+- **E-36** A nested `.git` symlink never aims the permission repair out of the
+  copy. `flatten_nested_repos` handed every nested `.git` that `find` returned
+  to `chmod -R u+rwX`, and GNU `chmod` dereferences the path named on its own
+  command line even though it skips links met during the walk. Measured: a
+  repository shipping `sub/.git -> /tmp/victim` took that tree from `0400` to
+  `0700` on the host, outside the copy, before the first jail started — a
+  silent read-only strip across any tree the user owns, aimable at `~`.
+  `unlock_tree` now refuses a symlink outright; `rm -rf` already removed the
+  link itself without needing the unlock. Fixed in `4f1c9690` and defended by
+  `e36_a_nested_git_symlink_never_chmods_outside_the_copy`. Recorded here in
+  `c1c5a936`'s successor rather than beside the fix: the entry was missed when
+  the fix landed, which is the omission C-48 now makes impossible.
 - **E-37** Shell metacharacters in a scratch path → every host path Choir
   interpolates is one quoted shell word. Both the wave script and the nsjail
   command line are strings handed to `/bin/sh -c`, and every scratch path

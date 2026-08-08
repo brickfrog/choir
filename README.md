@@ -58,7 +58,7 @@ JAIL PROVIDER  PATCH    EXIT  TESTS         TIME  WHY            LAST LINE FROM 
   git apply /home/justin/proj/choir-out/0.patch
 ```
 
-Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)`, `APPLY FAILED`, or
+Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)`, `APPLY FAILED`, `PATCH TOO LARGE`, or
 `-`. `TIME` is the work jail's wall clock, `?` if it never reported. `WHY` names the reason a row
 produced no usable patch, and is blank when one survived — from the deadline Choir set, the clock
 it started, and the patch it extracted, never from what the provider printed.
@@ -73,6 +73,7 @@ it started, and the patch it extracted, never from what the provider printed.
 | `FAIL` | `0 B` | `no exit code` | The jail never wrote one. |
 | `FAIL` | non-empty | `apply rejected` | The patch does not apply to the tree it was made from. |
 | `FAIL` | non-empty | blank | Tested; read `TESTS`. All `FAIL` is usually your `--test`, not the patches — often a missing `--cache`. |
+| any | over 16 MB | `over 16 MB cap` | Choir refused to read the patch, so it was never applied and never a pass. |
 
 `FAIL(137)` is now only the OOM killer or a suite that exits 137 by itself: a deadline kill is
 `TIMEOUT(<secs>s)`, decided from the clock rather than from the code.
@@ -88,6 +89,9 @@ it started, and the patch it extracted, never from what the provider printed.
 - No git identity in a jail: a provider that commits anyway returns an empty patch.
 - `WHY` separates the deadline, a non-zero exit, a clean refusal and a rejected patch; which
   of rate limit, auth or crash produced that exit code is still only in `<n>.log`.
+- Bounded against a provider that floods: a log is ingested to 4 MB (both ends kept, the
+  elision named), a patch over 16 MB is refused unread, and the last-line column is clipped
+  at 512 bytes. A run's own memory no longer scales with what a jail chose to print.
 
 ## Development
 

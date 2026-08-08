@@ -150,7 +150,21 @@ pub struct Row {
 /// Proved overflow-free, with `frac < 10`, by P-2.
 #[must_use]
 pub const fn kib_parts(bytes: usize) -> (usize, usize) {
-    (bytes / 1024, (bytes % 1024) * 10 / 1024)
+    unit_parts(bytes, 10)
+}
+
+/// Split a byte count into whole and tenths parts of `1 << shift` (C-47).
+///
+/// The generalisation of [`kib_parts`], which a refusal made necessary: a patch
+/// Choir declined to read reports its true size, and `20480.3 KB` for 20 MB
+/// both overflows the column and makes the reader do the division. The
+/// remainder is scaled rather than the input for the same reason as before —
+/// `(bytes % unit) * 10` is bounded by `unit * 10`, so it cannot overflow for
+/// any shift a size label uses. Proved for every shift by P-2.
+#[must_use]
+pub const fn unit_parts(bytes: usize, shift: u32) -> (usize, usize) {
+    let unit = 1usize << shift;
+    (bytes / unit, (bytes % unit) * 10 / unit)
 }
 
 /// Trailing spaces needed to set `text_len` in a column `column` wide (E-11).
@@ -173,11 +187,18 @@ pub const fn fill_width(text_len: usize, column: usize) -> usize {
 /// Render a byte count (C-22, E-10).
 #[must_use]
 pub fn size_label(bytes: usize) -> String {
-    if bytes < 1024 {
-        return format!("{bytes} B");
-    }
-    let (whole, frac) = kib_parts(bytes);
-    format!("{whole}.{frac} KB")
+    // A refused patch reports a size no honest one reaches (C-47), and the
+    // column is nine wide: without these arms a 20 MB patch reads
+    // `20480.3 KB`, which overflows the column and hides the magnitude in a
+    // division the reader has to do.
+    let (shift, unit) = match bytes {
+        0..=1023 => return format!("{bytes} B"),
+        1024..=1_048_575 => (10, "KB"),
+        1_048_576..=1_073_741_823 => (20, "MB"),
+        _ => (30, "GB"),
+    };
+    let (whole, frac) = unit_parts(bytes, shift);
+    format!("{whole}.{frac} {unit}")
 }
 
 /// Left-align `text` in a column at least `width` wide (E-11).
@@ -269,18 +290,28 @@ pub fn sanitize(text: &str) -> String {
         .collect()
 }
 
-/// The last non-blank line of a log, trimmed and sanitised (E-8, E-9, E-15).
+/// The last non-blank line of a log, trimmed, sanitised and clipped
+/// (E-8, E-9, E-15, C-47).
 ///
 /// Pure: the shell reads the file, this decides what the row shows. A missing,
 /// empty, or all-blank log yields the empty string.
 #[must_use]
 pub fn last_line(log: &str) -> String {
-    sanitize(
+    crate::ingest::clip(&sanitize(
         log.lines()
             .map(str::trim)
             .rfind(|l| !l.is_empty())
             .unwrap_or_default(),
-    )
+    ))
+}
+
+/// The widest needle in a secret list, which is how far an elision must stay
+/// clear of the bytes it drops (C-47).
+///
+/// Zero for an empty list: with nothing to redact there is nothing to straddle.
+#[must_use]
+pub fn max_needle(needles: &[Vec<u8>]) -> usize {
+    needles.iter().map(Vec::len).max().unwrap_or(0)
 }
 
 /// The audit jail's prose, sanitised and trimmed (E-15).

@@ -58,6 +58,14 @@ pub enum Verdict {
     /// The approved bytes are then present and irrelevant, and the `TESTS`
     /// column reads `PASS` for a suite that executed none of them.
     RedNeutered,
+    /// The extracted patch was larger than `ingest::PATCH_CAP` and was never
+    /// read (C-47).
+    ///
+    /// Distinct from `ApplyFailed`, which is git's judgement of a patch Choir
+    /// did read. This is Choir's own refusal, before any parsing, and it is
+    /// never a pass: half a patch is a different patch, so an oversized one
+    /// cannot be truncated the way a log can.
+    PatchTooLarge,
 }
 
 impl Verdict {
@@ -74,6 +82,7 @@ impl Verdict {
             Self::RedTampered => "RED TAMPERED".to_owned(),
             Self::Unrun => "RED UNRUN".to_owned(),
             Self::RedNeutered => "RED NEUTERED".to_owned(),
+            Self::PatchTooLarge => "PATCH TOO LARGE".to_owned(),
         }
     }
 
@@ -317,6 +326,11 @@ pub fn reason(
 ) -> String {
     if verdict == Verdict::ApplyFailed {
         "apply rejected".to_owned()
+    } else if verdict == Verdict::PatchTooLarge {
+        // Named, not blank: `bytes` is over the cap so the size column already
+        // shows something enormous, and a reader must be told that the number
+        // is why the row was refused rather than incidental to it.
+        format!("over {} MB cap", crate::ingest::PATCH_CAP >> 20)
     } else if bytes > 0 {
         String::new()
     } else if exit == Some(0) {

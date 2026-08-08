@@ -525,3 +525,53 @@ fn c42_audit_prompt_is_four_fixed_sections() {
     // The hole the red lock cannot close, named where a reader will see it.
     assert!(p.contains("test-runner config file"));
 }
+
+/// C-48: the errata ledger is contiguous, and every entry says something.
+///
+/// `docs/spec.md` claims to record what was measured, and E-36 sat fixed,
+/// tested and shipped for three commits with no entry — discovered by reading,
+/// which is the process this replaces. A number that is skipped is either an
+/// erratum nobody wrote down or a renumbering that broke every reference to it,
+/// and both are the specification lying about its own completeness.
+#[test]
+fn c48_the_errata_ledger_is_contiguous() {
+    let spec = std::fs::read_to_string("../../docs/spec.md").expect("spec.md");
+    let mut found: Vec<usize> = spec
+        .lines()
+        .filter_map(|l| l.strip_prefix("- **E-"))
+        .filter_map(|rest| rest.split_once("**").map(|(n, _)| n))
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    found.sort_unstable();
+
+    assert!(found.len() > 40, "the ledger did not parse: {found:?}");
+    let highest = *found.last().expect("at least one erratum");
+    let missing: Vec<usize> = (1..=highest).filter(|n| !found.contains(n)).collect();
+    assert!(
+        missing.is_empty(),
+        "errata numbered but never written: {missing:?}"
+    );
+
+    let mut seen = found.clone();
+    seen.dedup();
+    assert_eq!(seen.len(), found.len(), "an erratum number is used twice");
+}
+
+/// C-48: every charter item is contiguous too, for the same reason.
+#[test]
+fn c48_the_charter_is_contiguous() {
+    let spec = std::fs::read_to_string("../../docs/spec.md").expect("spec.md");
+    let mut found: Vec<usize> = spec
+        .lines()
+        .filter_map(|l| l.strip_prefix("- **C-"))
+        .filter_map(|rest| rest.split_once("**").map(|(n, _)| n))
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    found.sort_unstable();
+    let highest = *found.last().expect("at least one charter item");
+    let missing: Vec<usize> = (1..=highest).filter(|n| !found.contains(n)).collect();
+    assert!(
+        missing.is_empty(),
+        "charter items numbered but never written: {missing:?}"
+    );
+}

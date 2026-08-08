@@ -12,10 +12,13 @@
 //! the smallest version of the gate that killed v2.
 
 use std::fs;
-use std::io::Read;
+use std::fs::File;
+use std::io::{Read, Seek as _, SeekFrom};
 use std::path::Path;
 use std::process::Command;
 use std::time::SystemTime;
+
+use choir_core::ingest;
 
 /// Run a program with an argv, returning its exit code and stdout.
 ///
@@ -99,6 +102,45 @@ pub fn sh_line(script: &str) -> String {
 /// Distinct from [`read_text`]: a credential is compared byte for byte (E-42),
 /// and lossy UTF-8 would rewrite any non-UTF-8 byte in it into a replacement
 /// character that no longer matches what the jail was handed.
+/// Read at most `cap` bytes of a file an untrusted producer wrote (C-47).
+///
+/// A file within the cap is read whole. Over it, the head and tail are read and
+/// the middle is dropped with a notice naming the arithmetic. `guard` bytes are
+/// discarded either side of the cut so a credential cannot straddle it (E-42).
+///
+/// Every failure yields what was read so far rather than aborting: this reads
+/// evidence, and a run that cannot read its own log still has a table to print.
+#[must_use]
+pub fn read_capped(path: &Path, cap: u64, guard: usize) -> Vec<u8> {
+    let Ok(meta) = fs::metadata(path) else {
+        return Vec::new();
+    };
+    let total = meta.len();
+    let Some(plan) = ingest::elide(total, cap) else {
+        return read_bytes(path);
+    };
+    let Ok(mut file) = File::open(path) else {
+        return Vec::new();
+    };
+    let mut head = Vec::new();
+    let _ = (&mut file).take(plan.head).read_to_end(&mut head);
+    // Seek from the start, not the end: the file is a log a jail may still be
+    // writing, and `SeekFrom::End` would measure a size other than the one the
+    // notice reports.
+    if file.seek(SeekFrom::Start(plan.tail_from)).is_err() {
+        return ingest::assemble(&head, &[], total, guard);
+    }
+    let mut tail = Vec::new();
+    let _ = file.take(cap).read_to_end(&mut tail);
+    ingest::assemble(&head, &tail, total, guard)
+}
+
+/// A file's size without reading it, or zero when it cannot be measured.
+#[must_use]
+pub fn file_size(path: &Path) -> u64 {
+    fs::metadata(path).map_or(0, |m| m.len())
+}
+
 pub fn read_bytes(path: &Path) -> Vec<u8> {
     fs::read(path).unwrap_or_default()
 }
@@ -361,7 +403,7 @@ pub fn provider_helpers(binary: &str, name: &str) -> Vec<(String, String)> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{absolute, copy_tree, read_text, sh_line};
+    use super::{absolute, copy_tree, read_capped, read_text, sh_line};
     use std::fs;
     use std::path::Path;
 
@@ -492,5 +534,79 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(&dest);
+    }
+
+    /// C-47: a file within the cap is read byte for byte.
+    #[test]
+    fn read_capped_returns_a_small_file_whole() {
+        let dir = std::env::temp_dir().join("choir-cap-small");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("log");
+        fs::write(&path, b"exactly what was written\n").expect("write");
+        assert_eq!(
+            read_capped(&path, 1024, 0),
+            b"exactly what was written\n".to_vec()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// C-47: an oversized file yields both ends and never the middle.
+    ///
+    /// The bound is what matters: a reader that returned the whole file would
+    /// pass every assertion about content, so the length is asserted first.
+    #[test]
+    fn read_capped_bounds_a_large_file() {
+        let dir = std::env::temp_dir().join("choir-cap-large");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("log");
+        let mut body = b"HEAD-MARKER".to_vec();
+        body.extend(std::iter::repeat_n(b'x', 40_000));
+        body.extend_from_slice(b"TAIL-MARKER");
+        fs::write(&path, &body).expect("write");
+
+        let out = read_capped(&path, 1024, 0);
+        assert!(
+            out.len() < 2048,
+            "read {} bytes of a {}-byte file under a 1024 cap",
+            out.len(),
+            body.len()
+        );
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.starts_with("HEAD-MARKER"), "the head must survive");
+        assert!(text.ends_with("TAIL-MARKER"), "the tail must survive");
+        assert!(
+            text.contains("elided ") && text.contains(&format!("of {} bytes", body.len())),
+            "the notice must name the true size: {text}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// C-47, E-42: a credential straddling the elision reaches neither half.
+    ///
+    /// `redact` finds whole needles. A token split by the cut is found by
+    /// neither side, so the guard must drop the fragments instead -- otherwise
+    /// half a live token lands in `--out` and nothing sees it.
+    #[test]
+    fn read_capped_drops_a_credential_split_by_the_cut() {
+        let dir = std::env::temp_dir().join("choir-cap-cred");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("log");
+        let token = b"sk-ant-SUPERSECRET-0123456789abcdef";
+        // Place the token exactly across the head cut: cap 1024 -> head 512.
+        let mut body = vec![b'a'; 500];
+        body.extend_from_slice(token);
+        body.extend(std::iter::repeat_n(b'b', 40_000));
+        fs::write(&path, &body).expect("write");
+
+        let out = read_capped(&path, 1024, token.len());
+        assert!(
+            out.windows(token.len()).all(|w| w != token.as_slice()),
+            "the whole token survived the cut"
+        );
+        assert!(
+            out.windows(12).all(|w| w != &token[..12]),
+            "a prefix of the token survived the cut"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -17,7 +17,7 @@
 //! the *semantic* property on top of those built-in checks.
 
 use crate::config::rotation_slot;
-use crate::report::{fill_width, kib_parts};
+use crate::report::{fill_width, kib_parts, unit_parts};
 
 /// P-1: the rotation index is always a valid slot.
 ///
@@ -48,6 +48,22 @@ fn p2_kib_parts_never_overflows() {
 
     assert!(frac < 10, "fractional part must be a single digit");
     assert!(whole <= bytes, "KiB count cannot exceed the byte count");
+}
+
+/// P-2b: the generalised split never overflows, for every shift a label uses.
+///
+/// `size_label` reaches this with shifts 10, 20 and 30, and a refused patch can
+/// carry any `usize` at all. Kani explores the whole domain at each shift.
+#[kani::proof]
+fn p2b_unit_parts_never_overflows() {
+    let bytes: usize = kani::any();
+    let shift: u32 = kani::any();
+    kani::assume(shift >= 10 && shift <= 30);
+
+    let (whole, frac) = unit_parts(bytes, shift);
+
+    assert!(frac < 10, "fractional part must be a single digit");
+    assert!(whole <= bytes, "unit count cannot exceed the byte count");
 }
 
 /// P-3: column padding never underflows.

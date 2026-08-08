@@ -14,7 +14,7 @@ use choir_core::config::{unquotable, Config, CredSource, Provider};
 use choir_core::report::{self, Row};
 use choir_core::verdict::{self, Verdict};
 use choir_core::Quoted;
-use choir_core::{jail, wave, Jail, AUDIT_PROMPT};
+use choir_core::{ingest, jail, wave, Jail, AUDIT_PROMPT};
 
 use crate::sys;
 
@@ -34,10 +34,22 @@ enum Staged {
 /// The patch is kept rather than just its length: the distinct-patch line (C-31)
 /// compares the bytes directly, and these are the bytes `extract` already read
 /// on its way to writing them under `--out`.
+/// A jail's extracted work, and how large it really was.
+///
+/// The two differ only when Choir refused the patch: `bytes` is then empty and
+/// `total` is what the row reports, because a refusal that showed `0 B` would
+/// read as a jail that wrote nothing (C-47).
+struct Patch {
+    bytes: Vec<u8>,
+    total: u64,
+}
+
 struct Attempt {
     index: usize,
     provider: Provider,
     patch: Vec<u8>,
+    /// The extracted diff's true size, which the row reports (C-47).
+    total: u64,
     staged: Staged,
 }
 
@@ -424,6 +436,19 @@ fn clear_stale_output(out: &str, n: usize) {
 /// `clear_stale_output`, which unlinks for an unrelated reason (C-44, stale
 /// transcripts) and is a separate list. A fifth write site that nobody thought to
 /// add there is an arbitrary host file write, and nothing would have said so.
+/// Read a jail's log, bounded (C-47).
+///
+/// Every log in a run is bytes a jailed model wrote, and until E-46 Choir read
+/// each one whole into a `String` -- three bytes out for every invalid byte in.
+fn read_log(paths: &Paths, path: &str) -> String {
+    String::from_utf8_lossy(&sys::read_capped(
+        Path::new(path),
+        ingest::LOG_CAP,
+        report::max_needle(&paths.secrets),
+    ))
+    .into_owned()
+}
+
 fn write_out(paths: &Paths, name: &str, bytes: &[u8]) {
     let path = format!("{}/{name}", paths.out);
     sys::remove_tree(&path);
@@ -737,7 +762,10 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
 
     cfg.plan()
         .into_iter()
-        .map(|(index, _)| extract_slot(paths, "r", index, &format!("{index}.red")))
+        // `.bytes`: a red patch over the cap is empty here, which the Red Gate
+        // already refuses as `NoPatch` -- conservative, and `extract_slot`
+        // named the refusal on stderr rather than letting the size vanish.
+        .map(|(index, _)| extract_slot(paths, "r", index, &format!("{index}.red")).bytes)
         .collect()
 }
 
@@ -886,7 +914,7 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
 /// Nothing is lost by discarding the jail's git metadata: `git apply` refuses
 /// every patch path containing a `.git` component, so it could never have
 /// reached a patch anyway.
-fn extract(paths: &Paths, index: usize) -> Vec<u8> {
+fn extract(paths: &Paths, index: usize) -> Patch {
     extract_slot(paths, "w", index, &index.to_string())
 }
 
@@ -897,7 +925,7 @@ fn extract(paths: &Paths, index: usize) -> Vec<u8> {
 /// carries only its new tests, so its patch is exactly those tests; a green
 /// jail's tree was seeded with that red patch, so its patch is tests plus
 /// implementation, and both diff against the same untouched base `HEAD`.
-fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8> {
+fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Patch {
     let repo = format!("{}/repo", paths.slot(prefix, index));
     // Unlock before removing (E-22): a model that runs `chmod 0500` on its own
     // `.git`, or on the repository root above it, makes a plain `rm -rf` fail —
@@ -923,14 +951,52 @@ fn extract_slot(paths: &Paths, prefix: &str, index: usize, name: &str) -> Vec<u8
     // apply binary patch without full index line". One touched binary file
     // otherwise loses the whole attempt to an APPLY FAILED row that reads like a
     // bad patch rather than a diff Choir could not express.
-    let (_, patch) = sys::git(&["-C", &repo, "diff", "--cached", "--binary", "HEAD"]);
+    // `--output` rather than stdout (C-47): the diff is a jailed model's work
+    // and nothing bounds its size. Written to a file first, its size is a
+    // `stat` -- so an oversized patch is refused without ever being read, which
+    // is the whole point. Capturing it to decide would have already spent the
+    // memory the decision exists to save.
+    let raw = format!("{}/patches/{name}.raw", paths.dir);
+    sys::mkdir_all(Path::new(&format!("{}/patches", paths.dir)));
+    let _ = sys::git(&[
+        "-C",
+        &repo,
+        "diff",
+        "--cached",
+        "--binary",
+        &format!("--output={raw}"),
+        "HEAD",
+    ]);
 
+    let total = sys::file_size(Path::new(&raw));
+    if total > ingest::PATCH_CAP {
+        eprintln!(
+            "choir: refused a {total}-byte patch from jail {name}: over the \
+             {}-byte cap (C-47). A patch cannot be truncated the way a log can, \
+             so it is not read, not applied, and not counted as a pass.",
+            ingest::PATCH_CAP
+        );
+        write_out(
+            paths,
+            &format!("{name}.patch.refused"),
+            format!("[choir: a {total}-byte patch exceeded the {}-byte cap (C-47) and was never read]\n", ingest::PATCH_CAP).as_bytes(),
+        );
+        return Patch {
+            bytes: Vec::new(),
+            total,
+        };
+    }
+
+    let patch = sys::read_bytes(Path::new(&raw));
     write_out(paths, &format!("{name}.patch"), &patch);
     sys::write_bytes(
         Path::new(&format!("{}/patches/{name}.patch", paths.dir)),
         &patch,
     );
-    patch
+    Patch {
+        bytes: patch,
+        total,
+    }
 }
 
 /// Extract every patch, then build the tree each surviving patch will be tested
@@ -940,7 +1006,10 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
     cfg.plan()
         .into_iter()
         .map(|(index, provider)| {
-            let patch = extract(paths, index);
+            let Patch {
+                bytes: patch,
+                total,
+            } = extract(paths, index);
             // The Red Gate decides before the patch is even looked at: without
             // a test that failed first, a PASS below would measure the test.
             //
@@ -955,10 +1024,23 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
                     index,
                     provider,
                     patch,
+                    total,
                     staged: Staged::Skipped(match gate {
                         Some(Verdict::Unrun) => Verdict::Unrun,
                         _ => Verdict::RedGate,
                     }),
+                };
+            }
+            // After the gate, which decides without looking at the patch, and
+            // before everything below, which cannot look at one Choir refused
+            // to read (C-47).
+            if total > ingest::PATCH_CAP {
+                return Attempt {
+                    index,
+                    provider,
+                    patch,
+                    total,
+                    staged: Staged::Skipped(Verdict::PatchTooLarge),
                 };
             }
             // C-37, and before the empty check: an empty patch here is every
@@ -985,6 +1067,7 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
                     index,
                     provider,
                     patch,
+                    total,
                     staged: Staged::Skipped(Verdict::RedTampered),
                 };
             }
@@ -993,6 +1076,7 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
                     index,
                     provider,
                     patch,
+                    total,
                     staged: Staged::Skipped(Verdict::NoPatch),
                 };
             }
@@ -1014,6 +1098,7 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
                 index,
                 provider,
                 patch,
+                total,
                 staged,
             }
         })
@@ -1059,7 +1144,7 @@ fn verify_wave(
     // the scratch tree. Reporting NONDETERMINISTIC and then deleting both
     // transcripts destroys the two files that say why.
     for (name, slot) in [("0", &first), ("1", &second)] {
-        let log = sys::read_text(Path::new(&format!("{slot}.log")));
+        let log = read_log(paths, &format!("{slot}.log"));
         write_out(paths, &format!("baseline.{name}.log"), log.as_bytes());
     }
 
@@ -1242,7 +1327,7 @@ fn red_canary(
         // evidence for the gravest verdict in the table, and without this they
         // die with the scratch tree exactly like the baseline log used to.
         let log = |name: &str, slot: &str| {
-            let text = sys::read_text(Path::new(&format!("{slot}.log")));
+            let text = read_log(paths, &format!("{slot}.log"));
             write_out(
                 paths,
                 &format!("{}.{name}.log", probe.index),
@@ -1316,7 +1401,7 @@ fn collect(
         .map(|a| {
             let verdict = match &a.staged {
                 Staged::Ready(slot) => {
-                    let log = sys::read_text(Path::new(&format!("{slot}.log")));
+                    let log = read_log(paths, &format!("{slot}.log"));
                     write_out(paths, &format!("{}.verify.log", a.index), log.as_bytes());
                     let verdict = timed_verdict(slot, verify_started, cfg.timeout);
                     // The probe only ever ran for a jail this call already
@@ -1332,13 +1417,13 @@ fn collect(
                 Staged::Skipped(v) => *v,
             };
             let slot = paths.slot("w", a.index);
-            let log = sys::read_text(Path::new(&format!("{slot}.log")));
+            let log = read_log(paths, &format!("{slot}.log"));
             write_out(paths, &format!("{}.log", a.index), log.as_bytes());
             let rc = format!("{slot}.rc");
             Row {
                 index: a.index,
                 provider: a.provider,
-                bytes: a.patch.len(),
+                bytes: usize::try_from(a.total).unwrap_or(usize::MAX),
                 exit: verdict::code_from_rc(&sys::read_text(Path::new(&rc))),
                 elapsed: sys::elapsed_to(work_started, Path::new(&rc)),
                 timeout: cfg.timeout,
@@ -1412,7 +1497,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
     println!("\n{heading}\n{rule}");
     println!(
         "{}",
-        report::audit_body(&sys::read_text(Path::new(&format!("{slot}.log"))))
+        report::audit_body(&read_log(paths, &format!("{slot}.log")))
     );
 }
 
@@ -1426,6 +1511,7 @@ mod tests {
     };
     use crate::sys;
     use choir_core::config::{Config, Provider};
+    use choir_core::ingest;
     use choir_core::verdict::Verdict;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1514,7 +1600,7 @@ mod tests {
             secrets: Vec::new(),
         };
         fs::create_dir_all(&paths.out).expect("out");
-        let bytes = extract(&paths, 0).len();
+        let bytes = extract(&paths, 0).bytes.len();
         (dir, paths, bytes)
     }
 
@@ -1986,6 +2072,7 @@ mod tests {
                 index: 0,
                 provider: Provider::Claude,
                 patch: b"a patch\n".to_vec(),
+                total: 8,
                 staged: Staged::Ready(format!("{dir_s}/v0")),
             }],
             &[],
@@ -2039,6 +2126,7 @@ mod tests {
                 index: 0,
                 provider: Provider::Codex,
                 patch: Vec::new(),
+                total: 0,
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
             &[],
@@ -2091,7 +2179,7 @@ mod tests {
         fs::write(format!("{slot_repo}/cached.pyc"), "rebuilt\n").expect("rebuild");
 
         assert!(
-            !extract(&paths, 0).is_empty(),
+            !extract(&paths, 0).bytes.is_empty(),
             "the model's edit must reach a patch"
         );
 
@@ -2451,7 +2539,7 @@ mod tests {
             "def test_add():\n    assert add(1, 2) == 3\n",
         )
         .expect("test");
-        let reds = vec![extract_slot(&paths, "r", 0, "0.red")];
+        let reds = vec![extract_slot(&paths, "r", 0, "0.red").bytes];
         assert!(!reds.first().expect("red patch").is_empty());
 
         // The green wave, seeded with that red patch as `work_wave` seeds it.
@@ -3029,6 +3117,7 @@ mod tests {
                 index,
                 provider: Provider::Claude,
                 patch: b"a patch\n".to_vec(),
+                total: 8,
                 staged: Staged::Ready(format!("{dir_s}/v{index}")),
             })
             .collect();
@@ -3054,5 +3143,198 @@ mod tests {
         let clean = collect(&Config::default(), &paths, &attempts, &[], started, started);
         assert_eq!(clean.first().expect("row 0").verdict, Verdict::Pass);
         sys::remove_tree(&dir_s);
+    }
+
+    /// C-47: a patch over the cap is refused, sized honestly, and never read.
+    ///
+    /// The whole point is the *absence* of a read, so the assertions are about
+    /// what did not happen: no `0.patch` in `--out` to apply, and a row size
+    /// that reports the diff Choir declined rather than the zero bytes it kept.
+    #[test]
+    fn c47_an_oversized_patch_is_refused_without_being_read() {
+        let dir = scratch("patch-cap");
+        let dir_s = dir.str();
+        let base = format!("{dir_s}/repo");
+        fs::create_dir_all(&base).expect("base");
+        git(&base, &["init", "-q"]);
+        git(&base, &["config", "user.email", "t@t"]);
+        git(&base, &["config", "user.name", "t"]);
+        fs::write(format!("{base}/calc.py"), "old\n").expect("calc");
+        git(&base, &["add", "-A"]);
+        git(&base, &["commit", "-qm", "base"]);
+
+        let cfg = Config {
+            repo: base.clone(),
+            out: format!("{dir_s}/out"),
+            n: 1,
+            ..Config::default()
+        };
+        let paths = prepare(&cfg).expect("run dir");
+        fs::create_dir_all(format!("{}/w0", paths.dir)).expect("slot");
+        let slot_repo = format!("{}/w0/repo", paths.dir);
+        sys::copy_tree(&paths.base_repo(), &slot_repo);
+
+        // One byte of diff per byte of file, plus headers: comfortably over.
+        let bulk = vec![b'B'; usize::try_from(ingest::PATCH_CAP).unwrap_or(usize::MAX) + 4096];
+        fs::write(format!("{slot_repo}/bulk.bin"), &bulk).expect("bulk");
+
+        let patch = extract(&paths, 0);
+        assert!(
+            patch.bytes.is_empty(),
+            "a refused patch must not be held in memory"
+        );
+        assert!(
+            patch.total > ingest::PATCH_CAP,
+            "the true size must survive the refusal: {}",
+            patch.total
+        );
+        assert!(
+            !Path::new(&format!("{}/0.patch", paths.out)).exists(),
+            "a refused patch must not be offered for `git apply`"
+        );
+        assert!(
+            Path::new(&format!("{}/0.patch.refused", paths.out)).exists(),
+            "the refusal must leave evidence in --out (C-28)"
+        );
+        sys::remove_tree(&paths.dir);
+    }
+
+    /// C-47: the row for a refused patch is a refusal, not a pass.
+    #[test]
+    fn c47_a_refused_patch_is_never_staged() {
+        let attempt = Attempt {
+            index: 0,
+            provider: Provider::Claude,
+            patch: Vec::new(),
+            total: ingest::PATCH_CAP + 1,
+            staged: Staged::Skipped(Verdict::PatchTooLarge),
+        };
+        assert!(!matches!(attempt.staged, Staged::Ready(_)));
+        assert!(!Verdict::PatchTooLarge.passed());
+        assert_eq!(Verdict::PatchTooLarge.label(), "PATCH TOO LARGE");
+        // And the gate must not read a refusal as a red run that failed.
+        assert!(!Verdict::admits_green(Some(Verdict::PatchTooLarge)));
+    }
+
+    /// C-47: the row for a refused patch reports the size Choir refused.
+    ///
+    /// A refusal keeps no bytes, so a row built from what survived would read
+    /// `0 B` -- which `reason` renders as "wrote nothing", blaming the model for
+    /// a decision Choir made. The size and the verdict have to agree.
+    #[test]
+    fn c47_a_refused_row_reports_the_true_size() {
+        let dir = scratch("refused-row");
+        let dir_s = dir.str();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+            secrets: Vec::new(),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+        let started = sys::clock();
+        fs::write(format!("{dir_s}/w0.log"), "done\n").expect("w log");
+        fs::write(format!("{dir_s}/w0.rc"), "0\n").expect("w rc");
+
+        let huge = ingest::PATCH_CAP + 4096;
+        let rows = collect(
+            &Config::default(),
+            &paths,
+            &[Attempt {
+                index: 0,
+                provider: Provider::Claude,
+                patch: Vec::new(),
+                total: huge,
+                staged: Staged::Skipped(Verdict::PatchTooLarge),
+            }],
+            &[],
+            started,
+            started,
+        );
+
+        let row = rows.first().expect("one row");
+        assert_eq!(row.verdict, Verdict::PatchTooLarge);
+        assert_eq!(
+            row.bytes,
+            usize::try_from(huge).unwrap_or(usize::MAX),
+            "the row must report the diff Choir refused, not the zero it kept"
+        );
+        let rendered = choir_core::report::row(row);
+        assert!(
+            rendered.contains("PATCH TOO LARGE"),
+            "the verdict must reach the table: {rendered}"
+        );
+        assert!(
+            rendered.contains("16.0 MB"),
+            "the size must be legible, not 16388.0 KB: {rendered}"
+        );
+        assert!(
+            !rendered.contains("wrote nothing"),
+            "a refusal must not be blamed on the model: {rendered}"
+        );
+    }
+
+    /// C-47: a jail's log is bounded on the way through `collect`.
+    ///
+    /// Through the real call, not `read_capped` directly: the cap only protects
+    /// the host if the constant is actually wired to the call site, and a test
+    /// that passes its own cap proves the reader works while the run stays
+    /// unbounded. Measured against `--out`, which is what survives (C-28).
+    #[test]
+    fn c47_collect_bounds_a_flooded_log() {
+        let dir = scratch("log-cap");
+        let dir_s = dir.str();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+            secrets: Vec::new(),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+        let started = sys::clock();
+
+        let flood = usize::try_from(ingest::LOG_CAP).unwrap_or(usize::MAX) * 2;
+        let mut body = b"FIRST-LINE\n".to_vec();
+        body.extend(std::iter::repeat_n(b'A', flood));
+        body.extend_from_slice(b"\nLAST-LINE\n");
+        fs::write(format!("{dir_s}/w0.log"), &body).expect("w log");
+        fs::write(format!("{dir_s}/w0.rc"), "0\n").expect("w rc");
+
+        let rows = collect(
+            &Config::default(),
+            &paths,
+            &[Attempt {
+                index: 0,
+                provider: Provider::Claude,
+                patch: b"a patch\n".to_vec(),
+                total: 8,
+                staged: Staged::Skipped(Verdict::NoPatch),
+            }],
+            &[],
+            started,
+            started,
+        );
+
+        let written = fs::metadata(format!("{}/0.log", paths.out))
+            .expect("log copied")
+            .len();
+        assert!(
+            written <= ingest::LOG_CAP + 1024,
+            "a {}-byte log reached --out as {written} bytes",
+            body.len()
+        );
+        // Both ends survive, so the bound costs diagnostics and not evidence.
+        let kept = fs::read_to_string(format!("{}/0.log", paths.out)).expect("read");
+        assert!(kept.starts_with("FIRST-LINE"), "the head must survive");
+        assert!(
+            kept.trim_end().ends_with("LAST-LINE"),
+            "the tail must survive"
+        );
+        assert!(kept.contains("elided"), "the cut must be named");
+
+        let row = rows.first().expect("one row");
+        assert_eq!(row.last_line, "LAST-LINE", "the row still reads the tail");
     }
 }

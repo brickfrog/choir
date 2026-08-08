@@ -163,7 +163,8 @@ fn c31_distinct_patch_count() {
         .contains("jail 1 is identical to jail 0"));
 }
 
-/// C-22, E-10: byte counts below 1 KiB are plain; above, one decimal of KiB.
+/// C-22, E-10, C-47: byte counts below 1 KiB are plain; above, one decimal of
+/// the largest unit that fits.
 #[test]
 fn c22_size_label() {
     assert_eq!(report::size_label(0), "0 B");
@@ -173,14 +174,57 @@ fn c22_size_label() {
     assert_eq!(report::size_label(2048), "2.0 KB");
     assert_eq!(report::size_label(4198), "4.0 KB");
     assert_eq!(report::size_label(6963), "6.7 KB");
+    // Every unit boundary, because a refused patch is the first thing that
+    // reaches them and each arm is a separate chance to be off by one (C-47).
+    assert_eq!(report::size_label((1 << 20) - 1), "1023.9 KB");
+    assert_eq!(report::size_label(1 << 20), "1.0 MB");
+    assert_eq!(report::size_label(20 << 20), "20.0 MB");
+    assert_eq!(report::size_label((1 << 30) - 1), "1023.9 MB");
+    assert_eq!(report::size_label(1 << 30), "1.0 GB");
+    assert_eq!(report::size_label(9 << 30), "9.0 GB");
+}
+
+/// C-22, C-47: no size label overflows the `PATCH` column at any size a real
+/// file can reach.
+///
+/// The column is nine wide and `fill_width` guarantees one trailing space, so
+/// a label over nine characters shifts every column right of it. `20480.3 KB`
+/// did exactly that before the unit arms existed.
+#[test]
+fn c47_size_labels_fit_the_patch_column() {
+    for bytes in [
+        0,
+        1023,
+        1024,
+        (1 << 20) - 1,
+        1 << 20,
+        20 << 20,
+        (1 << 30) - 1,
+        1 << 30,
+        // 8 GB is the largest file a jail can write (C-38).
+        8 << 30,
+        1023 << 30,
+    ] {
+        let label = report::size_label(bytes);
+        assert!(
+            label.len() <= 9,
+            "`{label}` ({bytes} bytes) overflows the PATCH column"
+        );
+    }
 }
 
 /// E-10: the largest possible count neither overflows nor panics.
+///
+/// The claim is arithmetic, not cosmetic: the unit it lands in changed when
+/// `size_label` learned to scale (C-47), and `usize::MAX` is now GB.
 #[test]
 fn e10_size_label_at_the_limit() {
     let label = report::size_label(usize::MAX);
-    assert!(label.ends_with(" KB"));
+    assert!(label.ends_with(" GB"), "got `{label}`");
     let (whole, frac) = report::kib_parts(usize::MAX);
+    assert!(frac < 10);
+    assert!(whole > 0);
+    let (whole, frac) = report::unit_parts(usize::MAX, 30);
     assert!(frac < 10);
     assert!(whole > 0);
 }
