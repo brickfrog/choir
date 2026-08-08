@@ -788,15 +788,26 @@ fn c52_a_control_licenses_the_probe_only_by_failing() {
 /// because the rule is what is being measured.
 #[test]
 fn e53_the_control_plants_beside_the_approved_test() {
+    // pytest collects `test_*.py` and `*_test.py`. Both must survive, so the
+    // marker goes inside the stem and leaves each end where it was (E-54).
     assert_eq!(
         report::canary_sibling("tests/test_add.py").as_deref(),
-        Some("tests/test_add_choir_canary.py")
+        Some("tests/test_choir_canary_add.py")
+    );
+    assert_eq!(
+        report::canary_sibling("add_test.py").as_deref(),
+        Some("add_choir_canary_test.py")
     );
     // A suite discovering `check_*.py` must see a file matching `check_*.py`;
     // a fixed name would report every naming convention as unsupported.
     assert_eq!(
         report::canary_sibling("check_thing.py").as_deref(),
-        Some("check_thing_choir_canary.py")
+        Some("check_choir_canary_thing.py")
+    );
+    // No word boundary to plant inside: append, and keep the extension.
+    assert_eq!(
+        report::canary_sibling("tests.py").as_deref(),
+        Some("tests_choir_canary.py")
     );
     assert_eq!(report::canary_sibling("Makefile"), None);
 }

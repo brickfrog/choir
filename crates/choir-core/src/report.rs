@@ -619,19 +619,30 @@ pub fn safe_relative(path: &str) -> bool {
 /// Where the control plants its copy of the shape (C-46, E-53).
 ///
 /// Beside the approved test, with a name derived from it, because the runner's
-/// collection rule is the thing being measured and that rule reads names: a
-/// suite discovering `check_*.py` must see `check_thing_choir_canary.py`, and
-/// one discovering `test_*.py` must see `test_add_choir_canary.py`. Planting at
-/// a fixed path would answer a different question - whether the runner collects
-/// *that* path - and would report every repository with a naming convention as
-/// unsupported.
+/// collection rule is the thing being measured and that rule reads names.
+/// Planting at a fixed path would answer a different question - whether the
+/// runner collects *that* path - and would report every repository with a naming
+/// convention as unsupported.
+///
+/// Conventions live at both ends of a name: pytest collects `test_*.py` and
+/// `*_test.py` by default, and a suffix rule is as ordinary as a prefix one. So
+/// the marker goes *inside*, before the final underscore-separated word, which
+/// leaves both ends of the stem where the runner expects them: `test_add.py`
+/// gives `test_choir_canary_add.py` and `add_test.py` gives
+/// `add_choir_canary_test.py`. Appending broke the second silently - the file
+/// matched nothing, the control passed, and a perfectly ordinary repository was
+/// reported as one whose runner does not collect its own tests (E-54).
 ///
 /// `None` for a path with no extension to keep, which `canary_test` has already
 /// refused for the same reason.
 #[must_use]
 pub fn canary_sibling(path: &str) -> Option<String> {
     let (stem, extension) = path.rsplit_once('.')?;
-    Some(format!("{stem}_choir_canary.{extension}"))
+    let named = match stem.rsplit_once('_') {
+        Some((head, last)) => format!("{head}_choir_canary_{last}"),
+        None => format!("{stem}_choir_canary"),
+    };
+    Some(format!("{named}.{extension}"))
 }
 
 /// A planted test that is valid where it lands and must be reported as a
@@ -656,7 +667,7 @@ pub fn canary_test(path: &str) -> Option<&'static [u8]> {
     let (_, extension) = path.rsplit_once('.')?;
     match extension {
         "py" => Some(
-            b"def test_choir_canary():\n                  assert False, \"choir canary: a planted failing test was not reported as a failure\"\n",
+            b"def test_choir_canary():\n    assert False, \"choir canary: a planted failing test was not reported as a failure\"\n",
         ),
         _ => None,
     }

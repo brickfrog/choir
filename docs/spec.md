@@ -223,9 +223,10 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   repository's own runner demonstrating that it collects that shape and reports
   it as a failure, and it demonstrates that because its reference is a measured
   pass: a tree that went green, plus one file, that now fails, failed because of
-  that file. The sibling carries the approved test's own name (`check_thing.py`
-  gives `check_thing_choir_canary.py`) because the runner's collection rule reads
-  names, and that rule is the thing being measured. A control that passed means
+  that file. The sibling is the approved test's own name with a marker planted
+  before its final word (`check_thing.py` gives `check_choir_canary_thing.py`)
+  because the runner's collection rule reads names - at either end of them
+  (E-54) - and that rule is the thing being measured. A control that passed means
   the shape is not collected here, and silences the probe; a control that timed
   out or never started ran no test to completion and licenses nothing, so the
   test is `Fail` and not merely "did not pass" (C-37, E-41). Being wrong about a
@@ -766,12 +767,26 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   a pass, with the shape added as one new file beside each approved test rather
   than replacing it: a tree that passed, plus one file, that now fails, failed
   because of that file. The name is derived from the approved test's own
-  (`check_thing.py` gives `check_thing_choir_canary.py`) because a runner's
-  collection rule reads names and a fixed path would report every naming
-  convention as unsupported. The baseline comparison is gone with the tree that
+  because a runner's collection rule reads names and a fixed path would report
+  every naming convention as unsupported; where the marker goes inside that name
+  is E-54. The baseline comparison is gone with the tree that
   needed it. Same run afterwards: `2 measured`, and the E-51 fixture - whose
   runner genuinely does not collect the shape - still reads `not collected here`
   and still does not accuse.
+- **E-54** E-53's control planted its sibling by appending: `test_add.py` gave
+  `test_add_choir_canary.py`. Conventions live at both ends of a name. pytest
+  collects `test_*.py` *and* `*_test.py` by default, and against the second the
+  appended name matches neither pattern - so on an ordinary repository whose
+  tests are named `add_test.py`, the control was never collected, passed, and the
+  run reported `not collected here` for a suite pytest reads perfectly well.
+  Measured: the same repository read `not collected here` before and `measured`
+  after. The marker now goes before the final underscore-separated word, leaving
+  both ends of the stem where the runner expects them - `test_add.py` gives
+  `test_choir_canary_add.py`, `add_test.py` gives `add_choir_canary_test.py` - and
+  a stem with no word boundary keeps the appending rule. Failing safe is not the
+  same as being right: three of the last four defects in this check were the
+  control measuring something other than what it claimed, and each cost coverage
+  silently rather than loudly.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is
