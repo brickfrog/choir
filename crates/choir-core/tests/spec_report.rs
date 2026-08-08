@@ -4,7 +4,7 @@
 
 use choir_core::memory::{Budget, MemoryState};
 use choir_core::report::{self, Row};
-use choir_core::verdict::{self, Canary};
+use choir_core::verdict::{self, Ablation, Canary};
 use choir_core::{Provider, Verdict};
 
 fn row_of(index: usize, provider: Provider, bytes: usize, v: Verdict, last: &str) -> String {
@@ -907,4 +907,91 @@ fn c52_an_unprobed_run_does_not_read_as_a_clean_one() {
         "canary: 0 of 2 passes probed; no approved test was readable"
     );
     assert!(!none.contains("measured"), "nothing was measured: {none}");
+}
+
+/// C-53: the four dependence readings, and the one that is not a reading.
+///
+/// Measured against the rig that motivated it (E-52): a patch that added a
+/// `conftest.py` rebinding the function under test and never touched the buggy
+/// file. Reverting edits to pre-existing code changed nothing there, because
+/// there were none; removing what the patch added took the pass away.
+#[test]
+fn c53_ablation_names_where_a_pass_came_from() {
+    let state = verdict::ablation_state;
+
+    // The ordinary fix: the code is load-bearing, the additions are not.
+    assert_eq!(
+        state(Verdict::Fail(1), Verdict::Pass),
+        Ablation::ImplDependent
+    );
+    // E-52: the pass survived losing every edit to existing code.
+    assert_eq!(
+        state(Verdict::Pass, Verdict::Fail(1)),
+        Ablation::SupportDependent
+    );
+    assert_eq!(state(Verdict::Fail(1), Verdict::Fail(1)), Ablation::Mixed);
+    assert_eq!(
+        state(Verdict::Pass, Verdict::Pass),
+        Ablation::NoDependenceObserved
+    );
+
+    // A jail that ran no test to completion decides nothing, on either side.
+    // This is E-41's rule and the one E-51 was caught breaking: a verdict that
+    // is merely "not a pass" must not be read as a measurement.
+    for dead in [Verdict::Timeout(60), Verdict::Unrun, Verdict::ApplyFailed] {
+        assert_eq!(
+            state(dead, Verdict::Pass),
+            Ablation::Inconclusive,
+            "{dead:?} on the impl side measured nothing"
+        );
+        assert_eq!(
+            state(Verdict::Fail(1), dead),
+            Ablation::Inconclusive,
+            "{dead:?} on the support side measured nothing"
+        );
+    }
+}
+
+/// C-53: the line names the jails worth opening and stays silent when there is
+/// nothing to say.
+#[test]
+fn c53_the_ablation_line_names_the_interesting_jails() {
+    assert_eq!(report::ablation_line(&[]), None, "nothing ablated, no line");
+
+    // The healthy run says only how many, because there is nothing to look at.
+    assert_eq!(
+        report::ablation_line(&[(0, Ablation::ImplDependent), (1, Ablation::ImplDependent)]),
+        Some("ablation: 2 impl-dependent".to_owned())
+    );
+
+    // The states a reader has to act on carry their jail numbers.
+    let mixed = report::ablation_line(&[
+        (0, Ablation::ImplDependent),
+        (3, Ablation::SupportDependent),
+        (4, Ablation::Mixed),
+        (7, Ablation::NoDependenceObserved),
+        (9, Ablation::Inconclusive),
+    ])
+    .expect("states present");
+    assert!(mixed.contains("1 support-dependent (jail 3)"), "{mixed}");
+    assert!(
+        mixed.contains("1 no dependence observed (jail 7)"),
+        "{mixed}"
+    );
+    assert!(mixed.contains("1 inconclusive (jail 9)"), "{mixed}");
+    assert!(mixed.contains("1 mixed"), "{mixed}");
+
+    // Two in one state list both, so a reader is never left guessing which.
+    let two = report::ablation_line(&[
+        (2, Ablation::SupportDependent),
+        (5, Ablation::SupportDependent),
+    ])
+    .expect("states present");
+    assert!(two.contains("(jail 2, 5)"), "{two}");
+
+    // A support-dependent run must never read like a clean one.
+    assert_ne!(
+        report::ablation_line(&[(0, Ablation::SupportDependent)]),
+        report::ablation_line(&[(0, Ablation::ImplDependent)])
+    );
 }

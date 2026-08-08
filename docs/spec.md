@@ -323,6 +323,24 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   untouched tree* - a jail Choir already runs for C-30, compared against both
   baselines because C-44 runs two (E-51). Being wrong about a shape still costs
   only coverage, and now that cost is printed rather than absorbed.
+- **C-53** Under `--red`, a passing patch is measured for where its pass came
+  from. C-45 asks whether the approved tests were read and C-46 whether they ran;
+  neither asks whether the *implementation* is what made them pass, and a patch
+  that never touched the buggy function cleared both (E-52). Two more jails join
+  the same wave, each the green tree with one half of the patch undone: the edits
+  to files that already existed put back, and the files the patch introduced
+  removed. Both keep the approved tests, which C-36 holds to the byte and which
+  belong to neither half. The halves are decided by asking the base tree whether
+  the file was already there, never by reading what is in it - classifying a file
+  by content needs the language, and would be a guess where this is arithmetic.
+  A pass that survives losing the edits and dies without the additions is
+  `support-dependent`; the ordinary fix is `impl-dependent`; needing both is
+  `mixed`; needing neither is `no dependence observed`; and a jail that ran no
+  test to completion is `inconclusive` and decides nothing (C-37, E-41). This
+  changes no verdict and prints under the table. A patch may legitimately need a
+  file it added, and a fix that lands in a new module reads as support - telling a
+  fixture from a rig is a judgement about content, which Choir makes nowhere. It
+  reports the dependence and names the jails, and the reader decides.
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -712,6 +730,22 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   prevent. The fix needs no new jail: the tree without the plant is the baseline
   (C-30), so a control that matches it changed nothing and licenses nothing. Both
   baselines, since C-44 runs two.
+- **E-52** Every gate Choir had could be cleared by a patch that did not fix the
+  bug. Measured on the shipped build, `--red`, one work jail: the red wave wrote
+  `import calc` / `assert calc.add(1, 2) == 3`, which failed on the base tree as
+  the gate requires. The work jail never opened `calc.py`. It added a
+  `conftest.py` containing `import calc` and `calc.add = _add`, rebinding the
+  function at collection time. The approved test came back byte-identical, so
+  C-36 passed; the test was read, so C-45 passed; a control showed the planted
+  shape failing, so C-46 measured and cleared it; the suite went green, so the
+  row read `PASS` and Choir printed the `git apply` line. Applying that patch and
+  importing the module gives `add(1, 2) = -1`: the bug shipped untouched, under a
+  recommendation. Nothing in the program asked whether the implementation was
+  load-bearing, because nothing in the program had a way to take it away and look.
+  C-53 does, and the same two fixtures now separate: the honest fix reads
+  `impl-dependent`, the rig reads `support-dependent (jail 0)`, and both still
+  read `PASS` - the finding is evidence for a reader, not a verdict against a
+  patch.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is

@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use choir_core::config::{unquotable, Config, CredSource, Provider};
 use choir_core::memory::{self, Budget, MemoryState};
 use choir_core::report::{self, Row};
-use choir_core::verdict::{self, Canary, Verdict};
+use choir_core::verdict::{self, Ablation, Canary, Verdict};
 use choir_core::Quoted;
 use choir_core::{ingest, jail, wave, Jail, AUDIT_PROMPT};
 
@@ -1398,6 +1398,38 @@ enum Plant {
     Failing,
 }
 
+/// Every path a patch touches, paired with whether git called it binary.
+///
+/// `git apply --numstat -z` does the parsing, so git's quoting rules never
+/// apply and a path holding a space, a quote or a newline arrives whole. A
+/// record is `added \t deleted \t path`, and git writes `-` for both counts of
+/// a binary file. A path that is not valid UTF-8 survives `-z` but not the
+/// lossy conversion; [`report::safe_relative`] refuses the rest, because these
+/// paths come from a patch a model wrote and Choir acts on them directly.
+fn patch_paths(repo: &str, diff: &str) -> Vec<(String, bool)> {
+    let (code, out) = sys::git(&["-C", repo, "apply", "--numstat", "-z", diff]);
+    if code != 0 {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    for record in out.split(|b| *b == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(record);
+        let mut fields = text.splitn(3, '\t');
+        let (added, _deleted, path) = (fields.next(), fields.next(), fields.next());
+        let (Some(added), Some(path)) = (added, path) else {
+            continue;
+        };
+        if !report::safe_relative(path) {
+            continue;
+        }
+        paths.push((path.to_owned(), added == "-"));
+    }
+    paths
+}
+
 /// Replace every readable file the red patch created with a canary, and return
 /// how many were planted (E-44, E-45).
 ///
@@ -1417,29 +1449,16 @@ enum Plant {
 /// exists, because the control jail (C-46) plants into a tree that never had
 /// these files.
 fn plant_canary(repo: &str, red_patch: &str, kind: Plant) -> (usize, Vec<String>) {
-    let (code, out) = sys::git(&["-C", repo, "apply", "--numstat", "-z", red_patch]);
-    if code != 0 {
-        return (0, Vec::new());
-    }
     let mut planted = 0;
     let mut unsupported = Vec::new();
-    for record in out.split(|b| *b == 0) {
-        if record.is_empty() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(record);
-        let mut fields = text.splitn(3, '\t');
-        let (added, _deleted, path) = (fields.next(), fields.next(), fields.next());
-        let (Some(added), Some(path)) = (added, path) else {
-            continue;
-        };
-        if added == "-" || !report::safe_relative(path) {
+    for (path, binary) in patch_paths(repo, red_patch) {
+        // Binary files are the ones C-36 does not approve (E-43), skipped here
+        // for the same reason: their bytes were never the claim.
+        if binary {
             continue;
         }
         let content: &[u8] = match kind {
             Plant::Unparseable => report::CANARY,
-            // No known shape for this file, so nothing here can be trusted to
-            // fail. Skipped rather than guessed: the control would clear it.
             // No known shape for this file, so nothing here can be trusted to
             // fail. Skipped rather than guessed: the control would clear it.
             // Named on the way past, so a run can say which shape would have
@@ -1447,7 +1466,7 @@ fn plant_canary(repo: &str, red_patch: &str, kind: Plant) -> (usize, Vec<String>
             // extension, never the path: the path is a model's bytes and this
             // goes on the terminal.
             Plant::Failing => {
-                let Some(shape) = report::canary_test(path) else {
+                let Some(shape) = report::canary_test(&path) else {
                     if let Some((_, kind)) = path.rsplit_once('.') {
                         unsupported.push(kind.to_owned());
                     }
@@ -1480,6 +1499,78 @@ struct CanaryReport {
     states: Vec<Canary>,
     /// Extensions the shape table has no entry for, sorted and deduplicated.
     unsupported_kinds: Vec<String>,
+    /// Where each passing patch's pass came from, by jail index (C-53).
+    ablation: Vec<(usize, Ablation)>,
+}
+
+/// Split a green patch by where each file came from (C-53).
+///
+/// The approved tests belong to neither half: C-36 holds them byte-identical,
+/// so they are in the green patch but were not written by this wave, and they
+/// stay in both ablation trees - removing them would not measure dependence,
+/// it would just delete the test.
+///
+/// Everything else divides on one mechanical question, asked of the base tree
+/// rather than of the content: was the file already there? An edit to existing
+/// code is the implementation; a file the patch introduced is support. It is a
+/// proxy, and a fix that lands in a new module reads as support - which is why
+/// C-53 reports and never accuses. The alternative is classifying a file by
+/// what is in it, which needs to know the language and would be a guess.
+fn patch_halves(base: &str, green: &[String], red: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut edited = Vec::new();
+    let mut added = Vec::new();
+    for path in green {
+        if red.iter().any(|r| r == path) {
+            continue;
+        }
+        if Path::new(&format!("{base}/{path}")).exists() {
+            edited.push(path.clone());
+        } else {
+            added.push(path.clone());
+        }
+    }
+    (edited, added)
+}
+
+/// Build one ablation tree: the green tree with half of the patch undone
+/// (C-53).
+///
+/// `restore` names files put back as the base tree has them - which for a file
+/// the patch deleted means writing it again, and for one it edited means
+/// overwriting. `drop` names files removed outright. Both lists come from
+/// `patch_halves`, so neither can name an approved test.
+///
+/// Unlinked before writing for E-35's reason: this tree was built from an
+/// untrusted patch, and a symlink sitting at the path would redirect the copy
+/// out of it.
+fn ablation_slot(
+    cfg: &Config,
+    paths: &Paths,
+    index: usize,
+    prefix: &str,
+    restore: &[String],
+    drop: &[String],
+) -> Option<String> {
+    let slot = paths.slot(prefix, index);
+    prep_slot(&slot, &cfg.test_cmd);
+    let repo = format!("{slot}/repo");
+    sys::copy_tree(&paths.base_repo(), &repo);
+    let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
+    if code != 0 {
+        return None;
+    }
+    for path in restore {
+        let live = format!("{repo}/{path}");
+        sys::remove_tree(&live);
+        let original = format!("{}/{path}", paths.base_repo());
+        if Path::new(&original).exists() {
+            sys::copy_file(Path::new(&original), Path::new(&live));
+        }
+    }
+    for path in drop {
+        sys::remove_tree(&format!("{repo}/{path}"));
+    }
+    Some(slot)
 }
 
 /// One patch's probes: the jails that will speak for or against its pass.
@@ -1490,6 +1581,94 @@ struct Probes {
     /// Green tree and unpatched tree, approved tests replaced by a planted
     /// failing test (E-45, C-46). Present only where the shape is known.
     failing: Option<(String, String)>,
+    /// Green tree with the edits to pre-existing files reverted, and green tree
+    /// with the files the patch added removed (C-53). Absent when the patch has
+    /// nothing on either side to take away.
+    ablation: Option<(String, String)>,
+}
+
+/// Every probe tree for one passing patch, and the jails that will run them.
+///
+/// `None` when nothing readable was approved: an all-binary red patch is the
+/// only way here, C-36 approves none of it, and a probe over an empty set would
+/// report every patch neutered. Split out of [`red_canary`] so that function
+/// stays an orchestrator - build, run one wave, classify - rather than growing a
+/// third responsibility each time the ladder gains a rung.
+fn build_probes(
+    cfg: &Config,
+    paths: &Paths,
+    index: usize,
+    unsupported_kinds: &mut Vec<String>,
+) -> Option<(Probes, Vec<Jail>)> {
+    let red = format!("{}/patches/{index}.red.patch", paths.dir);
+
+    // The green tree, exactly as the verify jail had it, with the approved
+    // tests replaced by bytes that cannot execute (C-45).
+    let unparseable = self::probe_slot(cfg, paths, index, &red, Plant::Unparseable).ok()?;
+
+    // The same tree with a planted failing test, and the unpatched tree with
+    // the same planting to prove that test is collected and does fail here.
+    let failing = match self::probe_slot(cfg, paths, index, &red, Plant::Failing) {
+        Ok(probe) => {
+            let control = paths.slot("k", index);
+            prep_slot(&control, &cfg.test_cmd);
+            sys::copy_tree(&paths.base_repo(), &format!("{control}/repo"));
+            // The control plants into a tree that never had these files, so it
+            // can only come up empty if the green tree did too.
+            (plant_canary(&format!("{control}/repo"), &red, Plant::Failing).0 > 0)
+                .then_some((probe, control))
+        }
+        // No shape for anything this patch approved. Remembered rather than
+        // dropped: this is the state the run now has to be able to name.
+        Err(kinds) => {
+            unsupported_kinds.extend(kinds);
+            None
+        }
+    };
+
+    // C-53: the same tree the verify jail passed, minus one half of the patch
+    // at a time. `--numstat` only parses the patch, so the base tree is context
+    // enough and this reads nothing a jail wrote.
+    let base = paths.base_repo();
+    let names = |diff: &str| -> Vec<String> {
+        patch_paths(&base, diff)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect()
+    };
+    let (edited, added) = patch_halves(&base, &names(&paths.patch(index)), &names(&red));
+    let ablation = if edited.is_empty() && added.is_empty() {
+        None
+    } else {
+        ablation_slot(cfg, paths, index, "i", &edited, &[]).zip(ablation_slot(
+            cfg,
+            paths,
+            index,
+            "s",
+            &[],
+            &added,
+        ))
+    };
+
+    let mut jails = vec![Jail::new(
+        jail::verify(cfg, &unparseable),
+        unparseable.clone(),
+    )];
+    for slot in ablation.iter().flat_map(|(a, b)| [a, b]) {
+        jails.push(Jail::new(jail::verify(cfg, slot), slot.clone()));
+    }
+    for slot in failing.iter().flat_map(|(a, b)| [a, b]) {
+        jails.push(Jail::new(jail::verify(cfg, slot), slot.clone()));
+    }
+    Some((
+        Probes {
+            index,
+            unparseable,
+            failing,
+            ablation,
+        },
+        jails,
+    ))
 }
 
 /// Wave 3, `--red` only: prove the approved tests still run (C-45, C-46).
@@ -1538,51 +1717,13 @@ fn red_canary(
         if !timed_verdict(verify, verified, cfg.timeout).passed() {
             continue;
         }
-        let index = attempt.index;
-        let red = format!("{}/patches/{index}.red.patch", paths.dir);
-
-        // The green tree, exactly as the verify jail had it, with the approved
-        // tests replaced. Nothing readable approved means nothing to prove ran:
-        // an all-binary red patch is the only way here, and C-36 approves none
-        // of it, so a probe over an empty set would report every patch neutered.
-        let Ok(unparseable) = self::probe_slot(cfg, paths, index, &red, Plant::Unparseable) else {
-            unprobed += 1;
-            continue;
-        };
-
-        // The same tree with a planted failing test, and the unpatched tree with
-        // the same planting to prove that test is collected and does fail here.
-        let failing = match self::probe_slot(cfg, paths, index, &red, Plant::Failing) {
-            Ok(probe) => {
-                let control = paths.slot("k", index);
-                prep_slot(&control, &cfg.test_cmd);
-                sys::copy_tree(&paths.base_repo(), &format!("{control}/repo"));
-                // The control plants into a tree that never had these files, so
-                // it can only come up empty if the green tree did too.
-                (plant_canary(&format!("{control}/repo"), &red, Plant::Failing).0 > 0)
-                    .then_some((probe, control))
+        match build_probes(cfg, paths, attempt.index, &mut unsupported_kinds) {
+            Some((probe, mut built)) => {
+                jails.append(&mut built);
+                probes.push(probe);
             }
-            // No shape for anything this patch approved. Remembered rather than
-            // dropped: this is the state the run now has to be able to name.
-            Err(kinds) => {
-                unsupported_kinds.extend(kinds);
-                None
-            }
-        };
-
-        jails.push(Jail::new(
-            jail::verify(cfg, &unparseable),
-            unparseable.clone(),
-        ));
-        if let Some((probe, control)) = &failing {
-            jails.push(Jail::new(jail::verify(cfg, probe), probe.clone()));
-            jails.push(Jail::new(jail::verify(cfg, control), control.clone()));
+            None => unprobed += 1,
         }
-        probes.push(Probes {
-            index,
-            unparseable,
-            failing,
-        });
     }
 
     if jails.is_empty() {
@@ -1596,6 +1737,7 @@ fn red_canary(
 
     let mut neutered = Vec::new();
     let mut states = vec![Canary::Unprobed; unprobed];
+    let mut ablation = Vec::new();
     for probe in probes {
         let passed = |slot: &str| timed_verdict(&wave, slot, cfg.timeout).passed();
         // Every probe jail's log into `--out` (C-28). These are the only
@@ -1626,6 +1768,23 @@ fn red_canary(
             },
         );
         states.push(state);
+
+        // C-53: reported beside the verdict, never folded into it. A pass that
+        // did not need its implementation is a fact about the patch, not a
+        // finding against it.
+        let where_from = probe.ablation.as_ref().map_or(
+            Ablation::Inconclusive,
+            |(without_impl, without_support)| {
+                log("ablation-impl", without_impl);
+                log("ablation-support", without_support);
+                verdict::ablation_state(
+                    timed_verdict(&wave, without_impl, cfg.timeout),
+                    timed_verdict(&wave, without_support, cfg.timeout),
+                )
+            },
+        );
+        ablation.push((probe.index, where_from));
+
         if never_read || never_ran {
             neutered.push(probe.index);
         }
@@ -1636,6 +1795,7 @@ fn red_canary(
         neutered,
         states,
         unsupported_kinds,
+        ablation,
     }
 }
 
@@ -1760,6 +1920,11 @@ fn print_table(
     // the memory notice, for the same reason: the table is what gets read, and
     // a check that ran and a check that was never possible must not look alike.
     if let Some(line) = report::canary_line(&canary.states, &canary.unsupported_kinds) {
+        println!("{line}");
+    }
+    // C-53: where each pass came from. Beneath the canary line, because it is
+    // the finer question and only worth reading once the coarse one is settled.
+    if let Some(line) = report::ablation_line(&canary.ablation) {
         println!("{line}");
     }
     // C-31: whether the run's N attempts were N attempts. Absent below two

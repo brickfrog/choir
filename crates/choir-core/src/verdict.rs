@@ -335,6 +335,69 @@ pub fn canary_evidence(baselines: (Verdict, Verdict), control: Verdict) -> Canar
     }
 }
 
+/// Where a passing patch's pass actually came from (C-53, E-52).
+///
+/// C-45 and C-46 ask whether the approved tests were read and run. Neither asks
+/// whether the *implementation* is what made them pass, and nothing did: a
+/// patch that never touched the buggy function, and instead added a `conftest.py`
+/// rebinding it at collection time, passed every gate Choir had and was offered
+/// with a `git apply` line while the bug shipped intact (E-52).
+///
+/// Measured by removing one half of the patch at a time and re-running the same
+/// command. Dependence means the pass did not survive - whatever the reason, an
+/// import error included, because a pass that a file's absence destroys is a
+/// pass that depended on it. Reported, never accused: a patch may legitimately
+/// need a file it added, and telling apart a fixture from a rig is a judgement
+/// about content, which this program makes nowhere.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ablation {
+    /// The pass died without the edits to files that already existed, and
+    /// survived losing everything the patch added. The ordinary shape of a fix.
+    ImplDependent,
+    /// The reverse: the pass survived reverting every edit to pre-existing code
+    /// and died when the added files went. Whatever made the tests pass, it was
+    /// not the change to the code under test.
+    SupportDependent,
+    /// Both halves were needed.
+    Mixed,
+    /// Neither half was needed on its own, so each is individually redundant.
+    NoDependenceObserved,
+    /// A jail that ran no test to completion, or a patch with nothing to
+    /// ablate. Establishes neither dependence nor its absence (C-37, E-41).
+    Inconclusive,
+}
+
+/// Classify an ablation pair (C-53).
+///
+/// `impl_ablated` is the green tree with every edit to a pre-existing file put
+/// back; `support_ablated` is the green tree with every file the patch added -
+/// other than the approved tests, which C-36 holds to the byte - removed. Both
+/// run the same `--test` command as the verify jail that passed.
+///
+/// A jail that never ran decides nothing, and says so rather than being folded
+/// into a dependence claim: that is E-41's rule and the one E-51 was caught
+/// breaking.
+#[must_use]
+pub const fn ablation_state(impl_ablated: Verdict, support_ablated: Verdict) -> Ablation {
+    // Ran-to-completion first. `Pass` and `Fail` are the only two readings that
+    // mean anything here; everything else measured nothing at all.
+    let (impl_ran, support_ran) = (
+        matches!(impl_ablated, Verdict::Pass | Verdict::Fail(_)),
+        matches!(support_ablated, Verdict::Pass | Verdict::Fail(_)),
+    );
+    if !impl_ran || !support_ran {
+        return Ablation::Inconclusive;
+    }
+    match (impl_ablated.passed(), support_ablated.passed()) {
+        // Reverting the code broke it; removing the additions did not.
+        (false, true) => Ablation::ImplDependent,
+        // Reverting the code changed nothing; the additions were load-bearing.
+        (true, false) => Ablation::SupportDependent,
+        (false, false) => Ablation::Mixed,
+        (true, true) => Ablation::NoDependenceObserved,
+    }
+}
+
 /// Whether Choir's own deadline fired: the jail ran at least as long as the
 /// budget Choir gave it (C-37).
 ///

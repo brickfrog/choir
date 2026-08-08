@@ -8,7 +8,7 @@
 
 use crate::config::Provider;
 use crate::memory::{Budget, MemoryState};
-use crate::verdict::{self, Canary, Verdict};
+use crate::verdict::{self, Ablation, Canary, Verdict};
 
 /// Column header for the results table.
 pub const HEADER: &str =
@@ -131,6 +131,54 @@ pub fn canary_line(states: &[Canary], unsupported_kinds: &[String]) -> Option<St
         states.len(),
         parts.join(", ")
     ))
+}
+
+/// What the ablation jails measured, in one line under the table (C-53).
+///
+/// Counts, then the jails whose pass did not rest on their implementation -
+/// those are the rows worth opening, and naming them is the whole use of the
+/// line. It changes no verdict: dependence is a fact about where a pass came
+/// from, not a judgement about why, and a patch may need a file it added.
+///
+/// `None` when nothing was ablated, so a run that could not ask the question
+/// does not print an answer.
+#[must_use]
+pub fn ablation_line(states: &[(usize, Ablation)]) -> Option<String> {
+    if states.is_empty() {
+        return None;
+    }
+    let of = |want: Ablation| -> Vec<usize> {
+        states
+            .iter()
+            .filter(|(_, s)| *s == want)
+            .map(|(i, _)| *i)
+            .collect()
+    };
+    let mut parts = Vec::new();
+    for (want, label, name_them) in [
+        (Ablation::ImplDependent, "impl-dependent", false),
+        (Ablation::SupportDependent, "support-dependent", true),
+        (Ablation::Mixed, "mixed", false),
+        (
+            Ablation::NoDependenceObserved,
+            "no dependence observed",
+            true,
+        ),
+        (Ablation::Inconclusive, "inconclusive", true),
+    ] {
+        let jails = of(want);
+        if jails.is_empty() {
+            continue;
+        }
+        let listed = if name_them {
+            let names: Vec<String> = jails.iter().map(usize::to_string).collect();
+            format!(" (jail {})", names.join(", "))
+        } else {
+            String::new()
+        };
+        parts.push(format!("{} {label}{listed}", jails.len()));
+    }
+    Some(format!("ablation: {}", parts.join(", ")))
 }
 
 /// Render the unpatched tree's test verdict immediately above the table (C-30,
