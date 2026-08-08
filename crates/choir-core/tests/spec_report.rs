@@ -656,24 +656,22 @@ fn e45_the_failing_canary_is_offered_only_for_known_shapes() {
     }
 }
 
-/// C-46, E-51: the planted-failing-test probe accuses only behind a control
-/// that failed *because of the plant*.
+/// C-46, E-51, E-53: the probe accuses only behind a control that failed
+/// *because of the plant*.
 ///
-/// The whole truth table, because most of its cells are silence and each is
-/// silence for a different reason. Without the control this probe would accuse
-/// any repository whose runner does not collect the planted shape - every
-/// language not in the table - which is the opposite of what it is for.
+/// The control's tree is the green tree the verify jail passed, plus the shape
+/// as one new file. Its reference is that pass, so `Fail` means the runner
+/// collected the shape and reported it - the reading E-51 could not support
+/// when the control was planted into an unpatched tree that already failed.
 #[test]
 fn c46_the_probe_accuses_only_behind_a_failing_control() {
-    // The untouched tree collects nothing and exits 5; planting the shape makes
-    // it fail differently, which is the runner reacting to the plant.
-    let base = (Verdict::Fail(5), Verdict::Fail(5));
-    let accuses = |control, probe| verdict::probe_accuses(base, control, probe);
+    let accuses = verdict::probe_accuses;
 
-    // The finding: the same bytes fail unpatched and are called a pass here.
+    // The finding: a tree that passed now fails with the shape in it, and the
+    // same shape replacing the approved tests is called a pass.
     assert!(accuses(Verdict::Fail(1), Verdict::Pass));
-    // The control passed: the planted test is not collected in this repository,
-    // so the probe beside it is measuring nothing.
+    // The control stayed green with the shape sitting in it, so the runner does
+    // not collect it here and the probe beside it measures nothing.
     assert!(!accuses(Verdict::Pass, Verdict::Pass));
     // The probe failed: the planted test was collected and reported. Honest.
     assert!(!accuses(Verdict::Fail(1), Verdict::Fail(1)));
@@ -681,29 +679,13 @@ fn c46_the_probe_accuses_only_behind_a_failing_control() {
     // ran no test to completion and so demonstrated nothing about what this
     // runner collects. Both are `!passed()`, which is why the licence is `Fail`
     // and not merely "did not pass" (C-37, E-41).
-    assert!(
-        !accuses(Verdict::Timeout(60), Verdict::Pass),
-        "a control the deadline killed licenses nothing"
-    );
-    assert!(
-        !accuses(Verdict::Unrun, Verdict::Pass),
-        "a control whose jail never started licenses nothing"
-    );
-    assert!(
-        !accuses(Verdict::ApplyFailed, Verdict::Pass),
-        "only a control that ran and failed shows the shape is collected"
-    );
-
-    // E-51, measured: a suite run as `unittest discover -p 'check_*.py'` exits
-    // 5 on the untouched tree - "NO TESTS RAN" - and exits 5 again with the
-    // plant, because a bare function is not a `TestCase`. The plant changed
-    // nothing. A patch that added a passing test of its own then makes the
-    // probe pass, and this cell used to read as the gravest verdict Choir
-    // prints against a patch that had done everything right.
-    assert!(
-        !accuses(Verdict::Fail(5), Verdict::Pass),
-        "a control that failed exactly as the untouched tree did proves nothing"
-    );
+    for dead in [Verdict::Timeout(60), Verdict::Unrun, Verdict::ApplyFailed] {
+        assert!(
+            !accuses(dead, Verdict::Pass),
+            "a control that ran no test licenses nothing"
+        );
+        assert_eq!(verdict::canary_evidence(dead), Canary::Failed);
+    }
 }
 
 /// C-49: a run without a memory bound says so in every final output.
@@ -771,68 +753,52 @@ fn c50_the_header_states_the_limits_and_the_concurrency() {
     );
 }
 
-/// C-46, C-52: only a control that *failed* licenses the probe, and the three
-/// ways it can decline are three different states.
+/// C-52, E-53: the control's three answers, and what each licenses.
 #[test]
 fn c52_a_control_licenses_the_probe_only_by_failing() {
-    // Read against a baseline the plant demonstrably changed.
-    let base = (Verdict::Fail(5), Verdict::Fail(5));
+    // A tree that passed, plus the shape, now failing: the runner collects it.
+    assert_eq!(verdict::canary_evidence(Verdict::Fail(1)), Canary::Measured);
+    // Still green with the shape in it: not collected here. Not the same as
+    // never having asked, which is what `Unsupported` says.
     assert_eq!(
-        verdict::canary_evidence(base, Verdict::Fail(1)),
-        Canary::Measured
-    );
-
-    // E-51: a control that failed exactly as the untouched tree did changed
-    // nothing, so it demonstrates nothing - whatever the code happens to be.
-    assert_eq!(
-        verdict::canary_evidence(base, Verdict::Fail(5)),
-        Canary::Inconclusive,
-        "a control matching the baseline proves the runner never saw the plant"
-    );
-    // C-44 runs two baselines; matching either is enough to withhold the claim.
-    assert_eq!(
-        verdict::canary_evidence((Verdict::Fail(1), Verdict::Fail(5)), Verdict::Fail(5)),
-        Canary::Inconclusive
-    );
-    // Ran, and did not report the planted test as a failure: the shape is not
-    // collected here. Not the same as never having asked.
-    assert_eq!(
-        verdict::canary_evidence(base, Verdict::Pass),
+        verdict::canary_evidence(Verdict::Pass),
         Canary::Inconclusive
     );
     // Neither of these ran a test to completion (C-37, E-41).
     assert_eq!(
-        verdict::canary_evidence(base, Verdict::Timeout(60)),
+        verdict::canary_evidence(Verdict::Timeout(60)),
         Canary::Failed
     );
+    assert_eq!(verdict::canary_evidence(Verdict::NoPatch), Canary::Failed);
     assert_eq!(
-        verdict::canary_evidence(base, Verdict::NoPatch),
-        Canary::Failed
-    );
-    assert_eq!(
-        verdict::canary_evidence(base, Verdict::ApplyFailed),
+        verdict::canary_evidence(Verdict::ApplyFailed),
         Canary::Failed
     );
 
     // The accusation rule is unchanged by having been split: a probe that
     // passed accuses only beside a control that failed.
-    assert!(verdict::probe_accuses(
-        base,
-        Verdict::Fail(1),
-        Verdict::Pass
-    ));
-    assert!(!verdict::probe_accuses(base, Verdict::Pass, Verdict::Pass));
-    assert!(!verdict::probe_accuses(
-        base,
-        Verdict::Timeout(60),
-        Verdict::Pass
-    ));
+    assert!(verdict::probe_accuses(Verdict::Fail(1), Verdict::Pass));
+    assert!(!verdict::probe_accuses(Verdict::Pass, Verdict::Pass));
+    assert!(!verdict::probe_accuses(Verdict::Timeout(60), Verdict::Pass));
     // A probe that failed is the tests running, which is the good case.
-    assert!(!verdict::probe_accuses(
-        base,
-        Verdict::Fail(1),
-        Verdict::Fail(1)
-    ));
+    assert!(!verdict::probe_accuses(Verdict::Fail(1), Verdict::Fail(1)));
+}
+
+/// E-53: the control plants beside the approved test, matching its naming rule,
+/// because the rule is what is being measured.
+#[test]
+fn e53_the_control_plants_beside_the_approved_test() {
+    assert_eq!(
+        report::canary_sibling("tests/test_add.py").as_deref(),
+        Some("tests/test_add_choir_canary.py")
+    );
+    // A suite discovering `check_*.py` must see a file matching `check_*.py`;
+    // a fixed name would report every naming convention as unsupported.
+    assert_eq!(
+        report::canary_sibling("check_thing.py").as_deref(),
+        Some("check_thing_choir_canary.py")
+    );
+    assert_eq!(report::canary_sibling("Makefile"), None);
 }
 
 /// C-52: silence had three causes and one rendering. Each must now be legible

@@ -616,6 +616,24 @@ pub fn safe_relative(path: &str) -> bool {
         && path.split('/').all(|part| part != ".." && !part.is_empty())
 }
 
+/// Where the control plants its copy of the shape (C-46, E-53).
+///
+/// Beside the approved test, with a name derived from it, because the runner's
+/// collection rule is the thing being measured and that rule reads names: a
+/// suite discovering `check_*.py` must see `check_thing_choir_canary.py`, and
+/// one discovering `test_*.py` must see `test_add_choir_canary.py`. Planting at
+/// a fixed path would answer a different question - whether the runner collects
+/// *that* path - and would report every repository with a naming convention as
+/// unsupported.
+///
+/// `None` for a path with no extension to keep, which `canary_test` has already
+/// refused for the same reason.
+#[must_use]
+pub fn canary_sibling(path: &str) -> Option<String> {
+    let (stem, extension) = path.rsplit_once('.')?;
+    Some(format!("{stem}_choir_canary.{extension}"))
+}
+
 /// A planted test that is valid where it lands and must be reported as a
 /// failure (E-45).
 ///

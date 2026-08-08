@@ -136,13 +136,7 @@ pub fn execute(cfg: &Config) -> i32 {
     let (baseline, baseline_again, verify_wave_ran) = verify_wave(cfg, &paths, &attempts);
 
     let canary = if cfg.red {
-        red_canary(
-            cfg,
-            &paths,
-            &attempts,
-            &verify_wave_ran,
-            (baseline, baseline_again),
-        )
+        red_canary(cfg, &paths, &attempts, &verify_wave_ran)
     } else {
         CanaryReport::default()
     };
@@ -1587,6 +1581,38 @@ struct Probes {
     ablation: Option<(String, String)>,
 }
 
+/// Add the planted shape beside each approved test, without disturbing one
+/// (C-46, E-53).
+///
+/// The control's tree is the green tree, which the verify jail just passed, so
+/// every file in it stays exactly as that jail had it and the only difference
+/// is what this writes. A tree that passed, plus one file, that now fails,
+/// failed because of that file.
+///
+/// Skips a sibling that already exists rather than overwriting it: the tree
+/// under test must differ from the one that passed by additions only, and
+/// clobbering a real file would make the control measure that instead.
+fn plant_beside(repo: &str, red_patch: &str) -> usize {
+    let mut planted = 0;
+    for (path, binary) in patch_paths(repo, red_patch) {
+        if binary {
+            continue;
+        }
+        let (Some(shape), Some(sibling)) =
+            (report::canary_test(&path), report::canary_sibling(&path))
+        else {
+            continue;
+        };
+        let full = format!("{repo}/{sibling}");
+        if Path::new(&full).exists() {
+            continue;
+        }
+        sys::write_bytes(Path::new(&full), shape);
+        planted += 1;
+    }
+    planted
+}
+
 /// Every probe tree for one passing patch, and the jails that will run them.
 ///
 /// `None` when nothing readable was approved: an all-binary red patch is the
@@ -1610,13 +1636,16 @@ fn build_probes(
     // the same planting to prove that test is collected and does fail here.
     let failing = match self::probe_slot(cfg, paths, index, &red, Plant::Failing) {
         Ok(probe) => {
+            // The green tree, which the verify jail passed, plus the shape as a
+            // new file beside each approved test (E-53). Its reference is that
+            // pass, so a failure here is caused by what was added and nothing
+            // else - unlike the base tree, whose own health is uncontrolled.
             let control = paths.slot("k", index);
             prep_slot(&control, &cfg.test_cmd);
-            sys::copy_tree(&paths.base_repo(), &format!("{control}/repo"));
-            // The control plants into a tree that never had these files, so it
-            // can only come up empty if the green tree did too.
-            (plant_canary(&format!("{control}/repo"), &red, Plant::Failing).0 > 0)
-                .then_some((probe, control))
+            let repo = format!("{control}/repo");
+            sys::copy_tree(&paths.base_repo(), &repo);
+            let (code, _) = sys::git(&["-C", &repo, "apply", &paths.patch(index)]);
+            (code == 0 && plant_beside(&repo, &red) > 0).then_some((probe, control))
         }
         // No shape for anything this patch approved. Remembered rather than
         // dropped: this is the state the run now has to be able to name.
@@ -1698,13 +1727,7 @@ fn build_probes(
 /// None of them calls a provider, so `--red` still costs `2n+1` model calls,
 /// and all of them join one wave, so they cost one wave of wall time however
 /// many patches passed.
-fn red_canary(
-    cfg: &Config,
-    paths: &Paths,
-    attempts: &[Attempt],
-    verify: &Wave,
-    baselines: (Verdict, Verdict),
-) -> CanaryReport {
+fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) -> CanaryReport {
     let mut jails = Vec::new();
     let mut probes = Vec::new();
     let mut unprobed = 0;
@@ -1762,8 +1785,8 @@ fn red_canary(
                 let control = timed_verdict(&wave, control, cfg.timeout);
                 let probe = timed_verdict(&wave, p, cfg.timeout);
                 (
-                    verdict::canary_evidence(baselines, control),
-                    verdict::probe_accuses(baselines, control, probe),
+                    verdict::canary_evidence(control),
+                    verdict::probe_accuses(control, probe),
                 )
             },
         );

@@ -261,8 +261,8 @@ pub fn preserves_red(red: &[u8], green: &[u8]) -> bool {
 /// Extracted from the wave for the reason `timed_verdict` was: it is the whole
 /// decision, and left inline no unit test could reach it.
 #[must_use]
-pub fn probe_accuses(baselines: (Verdict, Verdict), control: Verdict, probe: Verdict) -> bool {
-    matches!(canary_evidence(baselines, control), Canary::Measured) && probe.passed()
+pub const fn probe_accuses(control: Verdict, probe: Verdict) -> bool {
+    matches!(canary_evidence(control), Canary::Measured) && probe.passed()
 }
 
 /// What the "do its tests run?" probe established for one passing patch
@@ -303,33 +303,28 @@ pub enum Canary {
 /// nameable rather than being one `false`. The accusation rule has one
 /// definition: this function.
 ///
-/// A failing control is not enough, which is E-51 and cost a false accusation
-/// on the gravest verdict the table prints. A runner can fail for reasons that
-/// have nothing to do with the planted test: measured on a repository whose
-/// suite is `unittest discover -p 'check_*.py'`, the control ran *zero* tests
-/// and exited 5 - "NO TESTS RAN", a `Fail` that demonstrates nothing - while
-/// the probe beside it passed on a test the patch had added itself. An honest
-/// patch that fixed the bug, preserved every approved byte and added a test of
-/// its own was reported `RED NEUTERED`.
+/// A failing control is not enough if the control is measuring the wrong tree,
+/// which is E-51 and E-53. The rule reads simply again because the control now
+/// has a reference: it is the *green* tree - the one the verify jail just
+/// passed - with the shape added as one new file beside an approved test. A
+/// tree that passed, plus one file, that now fails, failed because of that
+/// file. Nothing else in it changed.
 ///
-/// So the control must have *changed* something: the same tree without the
-/// plant is a jail Choir already runs for C-30, and if planting the shape
-/// leaves its verdict untouched then the runner is not reacting to the plant.
-/// Both baselines, because C-44 runs two and a control matching either one is a
-/// control that may have changed nothing. Costs coverage where a failure
-/// coincides, which is the direction C-46 has always chosen.
+/// The first attempt planted into the base tree, whose own health is
+/// uncontrolled: under `--red` it usually already fails, so its failure said
+/// nothing about the plant. Comparing it against the baseline fixed the false
+/// accusation and cost the coverage instead - on an ordinary repository both
+/// failed `Fail(1)` and the probe went unread (E-53).
 #[must_use]
-pub fn canary_evidence(baselines: (Verdict, Verdict), control: Verdict) -> Canary {
-    let (first, second) = baselines;
+pub const fn canary_evidence(control: Verdict) -> Canary {
     match control {
-        // Planting the shape turned a tree Choir has already run into a
-        // different answer: the runner collected it and called it a failure.
-        Verdict::Fail(_) if control != first && control != second => Canary::Measured,
-        // Two ways to establish nothing, and they are the same claim: the plant
-        // is not what this runner is reacting to. Either it failed exactly as
-        // the untouched tree did, or it ran and reported success - and neither
-        // shows the planted shape being collected and called a failure.
-        Verdict::Fail(_) | Verdict::Pass => Canary::Inconclusive,
+        // A passing tree, plus the shape, now fails: the runner collected it
+        // and reported it as a failure. That is the whole demonstration.
+        Verdict::Fail(_) => Canary::Measured,
+        // It stayed green with the shape sitting in it, so the runner does not
+        // collect this shape here - wrong framework, or a naming rule it does
+        // not match.
+        Verdict::Pass => Canary::Inconclusive,
         // Timed out, never started, never applied: no test ran to completion.
         _ => Canary::Failed,
     }

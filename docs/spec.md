@@ -216,17 +216,22 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   (E-44, E-45).
 - **C-46** Under `--red`, where the approved test's shape is one Choir has
   measured, the C-45 jail is joined by two more: the same tree with the approved
-  tests replaced by a planted test the runner must report as failing, and the
-  *unpatched* tree with the identical planting. The probe accuses only when the
-  control `Fail`ed and the probe passed — the control failing is this
+  tests replaced by a planted test the runner must report as failing, and a
+  control - the *green* tree, which the verify jail just passed, with that same
+  planted test added as one new file beside each approved test. The probe accuses
+  only when the control `Fail`ed and the probe passed. The control failing is this
   repository's own runner demonstrating that it collects that shape and reports
-  it as a failure, which is what makes the probe evidence instead of a guess. A
-  control that passed means the shape is not collected here, and silences the
-  probe; a control that timed out or never started ran no test to completion and
-  licenses nothing, so the test is `Fail` and not merely "did not pass" (C-37,
-  E-41). Being wrong about a shape therefore costs coverage and can never
-  produce an accusation - narrowed by C-52, which found the one way it could
-  (E-51). The shape table is `report::canary_test` and it grows
+  it as a failure, and it demonstrates that because its reference is a measured
+  pass: a tree that went green, plus one file, that now fails, failed because of
+  that file. The sibling carries the approved test's own name (`check_thing.py`
+  gives `check_thing_choir_canary.py`) because the runner's collection rule reads
+  names, and that rule is the thing being measured. A control that passed means
+  the shape is not collected here, and silences the probe; a control that timed
+  out or never started ran no test to completion and licenses nothing, so the
+  test is `Fail` and not merely "did not pass" (C-37, E-41). Being wrong about a
+  shape therefore costs coverage and can never produce an accusation - which was
+  true of the design and false of the first implementation, twice (E-51, E-53).
+  The shape table is `report::canary_test` and it grows
   only by measurement. All of C-45 and C-46's jails join one wave, so they cost
   one wave of wall time however many patches passed, and none calls a provider.
   Every one of their logs is copied into `--out` (C-28): they are the only
@@ -319,10 +324,11 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   named because that is the only part a reader can act on: it says which entry in
   `report::canary_test` would buy coverage. `Fail` alone is not the licence C-46
   described: a runner that collects nothing fails too, and its failure says
-  nothing about the planted shape. So the control must fail *differently from the
-  untouched tree* - a jail Choir already runs for C-30, compared against both
-  baselines because C-44 runs two (E-51). Being wrong about a shape still costs
-  only coverage, and now that cost is printed rather than absorbed.
+  nothing about the planted shape. The first repair compared the control against
+  the baseline and cost the coverage instead; C-46's control now runs on the
+  green tree, where the reference is a measured pass (E-51, E-53). Being wrong
+  about a shape still costs only coverage, and now that cost is printed rather
+  than absorbed.
 - **C-53** Under `--red`, a passing patch is measured for where its pass came
   from. C-45 asks whether the approved tests were read and C-46 whether they ran;
   neither asks whether the *implementation* is what made them pass, and a patch
@@ -746,6 +752,26 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   `impl-dependent`, the rig reads `support-dependent (jail 0)`, and both still
   read `PASS` - the finding is evidence for a reader, not a verdict against a
   patch.
+- **E-53** E-51's repair was sound and nearly useless. A control that fails
+  exactly as the untouched tree did proves nothing, so C-46 withheld the licence
+  whenever the two verdicts matched - and under `--red` they almost always match,
+  because the bug is still in the base tree and the suite fails on it. Measured on
+  a real run, two providers, an ordinary Python repository: baseline `FAIL(1)`,
+  control `FAIL(1)`, and the line read `2 not collected here` for a suite pytest
+  collects perfectly well. The check had not regressed - the coverage was never
+  real, and E-50's line was the first thing able to say so - but the control was
+  measuring the wrong tree. Its job is to show the runner reacting to the planted
+  shape, and it was planted into a tree whose own health nothing controlled. The
+  control now runs on the green tree, which the verify jail has just measured as
+  a pass, with the shape added as one new file beside each approved test rather
+  than replacing it: a tree that passed, plus one file, that now fails, failed
+  because of that file. The name is derived from the approved test's own
+  (`check_thing.py` gives `check_thing_choir_canary.py`) because a runner's
+  collection rule reads names and a fixed path would report every naming
+  convention as unsupported. The baseline comparison is gone with the tree that
+  needed it. Same run afterwards: `2 measured`, and the E-51 fixture - whose
+  runner genuinely does not collect the shape - still reads `not collected here`
+  and still does not accuse.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is
