@@ -148,6 +148,27 @@ pub fn prefix(cfg: &Config, slot: &str, home: &str) -> String {
     for path in &cfg.cache_masks {
         let _ = write!(s, " -R /dev/null:'{path}'");
     }
+    // The jail's own cgroup, created and bounded by Choir before the wave (C-49).
+    //
+    // `--cgroup_mem_swap_max 0` is doing something other than its name suggests:
+    // it is what *places* the process. nsjail creates no cgroup at all unless
+    // given a memory knob -- measured, with `-v`: no `createCgroup` line, and the
+    // jail runs charged to Choir's own cgroup instead. Of the knobs that place
+    // it, this is the only one that adds no second limit, so the `memory.max`
+    // Choir set on the directory below stays the binding one and that directory's
+    // `memory.events.local` is this jail's own record rather than a descendant's.
+    //
+    // nsjail creates and removes `<dir>/NSJAIL.<pid>` inside it. That is why the
+    // limit is one level up: nsjail deletes its own cgroup when the process ends,
+    // taking the counters with it, and C-51 needs them after the wave.
+    if let Some(root) = &cfg.cgroup_root {
+        let cg = crate::memory::cgroup_dir(root, slot);
+        let _ = write!(
+            s,
+            " --use_cgroupv2 --cgroupv2_mount {} --cgroup_mem_swap_max 0",
+            Quoted(&cg)
+        );
+    }
     s
 }
 

@@ -11,12 +11,13 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use choir_core::config::{unquotable, Config, CredSource, Provider};
+use choir_core::memory::{self, Budget, MemoryState};
 use choir_core::report::{self, Row};
 use choir_core::verdict::{self, Verdict};
 use choir_core::Quoted;
 use choir_core::{ingest, jail, wave, Jail, AUDIT_PROMPT};
 
-use crate::sys;
+use crate::{cgroup, sys};
 
 /// A staged attempt: either a verify jail to run, or a verdict already decided.
 ///
@@ -88,19 +89,36 @@ impl Paths {
 
 /// Run the whole program. Returns the process exit status (0 if any patch passed).
 pub fn execute(cfg: &Config) -> i32 {
+    // Before `prepare`, so a refusal costs no scratch tree and no repository copy
+    // -- and, the part that matters, happens before anything runs at all.
+    let Some(bound) = admit_memory(cfg) else {
+        return 1;
+    };
     let Some(paths) = prepare(cfg) else {
+        bound.release();
         return 1;
     };
     // From here on the cache is the resolved list: what `prepare` checked is
     // what `jail::prefix` quotes into the wave script, byte for byte (E-28).
+    // `cgroup_root` and `jobs` join it for the same reason -- one resolved
+    // configuration, and no second opinion about whether a jail is bounded.
     let cfg = &Config {
         cache: paths.cache.clone(),
         cache_masks: paths.cache_masks.clone(),
+        cgroup_root: bound.tree.as_ref().map(|t| t.root().to_owned()),
+        jobs: Some(bound.jobs),
         ..cfg.clone()
     };
 
     println!("run {}", paths.dir);
     println!("{}", cfg.banner());
+    println!(
+        "{}",
+        report::memory_line(bound.state, bound.budget, bound.jobs)
+    );
+    if let Some(notice) = report::memory_notice(bound.state) {
+        println!("{notice}");
+    }
 
     let reds = if cfg.red {
         red_wave(cfg, &paths)
@@ -113,12 +131,12 @@ pub fn execute(cfg: &Config) -> i32 {
         Vec::new()
     };
 
-    let work_started = work_wave(cfg, &paths, &reds);
+    let work_ran = work_wave(cfg, &paths, &reds);
     let attempts = stage(cfg, &paths, &reds, &red_verdicts);
-    let (baseline, baseline_again, verify_started) = verify_wave(cfg, &paths, &attempts);
+    let (baseline, baseline_again, verify_wave_ran) = verify_wave(cfg, &paths, &attempts);
 
     let neutered = if cfg.red {
-        red_canary(cfg, &paths, &attempts, verify_started)
+        red_canary(cfg, &paths, &attempts, &verify_wave_ran)
     } else {
         Vec::new()
     };
@@ -127,20 +145,104 @@ pub fn execute(cfg: &Config) -> i32 {
         &paths,
         &attempts,
         &neutered,
-        work_started,
-        verify_started,
+        &work_ran,
+        &verify_wave_ran,
     );
     let patches: Vec<(usize, &[u8])> = attempts
         .iter()
         .map(|a| (a.index, a.patch.as_slice()))
         .collect();
-    print_table(baseline, baseline_again, &rows, &patches, &paths.out);
+    print_table(
+        baseline,
+        baseline_again,
+        &rows,
+        &patches,
+        &paths.out,
+        bound.state,
+    );
     let passed = rows.iter().filter(|r| r.verdict.passed()).count();
 
     audit_wave(cfg, &paths);
 
+    bound.release();
     sys::remove_tree(&paths.dir);
     i32::from(passed == 0)
+}
+
+/// The memory bound a run was admitted under (C-49, C-50).
+struct Bound {
+    state: MemoryState,
+    budget: Budget,
+    jobs: usize,
+    /// The cgroup tree, present exactly when the state is `Enforced`.
+    tree: Option<cgroup::Tree>,
+}
+
+impl Bound {
+    /// Remove the run's cgroups. Both exits call it, including the early one.
+    fn release(&self) {
+        if let Some(tree) = &self.tree {
+            tree.destroy();
+        }
+    }
+}
+
+/// Settle the memory bound before the first provider call (C-49, C-50).
+///
+/// Three questions in one place, in this order, because each is cheaper than the
+/// next and any of them can end the run:
+///
+/// 1. What budget does this host actually honour? `--wave-memory` if given, else
+///    the host's own headroom, capped by the delegated parent's `memory.max` --
+///    the term that matters inside a container, where a budget above it would be
+///    bounded by something Choir did not set and cannot report.
+/// 2. Is the requested concurrency admissible? An explicit `--jobs` over budget is
+///    refused rather than lowered; auto concurrency takes what the budget allows.
+///    `-n` is not consulted at all, which is C-50 in one line.
+/// 3. Can the bound actually be enforced? Asked by building the cgroups and
+///    running a provider-free jail through them, not by inspecting the host.
+///
+/// Returns `None` having said why on stderr. Nothing has run and nothing durable
+/// has been written in any of the three refusals.
+fn admit_memory(cfg: &Config) -> Option<Bound> {
+    let headroom = cgroup::headroom_mib();
+    let wave = cfg
+        .wave_memory
+        .unwrap_or_else(|| {
+            memory::default_wave_budget(sys::host_memory_mib().unwrap_or(0), cfg.memory)
+        })
+        .min(headroom.unwrap_or(usize::MAX));
+    let budget = Budget {
+        per_jail: cfg.memory,
+        wave,
+    };
+
+    let jobs = match memory::admit(cfg.jobs, budget) {
+        Ok(jobs) => jobs,
+        Err(err) => {
+            eprintln!("choir: {err}");
+            return None;
+        }
+    };
+
+    // The host answers only whether the bound could be enforced; `memory::state`
+    // decides what that means. Fail closed is the default: a host that lost the
+    // controller has not thereby gained a trustworthy provider, it has lost one
+    // control, and every other control in this program treats provider bytes as
+    // hostile. The override exists because a local experiment is a real use, and
+    // it makes the run say what it is rather than warn once and scroll away.
+    let tree = cgroup::prepare(cfg.memory, wave);
+    let state = memory::state(tree.is_some(), cfg.allow_unbounded_memory);
+    if !state.admits_provider() {
+        eprintln!("choir: {}", report::memory_refusal());
+        return None;
+    }
+    Some(Bound {
+        state,
+        budget,
+        jobs,
+        tree,
+    })
 }
 
 /// Build the scratch tree: one repo copy every jail is cloned from, the shared
@@ -711,10 +813,16 @@ fn run_secrets(cfg: &Config) -> Vec<Vec<u8>> {
 /// every test: mutating the red gate back to a bare exit code passed the whole
 /// suite, because no unit test can see which function a jail-spawning routine
 /// calls. One named function with one filesystem test closes that.
-fn timed_verdict(slot: &str, started: SystemTime, timeout: u32) -> Verdict {
+fn timed_verdict(wave: &Wave, slot: &str, timeout: u32) -> Verdict {
     let rc = format!("{slot}.rc");
-    let elapsed = sys::elapsed_to(started, Path::new(&rc));
-    verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, timeout)
+    let ran = wave.of(slot);
+    // A slot this wave has no record of degrades to "unmeasured" rather than to a
+    // wrong measurement: an `elapsed` of `None` is what the `TIME` column already
+    // prints `?` for, and `from_run` then declines to blame a deadline it cannot
+    // show fired.
+    let elapsed = ran.and_then(|r| sys::elapsed_to(r.started, Path::new(&rc)));
+    let verdict = verdict::from_run(&sys::read_text(Path::new(&rc)), elapsed, timeout);
+    memory::explained_by_memory(verdict, ran.and_then(|r| r.memory))
 }
 
 /// Run one wave, and return the instant it started (C-37).
@@ -724,10 +832,127 @@ fn timed_verdict(slot: &str, started: SystemTime, timeout: u32) -> Verdict {
 /// to within the milliseconds `sh` takes to spawn them. Nothing polls and
 /// nothing is scheduled — `sh` still blocks on `wait`, and the wave still ends
 /// when its longest jail does.
-fn run_wave(jails: &[Jail]) -> SystemTime {
-    let started = sys::clock();
-    let _ = sys::sh(&wave::script(jails));
-    started
+fn run_wave(cfg: &Config, jails: &[Jail]) -> Wave {
+    let tree = cfg.cgroup_root.as_deref().map(cgroup::Tree::at);
+    let mut ran = Vec::with_capacity(jails.len());
+    // `chunks` panics on zero and `concurrency` cannot return it; the `max` is
+    // here because a panic in the scheduler would be a worse bug than a
+    // redundant instruction.
+    for batch in jails.chunks(cfg.concurrency().max(1)) {
+        // Made immediately before the batch and destroyed immediately after, so a
+        // slot's counters are its own run's and never an earlier batch's.
+        if let Some(tree) = &tree {
+            for jail in batch {
+                tree.jail(&jail.slot, cfg.memory);
+            }
+        }
+        let started = sys::clock();
+        let _ = sys::sh(&wave::script(batch));
+        for jail in batch {
+            let memory = tree.as_ref().and_then(|t| t.collect(&jail.slot));
+            report_memory(&jail.slot, cfg.memory, memory);
+            ran.push(Ran {
+                slot: jail.slot.clone(),
+                started,
+                memory,
+            });
+        }
+    }
+    Wave(ran)
+}
+
+/// What Choir observed of one jail: when it started, and what its own cgroup
+/// recorded before Choir removed it (C-37, C-51).
+struct Ran {
+    slot: String,
+    started: SystemTime,
+    memory: Option<memory::Events>,
+}
+
+/// One wave's observations, in the order its jails were started.
+///
+/// Replaces the single instant a wave used to return, because batching made one
+/// instant wrong: a jail in the third batch waited for two batches that are no
+/// part of its own wall time, and measuring from the wave's start would report a
+/// number the jail never spent. Each batch carries its own start and a row is
+/// measured against the batch it actually ran in.
+struct Wave(Vec<Ran>);
+
+impl Wave {
+    /// What Choir recorded for `slot`, or `None` for a slot this wave never ran.
+    fn of(&self, slot: &str) -> Option<&Ran> {
+        self.0.iter().find(|r| r.slot == slot)
+    }
+
+    /// A wave whose one jail its cgroup recorded a kill for, for tests of how a
+    /// killed jail reaches the table.
+    #[cfg(test)]
+    fn killed_at(slot: &str, started: SystemTime) -> Self {
+        Self(vec![Ran {
+            slot: slot.to_owned(),
+            started,
+            memory: Some(memory::Events {
+                oom_group_kill: 1,
+                peak: 512 << 20,
+                ..memory::Events::default()
+            }),
+        }])
+    }
+
+    /// A wave that started every named slot at `started`, with no cgroup, for
+    /// tests that hand `timed_verdict` a clock directly.
+    #[cfg(test)]
+    fn at(slots: &[&str], started: SystemTime) -> Self {
+        Self(
+            slots
+                .iter()
+                .map(|slot| Ran {
+                    slot: (*slot).to_owned(),
+                    started,
+                    memory: None,
+                })
+                .collect(),
+        )
+    }
+}
+
+/// How a wave announces itself, including the batches a memory budget imposed.
+///
+/// The count is the jails that will run, always: a batched wave runs every one of
+/// them, so the number here is never lowered by concurrency. The shape follows it
+/// when there is more than one batch, which is the only visible difference
+/// between a wave that fit and a wave that did not.
+fn announce(name: &str, jails: &[Jail], cfg: &Config) {
+    let sizes = memory::batches(jails.len(), cfg.concurrency());
+    let shape = if sizes.len() > 1 {
+        let parts: Vec<String> = sizes.iter().map(usize::to_string).collect();
+        format!(" in {} batches of {}", sizes.len(), parts.join(" + "))
+    } else {
+        String::new()
+    };
+    println!("[{name}] {} jails started{shape}", jails.len());
+}
+
+/// Print what a jail's cgroup recorded, at the moment it was read (C-51).
+///
+/// Above the table rather than in it: this is evidence about the room the jail ran
+/// in, not a judgement of its patch. A kill already reaches the `TESTS` column as
+/// `MEMORY`; pressure without a kill reaches nothing else at all, and it is the
+/// fact that explains a run whose timing nobody can otherwise account for.
+fn report_memory(slot: &str, limit: usize, events: Option<memory::Events>) {
+    let name = slot.rsplit('/').next().unwrap_or(slot);
+    let Some(events) = events else { return };
+    if events.killed() {
+        println!(
+            "memory: {name} killed at its {limit} MiB cap (peak {} MiB)",
+            events.peak >> 20
+        );
+    } else if events.pressed() {
+        println!(
+            "memory: {name} reached its {limit} MiB cap {} times without being killed",
+            events.max
+        );
+    }
 }
 
 /// Wave 0, `--red` only: N provider jails that may write tests and nothing else.
@@ -757,8 +982,8 @@ fn red_wave(cfg: &Config, paths: &Paths) -> Vec<Vec<u8>> {
         })
         .collect();
 
-    println!("[red]    {} jails started", jails.len());
-    run_wave(&jails);
+    announce("red", &jails, cfg);
+    run_wave(cfg, &jails);
 
     cfg.plan()
         .into_iter()
@@ -814,8 +1039,8 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
         }
     }
 
-    println!("[red]    {} gate jails started", jails.len());
-    let started = run_wave(&jails);
+    announce("red", &jails, cfg);
+    let wave = run_wave(cfg, &jails);
 
     slots
         .into_iter()
@@ -839,7 +1064,7 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
                 if !Path::new(&format!("{s}/tmp/{GATE_MARKER}")).exists() {
                     return Verdict::Unrun;
                 }
-                timed_verdict(&s, started, cfg.timeout)
+                timed_verdict(&wave, &s, cfg.timeout)
             })
         })
         .collect()
@@ -855,7 +1080,7 @@ fn red_gate(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Vec<Verdict> {
 ///
 /// Returns the instant the wave started, which is what makes each work jail's
 /// wall time and the reason it produced nothing readable off the clock (C-37).
-fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
+fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> Wave {
     let prompt = if cfg.red {
         choir_core::green_prompt(&cfg.instruction)
     } else {
@@ -888,8 +1113,8 @@ fn work_wave(cfg: &Config, paths: &Paths, reds: &[Vec<u8>]) -> SystemTime {
         })
         .collect();
 
-    println!("[work]   {} jails started", jails.len());
-    run_wave(&jails)
+    announce("work", &jails, cfg);
+    run_wave(cfg, &jails)
 }
 
 /// Extract one jail's patch host-side and write it before any verdict exists.
@@ -1117,11 +1342,7 @@ fn stage(cfg: &Config, paths: &Paths, reds: &[Vec<u8>], red_verdicts: &[Verdict]
 /// noise, and one jail holds no fact that can say so. Built like every other slot
 /// and joining the same wave: the pair costs one more copy of the base tree and
 /// no wall time, since the wave still ends with its longest jail (N-4).
-fn verify_wave(
-    cfg: &Config,
-    paths: &Paths,
-    attempts: &[Attempt],
-) -> (Verdict, Verdict, SystemTime) {
+fn verify_wave(cfg: &Config, paths: &Paths, attempts: &[Attempt]) -> (Verdict, Verdict, Wave) {
     let first = paths.slot("b", 0);
     let second = paths.slot("b", 1);
     let mut jails = Vec::new();
@@ -1135,8 +1356,8 @@ fn verify_wave(
         Staged::Skipped(_) => None,
     }));
 
-    println!("[verify] {} jails started", jails.len());
-    let started = run_wave(&jails);
+    announce("verify", &jails, cfg);
+    let wave = run_wave(cfg, &jails);
 
     // Both baseline logs into `--out`, beside every other log (C-28). `collect`
     // copies one per *attempt* and the baseline is not one, so the jail whose
@@ -1149,9 +1370,9 @@ fn verify_wave(
     }
 
     (
-        timed_verdict(&first, started, cfg.timeout),
-        timed_verdict(&second, started, cfg.timeout),
-        started,
+        timed_verdict(&wave, &first, cfg.timeout),
+        timed_verdict(&wave, &second, cfg.timeout),
+        wave,
     )
 }
 
@@ -1258,12 +1479,7 @@ struct Probes {
 /// None of them calls a provider, so `--red` still costs `2n+1` model calls,
 /// and all of them join one wave, so they cost one wave of wall time however
 /// many patches passed.
-fn red_canary(
-    cfg: &Config,
-    paths: &Paths,
-    attempts: &[Attempt],
-    verify_started: SystemTime,
-) -> Vec<usize> {
+fn red_canary(cfg: &Config, paths: &Paths, attempts: &[Attempt], verify: &Wave) -> Vec<usize> {
     let mut jails = Vec::new();
     let mut probes = Vec::new();
 
@@ -1271,7 +1487,7 @@ fn red_canary(
         let Staged::Ready(verified) = &attempt.staged else {
             continue;
         };
-        if !timed_verdict(verified, verify_started, cfg.timeout).passed() {
+        if !timed_verdict(verify, verified, cfg.timeout).passed() {
             continue;
         }
         let index = attempt.index;
@@ -1317,12 +1533,12 @@ fn red_canary(
     if jails.is_empty() {
         return Vec::new();
     }
-    println!("[canary] {} jails started", jails.len());
-    let started = run_wave(&jails);
+    announce("canary", &jails, cfg);
+    let wave = run_wave(cfg, &jails);
 
     let mut neutered = Vec::new();
     for probe in probes {
-        let passed = |slot: &str| timed_verdict(slot, started, cfg.timeout).passed();
+        let passed = |slot: &str| timed_verdict(&wave, slot, cfg.timeout).passed();
         // Every probe jail's log into `--out` (C-28). These are the only
         // evidence for the gravest verdict in the table, and without this they
         // die with the scratch tree exactly like the baseline log used to.
@@ -1340,8 +1556,8 @@ fn red_canary(
             log("canary-failing", p);
             log("canary-control", control);
             verdict::probe_accuses(
-                timed_verdict(control, started, cfg.timeout),
-                timed_verdict(p, started, cfg.timeout),
+                timed_verdict(&wave, control, cfg.timeout),
+                timed_verdict(&wave, p, cfg.timeout),
             )
         });
         if never_read || never_ran {
@@ -1393,8 +1609,8 @@ fn collect(
     paths: &Paths,
     attempts: &[Attempt],
     neutered: &[usize],
-    work_started: SystemTime,
-    verify_started: SystemTime,
+    work: &Wave,
+    verify: &Wave,
 ) -> Vec<Row> {
     attempts
         .iter()
@@ -1403,7 +1619,7 @@ fn collect(
                 Staged::Ready(slot) => {
                     let log = read_log(paths, &format!("{slot}.log"));
                     write_out(paths, &format!("{}.verify.log", a.index), log.as_bytes());
-                    let verdict = timed_verdict(slot, verify_started, cfg.timeout);
+                    let verdict = timed_verdict(verify, slot, cfg.timeout);
                     // The probe only ever ran for a jail this call already
                     // classed `Pass` (E-44), so this replaces a pass and can
                     // never rescue a failure: a suite that failed honestly is
@@ -1414,7 +1630,15 @@ fn collect(
                         verdict
                     }
                 }
-                Staged::Skipped(v) => *v,
+                // A work jail killed at its cap wrote no patch, and `NoPatch`
+                // renders as "wrote nothing" -- Choir's own limit reported as the
+                // model's failure to produce, which is the defect C-47 fixed for
+                // an oversized patch and the same one here. The kill is a fact
+                // Choir holds about its own cgroup, so the row states it.
+                Staged::Skipped(v) => memory::explained_by_memory(
+                    *v,
+                    work.of(&paths.slot("w", a.index)).and_then(|r| r.memory),
+                ),
             };
             let slot = paths.slot("w", a.index);
             let log = read_log(paths, &format!("{slot}.log"));
@@ -1425,7 +1649,9 @@ fn collect(
                 provider: a.provider,
                 bytes: usize::try_from(a.total).unwrap_or(usize::MAX),
                 exit: verdict::code_from_rc(&sys::read_text(Path::new(&rc))),
-                elapsed: sys::elapsed_to(work_started, Path::new(&rc)),
+                elapsed: work
+                    .of(&slot)
+                    .and_then(|r| sys::elapsed_to(r.started, Path::new(&rc))),
                 timeout: cfg.timeout,
                 verdict,
                 last_line: report::last_line(&log),
@@ -1443,8 +1669,15 @@ fn print_table(
     rows: &[Row],
     patches: &[(usize, &[u8])],
     out_dir: &str,
+    memory: MemoryState,
 ) {
     println!("\n{}", report::baseline(baseline, baseline_again));
+    // Repeated here as well as in the header (C-49). A table is the artifact that
+    // gets pasted into a ticket six weeks later; a header two hundred lines above
+    // it is not.
+    if let Some(notice) = report::memory_notice(memory) {
+        println!("{notice}");
+    }
     println!("{}", report::HEADER);
     for entry in rows {
         println!("{}", report::row(entry));
@@ -1490,7 +1723,7 @@ fn audit_wave(cfg: &Config, paths: &Paths) {
         provider,
     );
     let jails = [Jail::new(command, slot.clone())];
-    run_wave(&jails);
+    run_wave(cfg, &jails);
 
     let heading = report::audit_heading(provider);
     let rule = "-".repeat(heading.chars().count());
@@ -1507,7 +1740,7 @@ mod tests {
 
     use super::{
         collect, detach_gitfile, exclude_out_from_base, exclude_user_globs, extract, extract_slot,
-        gitignore_escape, prepare, stage, strip_host_config, Attempt, Paths, Staged,
+        gitignore_escape, prepare, stage, strip_host_config, Attempt, Paths, Staged, Wave,
     };
     use crate::sys;
     use choir_core::config::{Config, Provider};
@@ -2076,8 +2309,8 @@ mod tests {
                 staged: Staged::Ready(format!("{dir_s}/v0")),
             }],
             &[],
-            started,
-            started,
+            &Wave::at(&[&format!("{dir_s}/w0")], started),
+            &Wave::at(&[&format!("{dir_s}/v0")], started),
         );
 
         let row = rows.first().expect("one row");
@@ -2130,8 +2363,8 @@ mod tests {
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
             &[],
-            sys::clock(),
-            sys::clock(),
+            &Wave::at(&[&format!("{dir_s}/w0")], sys::clock()),
+            &Wave::at(&[&format!("{dir_s}/v0")], sys::clock()),
         );
 
         let row = rows.first().expect("one row");
@@ -2409,21 +2642,21 @@ mod tests {
         // Killed by signal, well past the deadline: the deadline explains it.
         fs::write(format!("{slot}.rc"), "137\n").expect("rc");
         assert_eq!(
-            super::timed_verdict(&slot, long_ago, 1200),
+            super::timed_verdict(&Wave::at(&[&slot], long_ago), &slot, 1200),
             Verdict::Timeout(1200),
             "a deadline kill must be named, not left as an ambiguous 137"
         );
 
         // Same file, a clock that has not run out: the code stands.
         assert_eq!(
-            super::timed_verdict(&slot, SystemTime::now(), 1200),
+            super::timed_verdict(&Wave::at(&[&slot], SystemTime::now()), &slot, 1200),
             Verdict::Fail(137)
         );
 
         // A suite that failed on its own, past the deadline: its code survives.
         fs::write(format!("{slot}.rc"), "1\n").expect("rc");
         assert_eq!(
-            super::timed_verdict(&slot, long_ago, 1200),
+            super::timed_verdict(&Wave::at(&[&slot], long_ago), &slot, 1200),
             Verdict::Fail(1),
             "the clock overwrote a failure the suite actually reported"
         );
@@ -3128,8 +3361,8 @@ mod tests {
             &paths,
             &attempts,
             &[0, 1],
-            started,
-            started,
+            &Wave::at(&[&format!("{dir_s}/w0"), &format!("{dir_s}/w1")], started),
+            &Wave::at(&[&format!("{dir_s}/v0"), &format!("{dir_s}/v1")], started),
         );
         let (first, second) = (rows.first().expect("row 0"), rows.get(1).expect("row 1"));
         assert_eq!(first.verdict, Verdict::RedNeutered, "a pass is replaced");
@@ -3140,7 +3373,14 @@ mod tests {
         );
 
         // And with nothing reported, the pass stands.
-        let clean = collect(&Config::default(), &paths, &attempts, &[], started, started);
+        let clean = collect(
+            &Config::default(),
+            &paths,
+            &attempts,
+            &[],
+            &Wave::at(&[&format!("{dir_s}/w0"), &format!("{dir_s}/w1")], started),
+            &Wave::at(&[&format!("{dir_s}/v0"), &format!("{dir_s}/v1")], started),
+        );
         assert_eq!(clean.first().expect("row 0").verdict, Verdict::Pass);
         sys::remove_tree(&dir_s);
     }
@@ -3249,8 +3489,8 @@ mod tests {
                 staged: Staged::Skipped(Verdict::PatchTooLarge),
             }],
             &[],
-            started,
-            started,
+            &Wave::at(&[&format!("{dir_s}/w0")], started),
+            &Wave::at(&[&format!("{dir_s}/v0")], started),
         );
 
         let row = rows.first().expect("one row");
@@ -3313,8 +3553,8 @@ mod tests {
                 staged: Staged::Skipped(Verdict::NoPatch),
             }],
             &[],
-            started,
-            started,
+            &Wave::at(&[&format!("{dir_s}/w0")], started),
+            &Wave::at(&[&format!("{dir_s}/v0")], started),
         );
 
         let written = fs::metadata(format!("{}/0.log", paths.out))
@@ -3336,5 +3576,71 @@ mod tests {
 
         let row = rows.first().expect("one row");
         assert_eq!(row.last_line, "LAST-LINE", "the row still reads the tail");
+    }
+
+    /// C-51: a work jail killed at its own cap is named, and never reported as a
+    /// model that produced nothing.
+    ///
+    /// The row for a killed jail is built from an empty patch, and `NoPatch`
+    /// renders as `wrote nothing` -- Choir's own limit printed as the provider's
+    /// failure to produce. That is exactly the defect C-47 fixed for an oversized
+    /// patch, and the kill is a fact Choir holds about a cgroup it made, so the
+    /// row states it.
+    #[test]
+    fn c51_a_killed_work_jail_is_not_reported_as_wrote_nothing() {
+        let dir = scratch("killedwork");
+        let dir_s = dir.str();
+        let paths = Paths {
+            dir: dir_s.clone(),
+            out: format!("{dir_s}/out"),
+            cache: Vec::new(),
+            cache_masks: Vec::new(),
+            secrets: Vec::new(),
+        };
+        fs::create_dir_all(&paths.out).expect("out");
+        fs::write(format!("{dir_s}/w0.rc"), "137\n").expect("rc");
+        fs::write(format!("{dir_s}/w0.log"), "\n").expect("log");
+
+        let attempts = [Attempt {
+            index: 0,
+            provider: Provider::Claude,
+            patch: Vec::new(),
+            total: 0,
+            staged: Staged::Skipped(Verdict::NoPatch),
+        }];
+        let started = sys::clock();
+        let killed = Wave::killed_at(&format!("{dir_s}/w0"), started);
+        let rows = collect(&Config::default(), &paths, &attempts, &[], &killed, &killed);
+
+        let row = rows.first().expect("one row");
+        assert_eq!(row.verdict, Verdict::MemoryKill);
+        let rendered = choir_core::report::row(row);
+        assert!(
+            rendered.contains("MEMORY"),
+            "the TESTS column must name the cap: {rendered}"
+        );
+        assert!(
+            rendered.contains("killed at memory cap"),
+            "the WHY column must not blame the model: {rendered}"
+        );
+        assert!(
+            !rendered.contains("wrote nothing"),
+            "Choir's own limit reported as the provider producing nothing: {rendered}"
+        );
+
+        // The same jail with no cgroup record keeps the verdict it earned, so the
+        // reclassification is driven by the counters and not by the empty patch.
+        let unbounded = Wave::at(&[&format!("{dir_s}/w0")], started);
+        let plain = collect(
+            &Config::default(),
+            &paths,
+            &attempts,
+            &[],
+            &unbounded,
+            &unbounded,
+        );
+        assert_eq!(plain.first().expect("row").verdict, Verdict::NoPatch);
+
+        sys::remove_tree(&dir_s);
     }
 }

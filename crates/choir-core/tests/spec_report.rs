@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
+use choir_core::memory::{Budget, MemoryState};
 use choir_core::report::{self, Row};
 use choir_core::verdict;
 use choir_core::{Provider, Verdict};
@@ -692,5 +693,70 @@ fn c46_the_probe_accuses_only_behind_a_failing_control() {
     assert!(
         !verdict::probe_accuses(Verdict::ApplyFailed, Verdict::Pass),
         "only a control that ran and failed shows the shape is collected"
+    );
+}
+
+/// C-49: a run without a memory bound says so in every final output.
+///
+/// Two places, deliberately: the header a run scrolls past, and the table someone
+/// pastes into a ticket six weeks later. A warning printed once is a warning the
+/// stored artifact does not carry, and the whole point of the state is that it
+/// outlives the terminal.
+#[test]
+fn c49_an_unbounded_run_is_named_wherever_the_result_is_read() {
+    assert_eq!(
+        report::memory_notice(MemoryState::Enforced),
+        None,
+        "a bounded run says nothing extra"
+    );
+    for state in [MemoryState::ExplicitlyUnbounded, MemoryState::Unavailable] {
+        let notice = report::memory_notice(state).expect("an unbounded run must be named");
+        assert!(
+            notice.contains("UNBOUNDED"),
+            "the state must be legible without the header: {notice}"
+        );
+    }
+    // The override names itself, so the reason is attributable rather than an
+    // unexplained absence of a limit.
+    let overridden = report::memory_notice(MemoryState::ExplicitlyUnbounded).unwrap();
+    assert!(
+        overridden.contains("--allow-unbounded-memory"),
+        "the operator's own instruction is the reason: {overridden}"
+    );
+}
+
+/// C-49, C-50: the header states the bound and the arithmetic behind it.
+#[test]
+fn c50_the_header_states_the_limits_and_the_concurrency() {
+    let line = report::memory_line(
+        MemoryState::Enforced,
+        Budget {
+            per_jail: 4096,
+            wave: 60198,
+        },
+        14,
+    );
+    assert!(line.contains("ENFORCED"), "{line}");
+    assert!(line.contains("4096 MiB/jail"), "{line}");
+    assert!(line.contains("60198 MiB/wave"), "{line}");
+    assert!(
+        line.contains("14"),
+        "the concurrency limit must be shown: {line}"
+    );
+
+    // An unenforced run quotes no limits: printing the numbers it would have used
+    // reads as though something is bounded.
+    let unbounded = report::memory_line(
+        MemoryState::ExplicitlyUnbounded,
+        Budget {
+            per_jail: 4096,
+            wave: 60198,
+        },
+        14,
+    );
+    assert!(unbounded.contains("UNBOUNDED"), "{unbounded}");
+    assert!(
+        !unbounded.contains("4096"),
+        "an unbounded run must not quote a limit it is not applying: {unbounded}"
     );
 }

@@ -257,6 +257,56 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   parse `docs/spec.md` and fail on a gap or a duplicate. Written because E-36
   sat fixed, tested and shipped for three commits with no entry, found by
   reading — the process this replaces.
+- **C-49** Every jail runs under a cgroup v2 memory limit Choir owns, and a run
+  Choir cannot bound does not start. `memory.max` is set per jail from
+  `--memory`, and `memory.swap.max` is set to zero beside it, because the first
+  without the second bounds nothing on a host with swap (E-47). `memory.oom.group`
+  makes the jail die as a unit rather than losing one process to the kernel and
+  carrying on. The capability is settled by *doing* it before the first provider
+  call — create the cgroups, write both limits, read both back, then run a
+  provider-free jail through the same flags and confirm the charge landed — because
+  every cheaper test passes on a host where the limit does nothing: a plain
+  directory accepts the write and returns it unchanged. Three states are reported
+  and only three: `ENFORCED`, `UNBOUNDED` after an explicit
+  `--allow-unbounded-memory`, and a refusal. The default is to refuse. A host that
+  lost the controller did not thereby gain a trustworthy provider; it lost one
+  control, and every other control in this program treats provider bytes as
+  hostile. An unbounded run is named in the header *and* under the table, as a
+  state and not a warning: a warning scrolls out of a CI log, and the table is
+  what gets read six weeks later.
+- **C-50** `-n` is the number of jails, never the number that run at once. The two
+  were one flag until a wave budget made the difference load-bearing: lowering `n`
+  to fit memory would change the model calls, the independent evidence and the
+  `2n+1` cost, so it is the concurrency that gives way and never the request.
+  `--jobs` is the separate limit, defaulting to what the budget allows;
+  `--wave-memory` bounds every jail running together, defaulting to the host's
+  own headroom less a sixteenth held back for Choir, `git` and the page cache,
+  and capped by the delegated parent's own `memory.max` — the term that matters
+  inside a container, where a larger budget would be bounded by something Choir
+  did not set and cannot report. Every requested jail runs: a wave too wide for
+  the budget is split into batches, each batch a full wave with its own barrier,
+  and the batch shape is printed. Choir may lower its own default and must never
+  rewrite an explicit `--jobs`: one over the budget is refused before any provider
+  call, with the arithmetic that refused it. Proved by P-4 and P-4a, and by an
+  exhaustive grid where the proof cannot reach (two related symbolic divisions do
+  not terminate).
+- **C-51** A memory kill is read off the counters, not guessed from an exit code.
+  Exit 137 covers Choir's own deadline, the host OOM killer, the cgroup OOM killer
+  and a suite that exits 137 by itself; the first is already split out from a clock
+  Choir owns (C-37), and this splits out the third from a cgroup Choir owns. Each
+  jail's `memory.events.local` and `memory.peak` are read *before* the cgroup is
+  removed — the counters live in the directory, so the other order is the evidence
+  gone — and a kill yields the verdict `MEMORY` with `killed at memory cap`
+  instead of `FAIL(137)`. A work jail killed at its cap wrote no patch, and
+  `NoPatch` renders as "wrote nothing", so that row is reclassified too: it is
+  the same defect C-47 fixed for an oversized patch, Choir's own limit printed as
+  the provider's failure to produce. Both counters are read, because
+  `memory.oom.group` decides which one moves (E-48). Pressure without a kill is
+  reported above the table and changes no verdict: a suite that touched its
+  ceiling and passed has passed, and Choir does not overturn a suite's own answer
+  with an observation about the room it ran in. A provider that catches its own
+  `MemoryError` and exits cleanly is *not* classified — that would be reading the
+  model's output as evidence, which this program does nowhere.
 - **C-36** Under `--red`, every file the red patch created or modified with
   readable hunks must appear byte-identical in the green patch (E-43 narrows
   this from every file). When one does not, the attempt is
@@ -592,6 +642,35 @@ Exit status: `0` if at least one patch passed the test command, `1` otherwise,
   control in this system treats provider bytes as hostile, and provider output
   depends on a remote service, a prompt, and a wrapper, none of which the
   operator authored by choosing to start it.
+- **E-47** `memory.max` alone bounded nothing. Measured before any of this was
+  written: a 2 GiB allocation inside a cgroup with `memory.max` at 1 GiB ran to
+  completion on this host, which has 62 GiB of swap — the cgroup simply swapped.
+  With `memory.swap.max` at zero the same allocation took a cgroup kill at
+  exactly the 1 GiB limit, and a 2 GiB allocation under a 4 GiB cap still passed,
+  so the control discriminates rather than merely killing. The shipped
+  `--rlimit_as 32768` is not a substitute and never was: measured in a jail, a
+  10 GiB allocation succeeds under it, because it caps address space and V8
+  reserves a multi-gigabyte cage it never commits (E-38). Naming it an RSS cap
+  would also be wrong — the cgroup charges anonymous memory, page cache, some
+  kernel memory and socket buffers, and with swap denied that is practical
+  resident containment and not an RSS limit.
+- **E-48** `memory.oom.group` changes which counter records the kill. With it set,
+  the kernel increments `oom_group_kill` and leaves `oom_kill` at zero — measured,
+  `max 40 oom 1 oom_kill 0 oom_group_kill 1`. The first implementation here read
+  `oom_kill` alone, which is the obvious reading and the one the design note
+  recommended, and it classified every jail Choir killed as an ordinary failure.
+  Both counters are read now, and the test asserting it carries the kernel's own
+  bytes.
+- **E-49** nsjail creates no cgroup at all unless it is given a memory knob, so a
+  jail with `--use_cgroupv2 --cgroupv2_mount <dir>` and nothing else runs charged
+  to Choir's own cgroup, outside the limit that was just written for it. Measured
+  with `-v`: no `createCgroup` line, and `memory.peak` on the directory stays at
+  zero. Of the knobs that do place the process, `--cgroup_mem_swap_max 0` is the
+  one that adds no second limit, so the `memory.max` Choir set on the parent stays
+  the binding one and that parent's `memory.events.local` remains the jail's own
+  record. The limit is deliberately one level above nsjail's own cgroup for the
+  same reason: nsjail deletes what it creates when the process ends, and C-51
+  needs the counters after the wave.
 - **E-39** A credential is the last thing written into a slot, after every step
   that can abort the run. It used to be the first: `prep_provider_slot` wrote the
   token one line above the `sys::copy_tree` that seeds the slot, and that copy is

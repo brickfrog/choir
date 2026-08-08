@@ -3,6 +3,7 @@
 //! argv in, exit code out. Everything this binary decides is decided in
 //! `choir-core`; everything it *does* is in [`sys`].
 
+mod cgroup;
 mod run;
 mod sys;
 

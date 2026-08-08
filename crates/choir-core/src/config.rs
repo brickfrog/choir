@@ -241,6 +241,29 @@ pub struct Config {
     pub red_providers: Option<Providers>,
     /// Provider for the audit jail, overriding rotation index `n` (C-39).
     pub audit_providers: Option<Providers>,
+    /// Maximum jails running together. `None` is the budget's own answer (C-50).
+    ///
+    /// Never the jail count. `n` says how many jails run; this says how many run
+    /// at once, and the two were one flag until a wave memory budget made the
+    /// difference load-bearing: lowering `n` to fit memory would change the
+    /// number of model calls, the amount of independent evidence and the `2n+1`
+    /// cost, so it is the concurrency that gives way and never the request.
+    pub jobs: Option<usize>,
+    /// `memory.max` for one jail's cgroup, in MiB (C-49).
+    pub memory: usize,
+    /// `memory.max` for the cgroup a whole wave runs under, in MiB. `None` takes
+    /// the host's own headroom, resolved by `prepare` (C-50).
+    pub wave_memory: Option<usize>,
+    /// Run with no memory bound, on the operator's explicit instruction (C-49).
+    ///
+    /// Not a warning mode. Without a bound Choir refuses to start a provider, and
+    /// this is the one way past that refusal; every final output then says the run
+    /// was unbounded and that an operator asked for it.
+    pub allow_unbounded_memory: bool,
+    /// The cgroup directory each jail's own cgroup is made under, `None` when
+    /// running unbounded. Filled by `prepare`, the one place allowed to ask the
+    /// host whether the memory controller is delegated at all (C-49).
+    pub cgroup_root: Option<String>,
 }
 
 impl Default for Config {
@@ -259,11 +282,29 @@ impl Default for Config {
             red: false,
             red_providers: None,
             audit_providers: None,
+            jobs: None,
+            memory: 4096,
+            wave_memory: None,
+            allow_unbounded_memory: false,
+            cgroup_root: None,
         }
     }
 }
 
 impl Config {
+    /// How many jails of one wave may run together (C-50).
+    ///
+    /// `usize::MAX` when concurrency has not been resolved yet, which makes one
+    /// batch of the whole wave -- exactly what every run did before a memory
+    /// budget existed, and what the pure tests that never call `admit` still get.
+    #[must_use]
+    pub const fn concurrency(&self) -> usize {
+        match self.jobs {
+            Some(jobs) if jobs > 0 => jobs,
+            _ => usize::MAX,
+        }
+    }
+
     /// The provider serving work jail `index` (C-9).
     #[must_use]
     pub fn provider_for(&self, index: usize) -> Provider {
@@ -549,6 +590,17 @@ pub fn parse(args: &[String]) -> Result<Invocation, ParseError> {
                 }
                 cfg.ignore.push(glob);
             }
+            "-j" | "--jobs" => {
+                cfg.jobs = Some(positive(&value(&mut rest, "--jobs")?, "--jobs")?);
+            }
+            "--memory" => cfg.memory = positive(&value(&mut rest, "--memory")?, "--memory")?,
+            "--wave-memory" => {
+                cfg.wave_memory = Some(positive(
+                    &value(&mut rest, "--wave-memory")?,
+                    "--wave-memory",
+                )?);
+            }
+            "--allow-unbounded-memory" => cfg.allow_unbounded_memory = true,
             "--red" => cfg.red = true,
             other if instruction.is_none() => instruction = Some(other.to_owned()),
             other => return Err(ParseError::UnexpectedArgument(other.to_owned())),
@@ -675,6 +727,21 @@ pub fn help_text() -> String {
     s.push_str("                      token from the login keyring, so it needs\n");
     s.push_str("                      secret-tool on PATH.\n");
     s.push_str("  --timeout <secs>    per-jail deadline (default 1200), enforced by nsjail.\n");
+    s.push_str("  --memory <MiB>      per-jail memory limit (default 4096), enforced by a\n");
+    s.push_str("                      cgroup Choir owns. A jail that exceeds it is killed\n");
+    s.push_str("                      as a unit and its row reads MEMORY.\n");
+    s.push_str("  --wave-memory <MiB> memory budget for a whole wave (default: the host's\n");
+    s.push_str("                      own headroom). Bounds every jail running at once,\n");
+    s.push_str("                      not just each one alone.\n");
+    s.push_str("  -j, --jobs <count>  maximum jails running together (default: as many as\n");
+    s.push_str("                      the wave budget allows). Never changes -n: all N\n");
+    s.push_str("                      jails run, in batches, so the model calls and the\n");
+    s.push_str("                      evidence are the ones you asked for. An explicit\n");
+    s.push_str("                      value over the budget is refused, not lowered.\n");
+    s.push_str("  --allow-unbounded-memory\n");
+    s.push_str("                      run without a memory bound. Without it, a host that\n");
+    s.push_str("                      cannot delegate the cgroup memory controller is a\n");
+    s.push_str("                      refusal before the first provider call.\n");
     s.push_str("  --out <dir>         patch directory (default ./choir-out).\n");
     s.push_str("  --cache <path>      read-only mount into every jail, at its own path.\n");
     s.push_str("                      Repeat it; verify jails have no network, so a\n");

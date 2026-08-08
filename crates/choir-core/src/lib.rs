@@ -41,6 +41,7 @@ impl fmt::Display for Quoted<'_> {
 pub mod config;
 pub mod ingest;
 pub mod jail;
+pub mod memory;
 pub mod report;
 pub mod verdict;
 pub mod wave;

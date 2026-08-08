@@ -66,6 +66,14 @@ pub enum Verdict {
     /// never a pass: half a patch is a different patch, so an oversized one
     /// cannot be truncated the way a log can.
     PatchTooLarge,
+    /// The jail's own cgroup memory limit killed it (C-51).
+    ///
+    /// Distinct from `Fail(137)`, which is what this used to be reported as.
+    /// Choir sets `memory.max` and `memory.oom.group` on a cgroup it owns and
+    /// reads that cgroup's `memory.events.local` before removing it, so the kill
+    /// is a counter Choir observed rather than an exit code it interpreted —
+    /// the same standing `Timeout` has against a deadline Choir set.
+    MemoryKill,
 }
 
 impl Verdict {
@@ -83,6 +91,7 @@ impl Verdict {
             Self::Unrun => "RED UNRUN".to_owned(),
             Self::RedNeutered => "RED NEUTERED".to_owned(),
             Self::PatchTooLarge => "PATCH TOO LARGE".to_owned(),
+            Self::MemoryKill => "MEMORY".to_owned(),
         }
     }
 
@@ -331,6 +340,11 @@ pub fn reason(
         // shows something enormous, and a reader must be told that the number
         // is why the row was refused rather than incidental to it.
         format!("over {} MB cap", crate::ingest::PATCH_CAP >> 20)
+    } else if verdict == Verdict::MemoryKill {
+        // Above the `bytes > 0` shortcut deliberately: a jail killed at its cap
+        // can already have written part of a tree, and a row carrying a patch
+        // with no reason beside it reads as an ordinary test failure.
+        "killed at memory cap".to_owned()
     } else if bytes > 0 {
         String::new()
     } else if exit == Some(0) {

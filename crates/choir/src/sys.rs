@@ -175,6 +175,52 @@ pub fn mkdir_all(path: &Path) {
     let _ = fs::create_dir_all(path);
 }
 
+/// Total host memory in MiB, from `/proc/meminfo` (C-50).
+///
+/// `MemTotal` rather than `MemAvailable`: a budget derived from what is free
+/// right now is a budget that was true before the check and need not be after
+/// it. The lasting bound is the wave cgroup's own `memory.max`, and this only
+/// sizes it.
+#[must_use]
+pub fn host_memory_mib() -> Option<usize> {
+    read_text(Path::new("/proc/meminfo"))
+        .lines()
+        .find_map(|line| {
+            let kb: usize = line
+                .strip_prefix("MemTotal:")?
+                .trim()
+                .strip_suffix(" kB")?
+                .parse()
+                .ok()?;
+            Some(kb / 1024)
+        })
+}
+
+/// Remove one empty directory. Failures are silent.
+///
+/// Not `remove_tree`: a cgroup directory holds kernel files that cannot be
+/// unlinked, so `rm -rf` on it fails having removed nothing, and the only way to
+/// destroy one is `rmdir` after its last process is gone.
+pub fn rmdir(path: &str) {
+    let _ = fs::remove_dir(path);
+}
+
+/// This process's own pid, which names the run's cgroup.
+#[must_use]
+pub fn pid() -> u32 {
+    std::process::id()
+}
+
+/// Whether a pid is a live process, used to tell a stale cgroup from a running
+/// run's (C-49).
+///
+/// `/proc/<pid>` rather than `kill -0`: no signal, no permission question, and
+/// nothing to get wrong about a pid this process does not own.
+#[must_use]
+pub fn pid_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
 /// Copy one file, creating the destination's parent. Failures are silent.
 pub fn copy_file(from: &Path, to: &Path) {
     if let Some(parent) = to.parent() {

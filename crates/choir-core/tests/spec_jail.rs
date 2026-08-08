@@ -334,3 +334,46 @@ fn c43_credential_destinations_match_the_env() {
         choir_core::CredSource::Keyring("gemini", "antigravity")
     );
 }
+
+/// C-49: a bounded run names its jail's cgroup on the nsjail command line, and an
+/// unbounded one names none at all.
+///
+/// The wiring, not the writer. Three of C-47's mutations were limits computed
+/// correctly and never reaching the command that would have applied them, and this
+/// is the same shape: `cgroup_root` is the single record that a run is bounded, and
+/// if it does not reach `prefix` then Choir made a cgroup that no jail ran in.
+#[test]
+fn c49_the_jail_command_names_the_cgroup_it_is_bounded_by() {
+    let unbounded = Config::default();
+    let command = jail::verify(&unbounded, "/run/w0");
+    assert!(
+        !command.contains("cgroup"),
+        "an unbounded run must not claim a cgroup: {command}"
+    );
+
+    let bounded = Config {
+        cgroup_root: Some("/sys/fs/cgroup/u/choir.7".to_owned()),
+        ..Config::default()
+    };
+    let command = jail::verify(&bounded, "/run/w0");
+    assert!(
+        command.contains("--use_cgroupv2"),
+        "cgroup v2 must be asked for: {command}"
+    );
+    assert!(
+        command.contains("--cgroupv2_mount '/sys/fs/cgroup/u/choir.7/w0'"),
+        "the mount must be this jail's own directory, quoted: {command}"
+    );
+    // The knob that places the process without adding a second limit. Without it
+    // nsjail makes no cgroup at all and the jail runs charged to Choir's own.
+    assert!(
+        command.contains("--cgroup_mem_swap_max 0"),
+        "the placement knob must be present: {command}"
+    );
+    // And no `--cgroup_mem_max`: that would set a limit on nsjail's inner cgroup,
+    // which would then be the binding one, and its counters die with it (C-51).
+    assert!(
+        !command.contains("--cgroup_mem_max"),
+        "the binding limit must stay on the directory Choir keeps: {command}"
+    );
+}

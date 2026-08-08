@@ -28,6 +28,10 @@ choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 | `-n <count>` | `2` | Work jails. Providers alternate. |
 | `--providers <list>` | `claude,codex` | `agy` also available; needs `secret-tool`. |
 | `--timeout <secs>` | `1200` | Per jail, enforced by the kernel. |
+| `--memory <MiB>` | `4096` | Per jail, enforced by a cgroup Choir owns, with swap denied — `memory.max` alone bounds nothing on a host with swap. A jail over it dies as a unit and its row reads `MEMORY`. |
+| `--wave-memory <MiB>` | host headroom | Bounds every jail running at once, not just each one alone. Defaults to the host less a sixteenth, capped by the delegated parent's own limit. |
+| `-j, --jobs <count>` | budget | Jails running together. Never changes `-n`: all of them run, in batches, so the model calls and the evidence are the ones you asked for. One over the budget is refused, not lowered. |
+| `--allow-unbounded-memory` | off | Run anyway on a host that cannot delegate the cgroup memory controller. Without it that host is a refusal before the first provider call. The run then says `UNBOUNDED` in its header and under its table. |
 | `--out <dir>` | `./choir-out` | `<index>.patch` beside `<index>.log`, plus `baseline.0.log` and `baseline.1.log`. |
 | `--cache <path>` | none | Repeatable, read-only, mounted at its host path. Verify jails have no network, so this is the only way a dep cache reaches one. Credential files inside it (`credentials.toml`, `.npmrc`, `settings.xml`, `gradle.properties`, …) are masked with `/dev/null`, at any depth; the list is `jail::CREDENTIAL_FILES` and the masked paths are printed at startup. Masking a file a build needs will break that build, which is the intended direction. |
 | `--ignore <glob>` | none | Repeatable. Excluded inside every jail copy — keeps artifacts a test run makes out of the patch. |
@@ -36,7 +40,8 @@ choir -  [--test '<cmd>'] [options]  <<'EOF'    # instruction on stdin
 
 Exit 0 if any patch passed. `N+1` provider calls — the extra one audits and cannot change the
 table. `2+2n` repo copies exist at once; put `TMPDIR` on the same fs as `--repo` to reflink
-them. Uncommitted and untracked files are included in the base.
+them. Uncommitted and untracked files are included in the base. A wave too wide for the memory
+budget runs in batches rather than with fewer jails, so the call count above does not move.
 
 ## Output
 
@@ -58,8 +63,8 @@ JAIL PROVIDER  PATCH    EXIT  TESTS         TIME  WHY            LAST LINE FROM 
   git apply /home/justin/proj/choir-out/0.patch
 ```
 
-Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)`, `APPLY FAILED`, `PATCH TOO LARGE`, or
-`-`. `TIME` is the work jail's wall clock, `?` if it never reported. `WHY` names the reason a row
+Jail order, no ranking. `TESTS` is `PASS`, `FAIL(<code>)`, `TIMEOUT(<secs>s)`, `APPLY FAILED`, `PATCH TOO LARGE`,
+`MEMORY`, or `-`. `TIME` is the work jail's wall clock, `?` if it never reported. `WHY` names the reason a row
 produced no usable patch, and is blank when one survived — from the deadline Choir set, the clock
 it started, and the patch it extracted, never from what the provider printed.
 
@@ -74,9 +79,12 @@ it started, and the patch it extracted, never from what the provider printed.
 | `FAIL` | non-empty | `apply rejected` | The patch does not apply to the tree it was made from. |
 | `FAIL` | non-empty | blank | Tested; read `TESTS`. All `FAIL` is usually your `--test`, not the patches — often a missing `--cache`. |
 | any | over 16 MB | `over 16 MB cap` | Choir refused to read the patch, so it was never applied and never a pass. |
+| any | any | `killed at memory cap` | The jail's own cgroup killed it for exceeding `--memory`. A counter Choir read, not a code it guessed. |
 
-`FAIL(137)` is now only the OOM killer or a suite that exits 137 by itself: a deadline kill is
-`TIMEOUT(<secs>s)`, decided from the clock rather than from the code.
+`FAIL(137)` is now only the *host* OOM killer or a suite that exits 137 by itself. A deadline kill
+is `TIMEOUT(<secs>s)`, from the clock Choir started; a jail over its memory limit is `MEMORY`,
+from `memory.events.local` on a cgroup Choir made — both facts Choir holds rather than readings
+of a code that cannot say.
 
 ## Limits
 

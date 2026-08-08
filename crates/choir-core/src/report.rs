@@ -7,11 +7,76 @@
 //! "smallest diff" rewards deleting the failing test.
 
 use crate::config::Provider;
+use crate::memory::{Budget, MemoryState};
 use crate::verdict::{self, Verdict};
 
 /// Column header for the results table.
 pub const HEADER: &str =
     "JAIL PROVIDER  PATCH    EXIT  TESTS           TIME   WHY            LAST LINE FROM PROVIDER";
+
+/// The run header's memory line (C-49).
+///
+/// Always printed, in every state, because the interesting case is the one an
+/// operator would rather not read. `jobs` is beside the limits it was derived
+/// from so the arithmetic is checkable from the header alone.
+///
+/// A limit and not a plan: it is what the budget permits, and each wave's own
+/// jail count is what a batch is actually sized by. A `--memory 512` on a large
+/// host yields a ceiling in the hundreds, which is the true answer to "how many
+/// of these fit" and no kind of intention to start that many.
+#[must_use]
+pub fn memory_line(state: MemoryState, budget: Budget, jobs: usize) -> String {
+    match state {
+        MemoryState::Enforced => format!(
+            "memory: {} {} MiB/jail, {} MiB/wave, concurrency limit {jobs}",
+            state.label(),
+            budget.per_jail,
+            budget.wave
+        ),
+        // No limits to quote: printing the numbers a refused run would have used
+        // reads as though something is bounded.
+        MemoryState::ExplicitlyUnbounded | MemoryState::Unavailable => {
+            format!("memory: {}", state.label())
+        }
+    }
+}
+
+/// The block a run without a memory bound carries in every final output (C-49).
+///
+/// `None` for a bounded run, so the caller prints nothing in the ordinary case.
+/// Repeated below the table as well as above it, and worded as a state rather
+/// than a warning: a warning scrolls out of a CI log, and a stored table outlives
+/// the terminal that showed it. Whoever reads the result later has to be able to
+/// see that these jails were not bounded, without having kept the header.
+#[must_use]
+pub fn memory_notice(state: MemoryState) -> Option<String> {
+    match state {
+        MemoryState::Enforced => None,
+        MemoryState::ExplicitlyUnbounded => Some(
+            "MEMORY  UNBOUNDED
+REASON  explicit operator override (--allow-unbounded-memory)"
+                .to_owned(),
+        ),
+        // Reachable only if a caller printed a table after a refusal, which no
+        // caller does. Stated rather than left to a wildcard: the day one does,
+        // the table must not read as though the run was bounded.
+        MemoryState::Unavailable => Some(
+            "MEMORY  UNBOUNDED
+REASON  no cgroup memory control"
+                .to_owned(),
+        ),
+    }
+}
+
+/// What Choir says instead of starting a provider it cannot bound (C-49).
+///
+/// Names the override rather than hiding it: refusing by default is a judgement
+/// about the common case, not a claim that nobody has a reason to run unbounded.
+#[must_use]
+pub fn memory_refusal() -> String {
+    "MEMORY CONTROL UNAVAILABLE\n\n       Choir could not set cgroup v2 memory.max and memory.swap.max for a jail,\n       so a provider's memory use would be bounded by nothing it set.\n       No provider call was made.\n\n       Pass --allow-unbounded-memory to accept an unbounded run."
+        .to_owned()
+}
 
 /// Render the unpatched tree's test verdict immediately above the table (C-30,
 /// C-44).
